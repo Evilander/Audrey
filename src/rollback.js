@@ -1,3 +1,5 @@
+import { safeJsonParse } from './utils.js';
+
 export function getConsolidationHistory(db) {
   return db.prepare(`
     SELECT id, checkpoint_cursor, input_episode_ids, output_memory_ids,
@@ -11,19 +13,21 @@ export function rollbackConsolidation(db, runId) {
   if (!run) throw new Error(`Consolidation run not found: ${runId}`);
   if (run.status === 'rolled_back') throw new Error(`Run already rolled back: ${runId}`);
 
-  const outputIds = run.output_memory_ids ? JSON.parse(run.output_memory_ids) : [];
-  const inputIds = run.input_episode_ids ? JSON.parse(run.input_episode_ids) : [];
+  const outputIds = safeJsonParse(run.output_memory_ids, []);
+  const inputIds = safeJsonParse(run.input_episode_ids, []);
 
-  const markSemantics = db.prepare('UPDATE semantics SET state = ? WHERE id = ?');
-  const markProcedures = db.prepare('UPDATE procedures SET state = ? WHERE id = ?');
-  for (const id of outputIds) {
-    markSemantics.run('rolled_back', id);
-    markProcedures.run('rolled_back', id);
-  }
+  const doRollback = db.transaction(() => {
+    const markSemantics = db.prepare('UPDATE semantics SET state = ? WHERE id = ?');
+    const markProcedures = db.prepare('UPDATE procedures SET state = ? WHERE id = ?');
+    for (const id of outputIds) {
+      markSemantics.run('rolled_back', id);
+      markProcedures.run('rolled_back', id);
+    }
+    const unmark = db.prepare('UPDATE episodes SET consolidated = 0 WHERE id = ?');
+    for (const id of inputIds) { unmark.run(id); }
+    db.prepare('UPDATE consolidation_runs SET status = ? WHERE id = ?').run('rolled_back', runId);
+  });
 
-  const unmark = db.prepare('UPDATE episodes SET consolidated = 0 WHERE id = ?');
-  for (const id of inputIds) { unmark.run(id); }
-
-  db.prepare('UPDATE consolidation_runs SET status = ? WHERE id = ?').run('rolled_back', runId);
+  doRollback();
   return { rolledBackMemories: outputIds.length, restoredEpisodes: inputIds.length };
 }

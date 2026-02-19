@@ -1,4 +1,5 @@
 import { computeConfidence, DEFAULT_HALF_LIVES } from './confidence.js';
+import { daysBetween } from './utils.js';
 
 export function applyDecay(db, { dormantThreshold = 0.1 } = {}) {
   const now = new Date();
@@ -12,15 +13,17 @@ export function applyDecay(db, { dormantThreshold = 0.1 } = {}) {
     FROM semantics WHERE state = 'active'
   `).all();
 
+  const markDormantSem = db.prepare('UPDATE semantics SET state = ? WHERE id = ?');
+
   for (const sem of semantics) {
     totalEvaluated++;
-    const ageDays = (now - new Date(sem.created_at)) / (1000 * 60 * 60 * 24);
+    const ageDays = daysBetween(sem.created_at, now);
     const daysSinceRetrieval = sem.last_reinforced_at
-      ? (now - new Date(sem.last_reinforced_at)) / (1000 * 60 * 60 * 24)
+      ? daysBetween(sem.last_reinforced_at, now)
       : ageDays;
 
     const confidence = computeConfidence({
-      sourceType: 'direct-observation',
+      sourceType: 'tool-result',
       supportingCount: sem.supporting_count || 0,
       contradictingCount: sem.contradicting_count || 0,
       ageDays,
@@ -30,7 +33,7 @@ export function applyDecay(db, { dormantThreshold = 0.1 } = {}) {
     });
 
     if (confidence < dormantThreshold) {
-      db.prepare('UPDATE semantics SET state = ? WHERE id = ?').run('dormant', sem.id);
+      markDormantSem.run('dormant', sem.id);
       transitionedToDormant++;
     }
   }
@@ -42,15 +45,17 @@ export function applyDecay(db, { dormantThreshold = 0.1 } = {}) {
     FROM procedures WHERE state = 'active'
   `).all();
 
+  const markDormantProc = db.prepare('UPDATE procedures SET state = ? WHERE id = ?');
+
   for (const proc of procedures) {
     totalEvaluated++;
-    const ageDays = (now - new Date(proc.created_at)) / (1000 * 60 * 60 * 24);
+    const ageDays = daysBetween(proc.created_at, now);
     const daysSinceRetrieval = proc.last_reinforced_at
-      ? (now - new Date(proc.last_reinforced_at)) / (1000 * 60 * 60 * 24)
+      ? daysBetween(proc.last_reinforced_at, now)
       : ageDays;
 
     const confidence = computeConfidence({
-      sourceType: 'direct-observation',
+      sourceType: 'tool-result',
       supportingCount: proc.success_count || 0,
       contradictingCount: proc.failure_count || 0,
       ageDays,
@@ -60,7 +65,7 @@ export function applyDecay(db, { dormantThreshold = 0.1 } = {}) {
     });
 
     if (confidence < dormantThreshold) {
-      db.prepare('UPDATE procedures SET state = ? WHERE id = ?').run('dormant', proc.id);
+      markDormantProc.run('dormant', proc.id);
       transitionedToDormant++;
     }
   }
