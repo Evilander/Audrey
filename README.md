@@ -405,7 +405,7 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] 104 tests across 12 test files
 - [x] Proof-of-concept demo (Stripe rate limit scenario)
 
-### v0.2.0 — LLM Integration (current)
+### v0.2.0 — LLM Integration
 
 - [x] LLM-powered principle extraction (replace callback with Anthropic/OpenAI calls)
 - [x] LLM-based contradiction detection during validation
@@ -416,14 +416,21 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] Structured prompt templates for all LLM operations
 - [x] 142 tests across 15 test files
 
-### v0.3.0 — Vector Performance
+### v0.3.0 — Vector Performance (current)
 
-- [ ] sqlite-vec native vector indexing (currently brute-force cosine similarity in JS)
-- [ ] Approximate nearest neighbor search for large memory stores
+- [x] sqlite-vec native vector indexing (vec0 virtual tables with cosine distance)
+- [x] KNN queries for recall, validation, and consolidation clustering (all vector math in C)
+- [x] SQL-native metadata filtering in KNN (state, source, consolidated)
+- [x] Batch encoding API (`encodeBatch` — encode N episodes in one call)
+- [x] Streaming recall with async generators (`recallStream`)
+- [x] Dimension configuration and mismatch validation
+- [x] Automatic migration from v0.2.0 embedding BLOBs to vec0 tables
+- [x] 168 tests across 16 test files
+
+### v0.3.5 — Embedding Migration (deferred from v0.3.0)
+
 - [ ] Embedding migration pipeline (re-embed when models change)
 - [ ] Re-consolidation queue (re-run consolidation with new embedding model)
-- [ ] Batch encoding API (encode N episodes in one call)
-- [ ] Streaming recall with async iteration
 
 ### v0.4.0 — Type Safety & Developer Experience
 
