@@ -3,6 +3,7 @@ import { runConsolidation, clusterEpisodes } from '../src/consolidate.js';
 import { encodeEpisode } from '../src/encode.js';
 import { createDatabase, closeDatabase } from '../src/db.js';
 import { MockEmbeddingProvider } from '../src/embedding.js';
+import { MockLLMProvider } from '../src/llm.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-consolidate-data';
@@ -140,5 +141,96 @@ describe('runConsolidation', () => {
     const outputIds = JSON.parse(run.output_memory_ids);
     expect(inputIds.length).toBe(3);
     expect(outputIds.length).toBe(1);
+  });
+});
+
+describe('runConsolidation with LLM', () => {
+  let db, embedding, llm;
+
+  beforeEach(async () => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+    db = createDatabase(TEST_DIR);
+    embedding = new MockEmbeddingProvider({ dimensions: 8 });
+    llm = new MockLLMProvider({
+      responses: {
+        principleExtraction: {
+          content: 'Stripe API has a rate limit of 100 requests per second',
+          type: 'semantic',
+          conditions: ['Only applies to live-mode keys'],
+        },
+        contradictionDetection: {
+          contradicts: false,
+          explanation: 'No existing knowledge to contradict',
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    closeDatabase(db);
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('uses LLM provider for principle extraction when available', async () => {
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'direct-observation' });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'tool-result' });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'told-by-user' });
+
+    const result = await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      llmProvider: llm,
+    });
+
+    expect(result.principlesExtracted).toBe(1);
+    const sem = db.prepare("SELECT * FROM semantics WHERE state = 'active'").all();
+    expect(sem.length).toBe(1);
+    expect(sem[0].content).toBe('Stripe API has a rate limit of 100 requests per second');
+  });
+
+  it('prefers extractPrinciple callback over LLM provider', async () => {
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'direct-observation' });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'tool-result' });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'told-by-user' });
+
+    const result = await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      llmProvider: llm,
+      extractPrinciple: () => ({ content: 'Custom callback principle', type: 'semantic' }),
+    });
+
+    const sem = db.prepare("SELECT content FROM semantics WHERE state = 'active'").get();
+    expect(sem.content).toBe('Custom callback principle');
+  });
+
+  it('stores consolidation_model when using LLM', async () => {
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'direct-observation' });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'tool-result' });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'told-by-user' });
+
+    await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      llmProvider: llm,
+    });
+
+    const sem = db.prepare('SELECT consolidation_model FROM semantics').get();
+    expect(sem.consolidation_model).toBe('mock-llm');
+  });
+
+  it('falls back to default extraction when no LLM and no callback', async () => {
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'direct-observation' });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'tool-result' });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'told-by-user' });
+
+    const result = await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+    });
+
+    const sem = db.prepare('SELECT content FROM semantics').get();
+    expect(sem.content).toContain('Recurring pattern:');
   });
 });
