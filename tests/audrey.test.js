@@ -220,3 +220,56 @@ describe('Audrey with LLM', () => {
     expect(row.state).toBe('context_dependent');
   });
 });
+
+describe('Audrey batch and streaming', () => {
+  let brain;
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'test-agent',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('encodeBatch encodes multiple episodes in one call', async () => {
+    const ids = await brain.encodeBatch([
+      { content: 'Observation A', source: 'direct-observation' },
+      { content: 'Observation B', source: 'tool-result' },
+      { content: 'Observation C', source: 'told-by-user' },
+    ]);
+    expect(ids.length).toBe(3);
+    const count = brain.db.prepare('SELECT COUNT(*) as c FROM episodes').get().c;
+    expect(count).toBe(3);
+  });
+
+  it('encodeBatch validates content', async () => {
+    await expect(brain.encodeBatch([{ content: '', source: 'direct-observation' }])).rejects.toThrow('content must be a non-empty string');
+  });
+
+  it('recallStream yields results as async generator', async () => {
+    await brain.encode({ content: 'Test memory', source: 'direct-observation' });
+    const results = [];
+    for await (const memory of brain.recallStream('test', { limit: 5 })) {
+      results.push(memory);
+    }
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  it('recallStream supports early break', async () => {
+    await brain.encode({ content: 'Memory A', source: 'direct-observation' });
+    await brain.encode({ content: 'Memory B', source: 'tool-result' });
+    let count = 0;
+    for await (const memory of brain.recallStream('memory', { limit: 10 })) {
+      count++;
+      if (count >= 1) break;
+    }
+    expect(count).toBe(1);
+  });
+});
