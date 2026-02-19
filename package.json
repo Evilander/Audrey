@@ -18,7 +18,7 @@
     "cognitive",
     "llm"
   ],
-  "author": "Tyler Eveland <j.tyler.eveland@gmail.com>",
+  "author": "evilander",
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^12.6.2",

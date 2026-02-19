@@ -4,3 +4,5 @@ audrey-data/
 *.db-wal
 *.db-shm
 .env
+CLAUDE.md
+docs/plans/
