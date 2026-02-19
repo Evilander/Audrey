@@ -21,15 +21,15 @@ export class MockLLMProvider {
   }
 
   async complete(messages) {
-    const type = this._matchPromptType(messages);
-    const response = type ? this.responses[type] : undefined;
-    return { content: response !== undefined ? JSON.stringify(response) : '{}' };
+    const promptType = this._matchPromptType(messages);
+    const cannedResponse = promptType ? this.responses[promptType] : undefined;
+    return { content: cannedResponse !== undefined ? JSON.stringify(cannedResponse) : '{}' };
   }
 
   async json(messages) {
-    const type = this._matchPromptType(messages);
-    const response = type ? this.responses[type] : undefined;
-    return response !== undefined ? response : {};
+    const promptType = this._matchPromptType(messages);
+    const cannedResponse = promptType ? this.responses[promptType] : undefined;
+    return cannedResponse !== undefined ? cannedResponse : {};
   }
 }
 
