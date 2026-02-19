@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { createEmbeddingProvider, MockEmbeddingProvider } from '../src/embedding.js';
+import { describe, it, expect, vi } from 'vitest';
+import { createEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider } from '../src/embedding.js';
 
 describe('MockEmbeddingProvider', () => {
   it('returns a fixed-dimension vector', async () => {
@@ -47,6 +47,26 @@ describe('MockEmbeddingProvider', () => {
     const magnitude = Math.sqrt(v.reduce((sum, x) => sum + x * x, 0));
     expect(magnitude).toBeCloseTo(1.0, 3);
   });
+
+  describe('embedBatch', () => {
+    it('embeds multiple texts and returns array of vectors', async () => {
+      const provider = new MockEmbeddingProvider({ dimensions: 8 });
+      const results = await provider.embedBatch(['hello', 'world', 'foo']);
+      expect(results).toHaveLength(3);
+      for (const vec of results) {
+        expect(vec).toHaveLength(8);
+        expect(vec.every(n => typeof n === 'number')).toBe(true);
+      }
+    });
+
+    it('returns same results as individual embed() calls', async () => {
+      const provider = new MockEmbeddingProvider({ dimensions: 8 });
+      const texts = ['alpha', 'beta', 'gamma'];
+      const batch = await provider.embedBatch(texts);
+      const individual = await Promise.all(texts.map(t => provider.embed(t)));
+      expect(batch).toEqual(individual);
+    });
+  });
 });
 
 describe('createEmbeddingProvider', () => {
@@ -57,5 +77,45 @@ describe('createEmbeddingProvider', () => {
 
   it('throws for unknown provider', () => {
     expect(() => createEmbeddingProvider({ provider: 'unknown' })).toThrow();
+  });
+});
+
+describe('OpenAIEmbeddingProvider.embedBatch', () => {
+  it('sends batch request and returns array of embeddings', async () => {
+    const mockEmbeddings = [
+      [0.1, 0.2, 0.3],
+      [0.4, 0.5, 0.6],
+    ];
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: mockEmbeddings.map((embedding, i) => ({ embedding, index: i })),
+      }),
+    });
+
+    const provider = new OpenAIEmbeddingProvider({ apiKey: 'test-key', dimensions: 3 });
+    const results = await provider.embedBatch(['hello', 'world']);
+
+    expect(results).toEqual(mockEmbeddings);
+    expect(global.fetch).toHaveBeenCalledOnce();
+
+    const callArgs = global.fetch.mock.calls[0];
+    expect(callArgs[0]).toBe('https://api.openai.com/v1/embeddings');
+    const body = JSON.parse(callArgs[1].body);
+    expect(body.input).toEqual(['hello', 'world']);
+    expect(body.model).toBe('text-embedding-3-small');
+
+    global.fetch = originalFetch;
+  });
+
+  it('throws on non-ok response', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 429 });
+
+    const provider = new OpenAIEmbeddingProvider({ apiKey: 'test-key' });
+    await expect(provider.embedBatch(['hello'])).rejects.toThrow('OpenAI embedding failed: 429');
+
+    global.fetch = originalFetch;
   });
 });
