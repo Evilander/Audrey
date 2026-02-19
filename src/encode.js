@@ -19,6 +19,10 @@ export async function encodeEpisode(db, embeddingProvider, {
   const id = generateId();
   const now = new Date().toISOString();
 
+  const hasVecEpisodes = !!db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_episodes'"
+  ).get();
+
   const insertAndLink = db.transaction(() => {
     db.prepare(`
       INSERT INTO episodes (
@@ -33,6 +37,11 @@ export async function encodeEpisode(db, embeddingProvider, {
       now, embeddingProvider.modelName, embeddingProvider.modelVersion,
       supersedes || null,
     );
+    if (hasVecEpisodes) {
+      db.prepare(
+        'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+      ).run(id, embeddingBuffer, source, BigInt(0));
+    }
     if (supersedes) {
       db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ?').run(id, supersedes);
     }

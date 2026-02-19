@@ -12,7 +12,7 @@ describe('encodeEpisode', () => {
   beforeEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
     embedding = new MockEmbeddingProvider({ dimensions: 8 });
   });
 
@@ -122,5 +122,26 @@ describe('encodeEpisode', () => {
       content: 'test',
       source: 'made-up',
     })).rejects.toThrow();
+  });
+
+  it('writes a row to vec_episodes with the correct id', async () => {
+    const id = await encodeEpisode(db, embedding, {
+      content: 'vec test episode',
+      source: 'direct-observation',
+    });
+    const row = db.prepare('SELECT id, source FROM vec_episodes WHERE id = ?').get(id);
+    expect(row).toBeDefined();
+    expect(row.id).toBe(id);
+    expect(row.source).toBe('direct-observation');
+  });
+
+  it('sets consolidated to 0 for new episodes in vec_episodes', async () => {
+    const id = await encodeEpisode(db, embedding, {
+      content: 'consolidated check',
+      source: 'told-by-user',
+    });
+    const row = db.prepare('SELECT consolidated FROM vec_episodes WHERE id = ?').get(id);
+    expect(row).toBeDefined();
+    expect(Number(row.consolidated)).toBe(0);
   });
 });
