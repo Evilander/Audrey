@@ -12,7 +12,7 @@ describe('addCausalLink', () => {
   beforeEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
   });
 
   afterEach(() => {
@@ -55,7 +55,7 @@ describe('getCausalChain', () => {
   beforeEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
   });
 
   afterEach(() => {
@@ -101,7 +101,7 @@ describe('articulateCausalLink', () => {
   beforeEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
     llm = new MockLLMProvider({
       responses: {
         causalArticulation: {

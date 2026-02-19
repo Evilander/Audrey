@@ -18,7 +18,7 @@ describe('applyDecay', () => {
   beforeEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
   });
 
   afterEach(() => {
