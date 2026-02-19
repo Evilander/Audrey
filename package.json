@@ -1,0 +1,31 @@
+{
+  "name": "audrey",
+  "version": "0.1.0",
+  "description": "Biological memory architecture for AI agents",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "ai",
+    "memory",
+    "agents",
+    "cognitive",
+    "llm"
+  ],
+  "author": "Tyler Eveland <j.tyler.eveland@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "sqlite-vec": "^0.1.7-alpha.2",
+    "ulid": "^3.0.2"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
+  }
+}
