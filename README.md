@@ -377,7 +377,7 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 
 ## Roadmap
 
-### v0.1.0 — Foundation (current)
+### v0.1.0 — Foundation
 
 - [x] Immutable episodic memory with append-only records
 - [x] Compositional confidence formula (source + evidence + recency + retrieval)
@@ -405,14 +405,16 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] 104 tests across 12 test files
 - [x] Proof-of-concept demo (Stripe rate limit scenario)
 
-### v0.2.0 — LLM Integration
+### v0.2.0 — LLM Integration (current)
 
-- [ ] LLM-powered principle extraction (replace callback with Anthropic/OpenAI calls)
-- [ ] LLM-based contradiction detection during validation
-- [ ] Causal mechanism articulation via LLM (not just trigger/consequence)
-- [ ] Spurious correlation detection (require mechanistic explanation for causal links)
-- [ ] Context-dependent truth resolution via LLM
-- [ ] Configurable LLM provider for consolidation (Anthropic, OpenAI, Ollama, local)
+- [x] LLM-powered principle extraction (replace callback with Anthropic/OpenAI calls)
+- [x] LLM-based contradiction detection during validation
+- [x] Causal mechanism articulation via LLM (not just trigger/consequence)
+- [x] Spurious correlation detection (require mechanistic explanation for causal links)
+- [x] Context-dependent truth resolution via LLM
+- [x] Configurable LLM provider for consolidation (Mock, Anthropic, OpenAI)
+- [x] Structured prompt templates for all LLM operations
+- [x] 142 tests across 15 test files
 
 ### v0.3.0 — Vector Performance
 
