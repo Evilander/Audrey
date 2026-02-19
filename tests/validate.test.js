@@ -13,7 +13,7 @@ describe('validateMemory', () => {
   beforeEach(async () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
     embedding = new MockEmbeddingProvider({ dimensions: 8 });
   });
 
@@ -31,6 +31,7 @@ describe('validateMemory', () => {
       VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`).run(
       'sem-1', 'Stripe rate limit is 100 req/s', vecBuf, new Date().toISOString(), JSON.stringify(['ep-0'])
     );
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run('sem-1', vecBuf, 'active');
 
     // Validate a new similar episode (SAME content = SAME embedding = similarity 1.0)
     const result = await validateMemory(db, embedding, {
@@ -63,6 +64,7 @@ describe('validateMemory', () => {
       VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`).run(
       'sem-2', 'test memory content', vecBuf, new Date().toISOString(), JSON.stringify(['ep-0'])
     );
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run('sem-2', vecBuf, 'active');
     // Insert the original episode with source 'inference'
     db.prepare(`INSERT INTO episodes (id, content, source, source_reliability, created_at)
       VALUES (?, ?, ?, ?, ?)`).run('ep-0', 'test memory content', 'inference', 0.6, new Date().toISOString());
@@ -86,7 +88,7 @@ describe('createContradiction', () => {
   beforeEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
   });
 
   afterEach(() => {
@@ -116,7 +118,7 @@ describe('reopenContradiction', () => {
   beforeEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
   });
 
   afterEach(() => {
@@ -140,7 +142,7 @@ describe('validateMemory with LLM contradiction detection', () => {
   beforeEach(async () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
     embedding = new MockEmbeddingProvider({ dimensions: 8 });
   });
 
@@ -157,6 +159,7 @@ describe('validateMemory with LLM contradiction detection', () => {
       VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`).run(
       'sem-1', 'Rate limit is 100 per second', vecBuf, new Date().toISOString(), '[]'
     );
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run('sem-1', vecBuf, 'active');
 
     const contradictLlm = new MockLLMProvider({
       responses: {
@@ -191,6 +194,7 @@ describe('validateMemory with LLM contradiction detection', () => {
       VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`).run(
       'sem-c', 'unique semantic memory for contradiction test', vecBuf, new Date().toISOString(), '[]'
     );
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run('sem-c', vecBuf, 'active');
 
     const contradictLlm = new MockLLMProvider({
       responses: {
@@ -225,6 +229,7 @@ describe('validateMemory with LLM contradiction detection', () => {
       VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`).run(
       'sem-nc', 'some test memory', vecBuf, new Date().toISOString(), '[]'
     );
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run('sem-nc', vecBuf, 'active');
 
     const noContradictLlm = new MockLLMProvider({
       responses: {
@@ -256,6 +261,7 @@ describe('validateMemory with LLM contradiction detection', () => {
       VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`).run(
       'sem-no-llm', 'memory without llm', vecBuf, new Date().toISOString(), '[]'
     );
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run('sem-no-llm', vecBuf, 'active');
 
     const result = await validateMemory(db, embedding, {
       id: 'ep-no-llm',
