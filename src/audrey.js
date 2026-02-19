@@ -33,18 +33,25 @@ export class Audrey extends EventEmitter {
   }
 
   async encode(params) {
+    if (!params.content || typeof params.content !== 'string') {
+      throw new Error('content must be a non-empty string');
+    }
     const id = await encodeEpisode(this.db, this.embeddingProvider, params);
     this.emit('encode', { id, ...params });
-    // Async validation (non-blocking)
-    validateMemory(this.db, this.embeddingProvider, { id, ...params }).then(result => {
-      if (result.action === 'reinforced') {
-        this.emit('reinforcement', {
-          episodeId: id,
-          targetId: result.targetId || result.semanticId,
-          similarity: result.similarity,
-        });
-      }
-    }).catch(() => {});
+
+    // Validation runs async but errors are surfaced via events
+    validateMemory(this.db, this.embeddingProvider, { id, ...params })
+      .then(result => {
+        if (result.action === 'reinforced') {
+          this.emit('reinforcement', {
+            episodeId: id,
+            targetId: result.semanticId,
+            similarity: result.similarity,
+          });
+        }
+      })
+      .catch(err => this.emit('error', err));
+
     return id;
   }
 

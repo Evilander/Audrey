@@ -1,19 +1,7 @@
 import { generateId } from './ulid.js';
+import { cosineSimilarity, safeJsonParse } from './utils.js';
 
 const REINFORCEMENT_THRESHOLD = 0.85;
-
-function cosineSimilarity(bufA, bufB, provider) {
-  const a = provider.bufferToVector(bufA);
-  const b = provider.bufferToVector(bufB);
-  let dot = 0, magA = 0, magB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
-  }
-  const mag = Math.sqrt(magA) * Math.sqrt(magB);
-  return mag === 0 ? 0 : dot / mag;
-}
 
 /**
  * Validate a new episodic memory against existing semantic memories.
@@ -44,9 +32,7 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
 
   if (bestMatch && bestSimilarity >= threshold) {
     // Reinforce: increment supporting_count, add episode id to evidence list
-    const evidenceIds = bestMatch.evidence_episode_ids
-      ? JSON.parse(bestMatch.evidence_episode_ids)
-      : [];
+    const evidenceIds = safeJsonParse(bestMatch.evidence_episode_ids, []);
     if (!evidenceIds.includes(episode.id)) {
       evidenceIds.push(episode.id);
     }

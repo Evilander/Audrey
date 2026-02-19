@@ -1,22 +1,5 @@
 import { computeConfidence, DEFAULT_HALF_LIVES } from './confidence.js';
-
-function cosineSimilarity(bufA, bufB, provider) {
-  const a = provider.bufferToVector(bufA);
-  const b = provider.bufferToVector(bufB);
-  let dot = 0, magA = 0, magB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
-  }
-  const mag = Math.sqrt(magA) * Math.sqrt(magB);
-  return mag === 0 ? 0 : dot / mag;
-}
-
-function daysBetween(dateStr, now) {
-  const then = new Date(dateStr);
-  return Math.max(0, (now.getTime() - then.getTime()) / (1000 * 60 * 60 * 24));
-}
+import { cosineSimilarity, daysBetween, safeJsonParse } from './utils.js';
 
 export async function recall(db, embeddingProvider, query, options = {}) {
   const {
@@ -129,9 +112,7 @@ export async function recall(db, embeddingProvider, query, options = {}) {
 
       if (includeProvenance) {
         entry.provenance = {
-          evidenceEpisodeIds: sem.evidence_episode_ids
-            ? JSON.parse(sem.evidence_episode_ids)
-            : [],
+          evidenceEpisodeIds: safeJsonParse(sem.evidence_episode_ids, []),
           evidenceCount: sem.evidence_count || 0,
           supportingCount: sem.supporting_count || 0,
           contradictingCount: sem.contradicting_count || 0,
@@ -208,9 +189,7 @@ export async function recall(db, embeddingProvider, query, options = {}) {
 
       if (includeProvenance) {
         entry.provenance = {
-          evidenceEpisodeIds: proc.evidence_episode_ids
-            ? JSON.parse(proc.evidence_episode_ids)
-            : [],
+          evidenceEpisodeIds: safeJsonParse(proc.evidence_episode_ids, []),
           successCount: proc.success_count || 0,
           failureCount: proc.failure_count || 0,
           triggerConditions: proc.trigger_conditions || null,
