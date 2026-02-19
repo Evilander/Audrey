@@ -1,11 +1,5 @@
 import { computeConfidence, DEFAULT_HALF_LIVES } from './confidence.js';
-import { cosineSimilarity, daysBetween, safeJsonParse } from './utils.js';
-
-function hasVec0Tables(db) {
-  return !!db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_episodes'"
-  ).get();
-}
+import { daysBetween, safeJsonParse } from './utils.js';
 
 function computeEpisodicConfidence(ep, now) {
   const ageDays = daysBetween(ep.created_at, now);
@@ -196,72 +190,6 @@ function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeP
   return { results, matchedIds };
 }
 
-function bruteEpisodic(db, queryBuffer, embeddingProvider, now, minConfidence, includeProvenance) {
-  const episodes = db.prepare(
-    'SELECT * FROM episodes WHERE superseded_by IS NULL AND embedding IS NOT NULL'
-  ).all();
-
-  const results = [];
-  for (const ep of episodes) {
-    const similarity = cosineSimilarity(queryBuffer, ep.embedding, embeddingProvider);
-    const confidence = computeEpisodicConfidence(ep, now);
-    if (confidence < minConfidence) continue;
-    const score = similarity * confidence;
-    results.push(buildEpisodicEntry(ep, confidence, score, includeProvenance));
-  }
-  return results;
-}
-
-function bruteSemantic(db, queryBuffer, embeddingProvider, now, minConfidence, includeProvenance, includeDormant) {
-  let stateFilter;
-  if (includeDormant) {
-    stateFilter = "state IN ('active', 'context_dependent', 'dormant')";
-  } else {
-    stateFilter = "state IN ('active', 'context_dependent')";
-  }
-
-  const semantics = db.prepare(
-    `SELECT * FROM semantics WHERE ${stateFilter} AND embedding IS NOT NULL`
-  ).all();
-
-  const results = [];
-  const matchedIds = [];
-  for (const sem of semantics) {
-    const similarity = cosineSimilarity(queryBuffer, sem.embedding, embeddingProvider);
-    const confidence = computeSemanticConfidence(sem, now);
-    if (confidence < minConfidence) continue;
-    const score = similarity * confidence;
-    matchedIds.push(sem.id);
-    results.push(buildSemanticEntry(sem, confidence, score, includeProvenance));
-  }
-  return { results, matchedIds };
-}
-
-function bruteProcedural(db, queryBuffer, embeddingProvider, now, minConfidence, includeProvenance, includeDormant) {
-  let stateFilter;
-  if (includeDormant) {
-    stateFilter = "state IN ('active', 'context_dependent', 'dormant')";
-  } else {
-    stateFilter = "state IN ('active', 'context_dependent')";
-  }
-
-  const procedures = db.prepare(
-    `SELECT * FROM procedures WHERE ${stateFilter} AND embedding IS NOT NULL`
-  ).all();
-
-  const results = [];
-  const matchedIds = [];
-  for (const proc of procedures) {
-    const similarity = cosineSimilarity(queryBuffer, proc.embedding, embeddingProvider);
-    const confidence = computeProceduralConfidence(proc, now);
-    if (confidence < minConfidence) continue;
-    const score = similarity * confidence;
-    matchedIds.push(proc.id);
-    results.push(buildProceduralEntry(proc, confidence, score, includeProvenance));
-  }
-  return { results, matchedIds };
-}
-
 export async function* recallStream(db, embeddingProvider, query, options = {}) {
   const {
     minConfidence = 0,
@@ -275,22 +203,18 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   const queryBuffer = embeddingProvider.vectorToBuffer(queryVector);
   const searchTypes = types || ['episodic', 'semantic', 'procedural'];
   const now = new Date();
-  const useKnn = hasVec0Tables(db);
   const candidateK = limit * 3;
 
   const allResults = [];
 
   if (searchTypes.includes('episodic')) {
-    const episodic = useKnn
-      ? knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance)
-      : bruteEpisodic(db, queryBuffer, embeddingProvider, now, minConfidence, includeProvenance);
+    const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance);
     allResults.push(...episodic);
   }
 
   if (searchTypes.includes('semantic')) {
-    const { results: semResults, matchedIds: semIds } = useKnn
-      ? knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant)
-      : bruteSemantic(db, queryBuffer, embeddingProvider, now, minConfidence, includeProvenance, includeDormant);
+    const { results: semResults, matchedIds: semIds } =
+      knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant);
     allResults.push(...semResults);
 
     if (semIds.length > 0) {
@@ -305,9 +229,8 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   }
 
   if (searchTypes.includes('procedural')) {
-    const { results: procResults, matchedIds: procIds } = useKnn
-      ? knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant)
-      : bruteProcedural(db, queryBuffer, embeddingProvider, now, minConfidence, includeProvenance, includeDormant);
+    const { results: procResults, matchedIds: procIds } =
+      knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant);
     allResults.push(...procResults);
 
     if (procIds.length > 0) {
