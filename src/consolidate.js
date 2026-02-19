@@ -148,8 +148,8 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
     let principlesExtracted = 0;
 
     const promoteAll = db.transaction(() => {
-      for (const data of clusterData) {
-        allInputIds.push(...data.clusterIds);
+      for (const entry of clusterData) {
+        allInputIds.push(...entry.clusterIds);
 
         db.prepare(`
           INSERT INTO semantics (
@@ -159,30 +159,30 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
             consolidation_model, created_at
           ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
-          data.semanticId,
-          data.principle.content,
-          data.embeddingBuffer,
-          JSON.stringify(data.clusterIds),
-          data.cluster.length,
-          data.cluster.length,
-          data.sourceTypeDiversity,
+          entry.semanticId,
+          entry.principle.content,
+          entry.embeddingBuffer,
+          JSON.stringify(entry.clusterIds),
+          entry.cluster.length,
+          entry.cluster.length,
+          entry.sourceTypeDiversity,
           runId,
           embeddingProvider.modelName,
           embeddingProvider.modelVersion,
           llmProvider?.modelName || null,
-          data.semanticNow,
+          entry.semanticNow,
         );
 
         db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
-          data.semanticId, data.embeddingBuffer, 'active'
+          entry.semanticId, entry.embeddingBuffer, 'active'
         );
 
-        allOutputIds.push(data.semanticId);
+        allOutputIds.push(entry.semanticId);
         principlesExtracted++;
 
         const markStmt = db.prepare('UPDATE episodes SET consolidated = 1 WHERE id = ?');
         const markVecStmt = db.prepare('UPDATE vec_episodes SET consolidated = ? WHERE id = ?');
-        for (const ep of data.cluster) {
+        for (const ep of entry.cluster) {
           markStmt.run(ep.id);
           markVecStmt.run(BigInt(1), ep.id);
         }

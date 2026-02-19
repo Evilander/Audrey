@@ -15,7 +15,7 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
   const episodeVector = await embeddingProvider.embed(episode.content);
   const episodeBuffer = embeddingProvider.vectorToBuffer(episodeVector);
 
-  const result = db.prepare(`
+  const nearestSemantic = db.prepare(`
     SELECT s.*, (1.0 - v.distance) AS similarity
     FROM vec_semantics v
     JOIN semantics s ON s.id = v.id
@@ -27,9 +27,9 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
   let bestMatch = null;
   let bestSimilarity = 0;
 
-  if (result) {
-    bestMatch = result;
-    bestSimilarity = result.similarity;
+  if (nearestSemantic) {
+    bestMatch = nearestSemantic;
+    bestSimilarity = nearestSemantic.similarity;
   }
 
   if (bestMatch && bestSimilarity >= threshold) {
@@ -66,13 +66,13 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
 
   if (bestMatch && bestSimilarity >= contradictionThreshold && llmProvider) {
     const messages = buildContradictionDetectionPrompt(episode.content, bestMatch.content);
-    const llmResult = await llmProvider.json(messages);
+    const verdict = await llmProvider.json(messages);
 
-    if (llmResult.contradicts) {
-      const resolution = llmResult.resolution === 'context_dependent'
-        ? { type: 'context_dependent', conditions: llmResult.conditions, explanation: llmResult.explanation }
-        : llmResult.resolution
-          ? { type: llmResult.resolution, explanation: llmResult.explanation }
+    if (verdict.contradicts) {
+      const resolution = verdict.resolution === 'context_dependent'
+        ? { type: 'context_dependent', conditions: verdict.conditions, explanation: verdict.explanation }
+        : verdict.resolution
+          ? { type: verdict.resolution, explanation: verdict.explanation }
           : null;
 
       const contradictionId = createContradiction(
@@ -84,11 +84,11 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
         resolution,
       );
 
-      if (llmResult.resolution === 'new_wins') {
+      if (verdict.resolution === 'new_wins') {
         db.prepare("UPDATE semantics SET state = 'disputed' WHERE id = ?").run(bestMatch.id);
-      } else if (llmResult.resolution === 'context_dependent' && llmResult.conditions) {
+      } else if (verdict.resolution === 'context_dependent' && verdict.conditions) {
         db.prepare("UPDATE semantics SET state = 'context_dependent', conditions = ? WHERE id = ?")
-          .run(JSON.stringify(llmResult.conditions), bestMatch.id);
+          .run(JSON.stringify(verdict.conditions), bestMatch.id);
       }
 
       return {
@@ -96,7 +96,7 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
         contradictionId,
         semanticId: bestMatch.id,
         similarity: bestSimilarity,
-        resolution: llmResult.resolution || null,
+        resolution: verdict.resolution || null,
       };
     }
   }
