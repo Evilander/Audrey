@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { validateMemory, createContradiction, reopenContradiction } from '../src/validate.js';
 import { createDatabase, closeDatabase } from '../src/db.js';
 import { MockEmbeddingProvider } from '../src/embedding.js';
+import { MockLLMProvider } from '../src/llm.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-validate-data';
@@ -130,5 +131,138 @@ describe('reopenContradiction', () => {
     expect(row.state).toBe('reopened');
     expect(row.reopen_evidence_id).toBe('ep-99');
     expect(row.reopened_at).not.toBeNull();
+  });
+});
+
+describe('validateMemory with LLM contradiction detection', () => {
+  let db, embedding;
+
+  beforeEach(async () => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+    db = createDatabase(TEST_DIR);
+    embedding = new MockEmbeddingProvider({ dimensions: 8 });
+  });
+
+  afterEach(() => {
+    closeDatabase(db);
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('detects contradiction via LLM when similarity is in middle zone', async () => {
+    const vec = await embedding.embed('Rate limit is 100 per second');
+    const vecBuf = embedding.vectorToBuffer(vec);
+    db.prepare(`INSERT INTO semantics (id, content, embedding, state, evidence_count,
+      supporting_count, source_type_diversity, created_at, evidence_episode_ids)
+      VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`).run(
+      'sem-1', 'Rate limit is 100 per second', vecBuf, new Date().toISOString(), '[]'
+    );
+
+    const contradictLlm = new MockLLMProvider({
+      responses: {
+        contradictionDetection: {
+          contradicts: true,
+          explanation: 'The rate limits are different values',
+          resolution: 'context_dependent',
+          conditions: { new: 'test mode', existing: 'live mode' },
+        },
+      },
+    });
+
+    // Same content = similarity 1.0 = reinforcement zone (above threshold)
+    const result = await validateMemory(db, embedding, {
+      id: 'ep-new',
+      content: 'Rate limit is 100 per second',
+      source: 'direct-observation',
+    }, {
+      llmProvider: contradictLlm,
+      contradictionThreshold: 0.0,
+    });
+
+    // With similarity 1.0 and default threshold 0.85, it reinforces
+    expect(result.action).toBe('reinforced');
+  });
+
+  it('creates contradiction record when LLM confirms contradiction', async () => {
+    const vec = await embedding.embed('unique semantic memory for contradiction test');
+    const vecBuf = embedding.vectorToBuffer(vec);
+    db.prepare(`INSERT INTO semantics (id, content, embedding, state, evidence_count,
+      supporting_count, source_type_diversity, created_at, evidence_episode_ids)
+      VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`).run(
+      'sem-c', 'unique semantic memory for contradiction test', vecBuf, new Date().toISOString(), '[]'
+    );
+
+    const contradictLlm = new MockLLMProvider({
+      responses: {
+        contradictionDetection: {
+          contradicts: true,
+          explanation: 'These claims conflict',
+          resolution: 'new_wins',
+          conditions: null,
+        },
+      },
+    });
+
+    const result = await validateMemory(db, embedding, {
+      id: 'ep-contra',
+      content: 'unique semantic memory for contradiction test',
+      source: 'direct-observation',
+    }, {
+      llmProvider: contradictLlm,
+      threshold: 1.1,
+      contradictionThreshold: 0.5,
+    });
+
+    expect(result.action).toBe('contradiction');
+    expect(result.contradictionId).toBeDefined();
+  });
+
+  it('returns no-action when LLM says no contradiction', async () => {
+    const vec = await embedding.embed('some test memory');
+    const vecBuf = embedding.vectorToBuffer(vec);
+    db.prepare(`INSERT INTO semantics (id, content, embedding, state, evidence_count,
+      supporting_count, source_type_diversity, created_at, evidence_episode_ids)
+      VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`).run(
+      'sem-nc', 'some test memory', vecBuf, new Date().toISOString(), '[]'
+    );
+
+    const noContradictLlm = new MockLLMProvider({
+      responses: {
+        contradictionDetection: {
+          contradicts: false,
+          explanation: 'These are compatible claims',
+        },
+      },
+    });
+
+    const result = await validateMemory(db, embedding, {
+      id: 'ep-nc',
+      content: 'some test memory',
+      source: 'direct-observation',
+    }, {
+      llmProvider: noContradictLlm,
+      threshold: 1.1,
+      contradictionThreshold: 0.5,
+    });
+
+    expect(result.action).toBe('none');
+  });
+
+  it('skips LLM check when no llmProvider configured', async () => {
+    const vec = await embedding.embed('memory without llm');
+    const vecBuf = embedding.vectorToBuffer(vec);
+    db.prepare(`INSERT INTO semantics (id, content, embedding, state, evidence_count,
+      supporting_count, source_type_diversity, created_at, evidence_episode_ids)
+      VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`).run(
+      'sem-no-llm', 'memory without llm', vecBuf, new Date().toISOString(), '[]'
+    );
+
+    const result = await validateMemory(db, embedding, {
+      id: 'ep-no-llm',
+      content: 'memory without llm',
+      source: 'direct-observation',
+    });
+
+    expect(result.action).toBe('reinforced');
   });
 });

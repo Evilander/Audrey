@@ -1,20 +1,20 @@
 import { generateId } from './ulid.js';
 import { cosineSimilarity, safeJsonParse } from './utils.js';
+import { buildContradictionDetectionPrompt } from './prompts.js';
 
 const REINFORCEMENT_THRESHOLD = 0.85;
+const CONTRADICTION_THRESHOLD = 0.60;
 
-/**
- * Validate a new episodic memory against existing semantic memories.
- * If similarity >= threshold, reinforce the matching semantic memory.
- * Returns { action: 'reinforced' | 'contradiction' | 'none', semanticId?, similarity? }
- */
 export async function validateMemory(db, embeddingProvider, episode, options = {}) {
-  const { threshold = REINFORCEMENT_THRESHOLD } = options;
+  const {
+    threshold = REINFORCEMENT_THRESHOLD,
+    contradictionThreshold = CONTRADICTION_THRESHOLD,
+    llmProvider,
+  } = options;
 
   const episodeVector = await embeddingProvider.embed(episode.content);
   const episodeBuffer = embeddingProvider.vectorToBuffer(episodeVector);
 
-  // Scan all active semantic memories for similarity
   const semantics = db.prepare(
     "SELECT * FROM semantics WHERE state IN ('active', 'context_dependent') AND embedding IS NOT NULL"
   ).all();
@@ -30,14 +30,13 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
     }
   }
 
+  // Zone 1: High similarity — reinforce
   if (bestMatch && bestSimilarity >= threshold) {
-    // Reinforce: increment supporting_count, add episode id to evidence list
     const evidenceIds = safeJsonParse(bestMatch.evidence_episode_ids, []);
     if (!evidenceIds.includes(episode.id)) {
       evidenceIds.push(episode.id);
     }
 
-    // Compute source_type_diversity: count distinct source types across all evidence episodes
     const diversity = computeSourceDiversity(db, evidenceIds, episode);
 
     const now = new Date().toISOString();
@@ -64,20 +63,53 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
     };
   }
 
+  // Zone 2: Middle similarity — check for contradiction via LLM
+  if (bestMatch && bestSimilarity >= contradictionThreshold && llmProvider) {
+    const messages = buildContradictionDetectionPrompt(episode.content, bestMatch.content);
+    const llmResult = await llmProvider.json(messages);
+
+    if (llmResult.contradicts) {
+      const resolution = llmResult.resolution === 'context_dependent'
+        ? { type: 'context_dependent', conditions: llmResult.conditions, explanation: llmResult.explanation }
+        : llmResult.resolution
+          ? { type: llmResult.resolution, explanation: llmResult.explanation }
+          : null;
+
+      const contradictionId = createContradiction(
+        db,
+        bestMatch.id,
+        'semantic',
+        episode.id,
+        'episodic',
+        resolution,
+      );
+
+      // Update semantic state if resolution provided
+      if (llmResult.resolution === 'new_wins') {
+        db.prepare("UPDATE semantics SET state = 'disputed' WHERE id = ?").run(bestMatch.id);
+      } else if (llmResult.resolution === 'context_dependent' && llmResult.conditions) {
+        db.prepare("UPDATE semantics SET state = 'context_dependent', conditions = ? WHERE id = ?")
+          .run(JSON.stringify(llmResult.conditions), bestMatch.id);
+      }
+
+      return {
+        action: 'contradiction',
+        contradictionId,
+        semanticId: bestMatch.id,
+        similarity: bestSimilarity,
+        resolution: llmResult.resolution || null,
+      };
+    }
+  }
+
+  // Zone 3: Low similarity or no match — no action
   return { action: 'none' };
 }
 
-/**
- * Count distinct source types across evidence episodes.
- * Looks up episodes in the DB plus the incoming episode's source.
- */
 function computeSourceDiversity(db, evidenceIds, currentEpisode) {
   const sourceTypes = new Set();
-
-  // Add the current episode's source type
   sourceTypes.add(currentEpisode.source);
 
-  // Look up existing episodes' source types
   if (evidenceIds.length > 0) {
     const placeholders = evidenceIds.map(() => '?').join(',');
     const rows = db.prepare(
@@ -91,10 +123,6 @@ function computeSourceDiversity(db, evidenceIds, currentEpisode) {
   return sourceTypes.size;
 }
 
-/**
- * Create a contradiction record between two claims.
- * If resolution is provided, the contradiction is immediately resolved.
- */
 export function createContradiction(db, claimAId, claimAType, claimBId, claimBType, resolution) {
   const id = generateId();
   const now = new Date().toISOString();
@@ -112,9 +140,6 @@ export function createContradiction(db, claimAId, claimAType, claimBId, claimBTy
   return id;
 }
 
-/**
- * Reopen a previously resolved contradiction with new evidence.
- */
 export function reopenContradiction(db, contradictionId, newEvidenceId) {
   const now = new Date().toISOString();
   db.prepare(`
