@@ -118,8 +118,6 @@ function buildProceduralEntry(proc, confidence, score, includeProvenance) {
   return entry;
 }
 
-// --- KNN path: uses sqlite-vec vec0 virtual tables ---
-
 function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance) {
   const rows = db.prepare(`
     SELECT e.*, (1.0 - v.distance) AS similarity
@@ -197,8 +195,6 @@ function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeP
   }
   return { results, matchedIds };
 }
-
-// --- Brute-force fallback: no vec0 tables ---
 
 function bruteEpisodic(db, queryBuffer, embeddingProvider, now, minConfidence, includeProvenance) {
   const episodes = db.prepare(
@@ -284,7 +280,6 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
 
   const allResults = [];
 
-  // --- Episodic ---
   if (searchTypes.includes('episodic')) {
     const episodic = useKnn
       ? knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance)
@@ -292,14 +287,12 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
     allResults.push(...episodic);
   }
 
-  // --- Semantic ---
   if (searchTypes.includes('semantic')) {
     const { results: semResults, matchedIds: semIds } = useKnn
       ? knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant)
       : bruteSemantic(db, queryBuffer, embeddingProvider, now, minConfidence, includeProvenance, includeDormant);
     allResults.push(...semResults);
 
-    // Retrieval reinforcement
     if (semIds.length > 0) {
       const updateStmt = db.prepare(
         'UPDATE semantics SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id = ?'
@@ -311,14 +304,12 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
     }
   }
 
-  // --- Procedural ---
   if (searchTypes.includes('procedural')) {
     const { results: procResults, matchedIds: procIds } = useKnn
       ? knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant)
       : bruteProcedural(db, queryBuffer, embeddingProvider, now, minConfidence, includeProvenance, includeDormant);
     allResults.push(...procResults);
 
-    // Retrieval reinforcement
     if (procIds.length > 0) {
       const updateStmt = db.prepare(
         'UPDATE procedures SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id = ?'
@@ -330,7 +321,6 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
     }
   }
 
-  // Sort by score descending, yield top N
   allResults.sort((a, b) => b.score - a.score);
   const top = allResults.slice(0, limit);
   for (const entry of top) {

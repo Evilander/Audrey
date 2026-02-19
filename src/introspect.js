@@ -1,7 +1,6 @@
 import { safeJsonParse } from './utils.js';
 
 export function introspect(db) {
-  // Memory counts in one query
   const counts = db.prepare(`
     SELECT
       (SELECT COUNT(*) FROM episodes) as episodic,
@@ -12,7 +11,6 @@ export function introspect(db) {
         + (SELECT COUNT(*) FROM procedures WHERE state = 'dormant') as dormant
   `).get();
 
-  // Contradiction counts in one query
   const contradictions = db.prepare(`
     SELECT
       SUM(CASE WHEN state = 'open' THEN 1 ELSE 0 END) as open,
@@ -22,7 +20,6 @@ export function introspect(db) {
     FROM contradictions
   `).get();
 
-  // Consolidation info
   const lastRun = db.prepare(`
     SELECT completed_at FROM consolidation_runs
     WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 1

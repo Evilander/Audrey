@@ -23,7 +23,6 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
   let bestSimilarity = 0;
 
   if (hasVec) {
-    // KNN k=1: find the single closest semantic memory
     const result = db.prepare(`
       SELECT s.*, (1.0 - v.distance) AS similarity
       FROM vec_semantics v
@@ -38,7 +37,6 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
       bestSimilarity = result.similarity;
     }
   } else {
-    // Fallback: original brute-force scan
     const semantics = db.prepare(
       "SELECT * FROM semantics WHERE state IN ('active', 'context_dependent') AND embedding IS NOT NULL"
     ).all();
@@ -51,7 +49,6 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
     }
   }
 
-  // Zone 1: High similarity — reinforce
   if (bestMatch && bestSimilarity >= threshold) {
     const evidenceIds = safeJsonParse(bestMatch.evidence_episode_ids, []);
     if (!evidenceIds.includes(episode.id)) {
@@ -84,7 +81,6 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
     };
   }
 
-  // Zone 2: Middle similarity — check for contradiction via LLM
   if (bestMatch && bestSimilarity >= contradictionThreshold && llmProvider) {
     const messages = buildContradictionDetectionPrompt(episode.content, bestMatch.content);
     const llmResult = await llmProvider.json(messages);
@@ -105,7 +101,6 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
         resolution,
       );
 
-      // Update semantic state if resolution provided
       if (llmResult.resolution === 'new_wins') {
         db.prepare("UPDATE semantics SET state = 'disputed' WHERE id = ?").run(bestMatch.id);
       } else if (llmResult.resolution === 'context_dependent' && llmResult.conditions) {
@@ -123,7 +118,6 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
     }
   }
 
-  // Zone 3: Low similarity or no match — no action
   return { action: 'none' };
 }
 
