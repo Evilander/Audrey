@@ -1,5 +1,4 @@
 import { generateId } from './ulid.js';
-import { cosineSimilarity } from './utils.js';
 import { buildPrincipleExtractionPrompt } from './prompts.js';
 
 function clusterViaKNN(db, episodes, similarityThreshold, minClusterSize) {
@@ -64,50 +63,6 @@ function clusterViaKNN(db, episodes, similarityThreshold, minClusterSize) {
   return clusters;
 }
 
-function clusterBruteForce(episodes, embeddingProvider, similarityThreshold, minClusterSize) {
-  const n = episodes.length;
-  const parent = new Array(n);
-  for (let i = 0; i < n; i++) parent[i] = i;
-
-  function find(x) {
-    while (parent[x] !== x) {
-      parent[x] = parent[parent[x]];
-      x = parent[x];
-    }
-    return x;
-  }
-
-  function union(a, b) {
-    const ra = find(a);
-    const rb = find(b);
-    if (ra !== rb) parent[ra] = rb;
-  }
-
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const sim = cosineSimilarity(episodes[i].embedding, episodes[j].embedding, embeddingProvider);
-      if (sim >= similarityThreshold) {
-        union(i, j);
-      }
-    }
-  }
-
-  const groups = new Map();
-  for (let i = 0; i < n; i++) {
-    const root = find(i);
-    if (!groups.has(root)) groups.set(root, []);
-    groups.get(root).push(episodes[i]);
-  }
-
-  const clusters = [];
-  for (const group of groups.values()) {
-    if (group.length >= minClusterSize) {
-      clusters.push(group);
-    }
-  }
-  return clusters;
-}
-
 export function clusterEpisodes(db, embeddingProvider, options = {}) {
   const {
     similarityThreshold = 0.85,
@@ -120,15 +75,7 @@ export function clusterEpisodes(db, embeddingProvider, options = {}) {
 
   if (episodes.length === 0) return [];
 
-  const hasVec = !!db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_episodes'"
-  ).get();
-
-  if (hasVec) {
-    return clusterViaKNN(db, episodes, similarityThreshold, minClusterSize);
-  }
-
-  return clusterBruteForce(episodes, embeddingProvider, similarityThreshold, minClusterSize);
+  return clusterViaKNN(db, episodes, similarityThreshold, minClusterSize);
 }
 
 function defaultExtractPrinciple(episodes) {
@@ -200,14 +147,6 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
     const allOutputIds = [];
     let principlesExtracted = 0;
 
-    const hasVec = !!db.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_episodes'"
-    ).get();
-
-    const hasVecSem = !!db.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_semantics'"
-    ).get();
-
     const promoteAll = db.transaction(() => {
       for (const data of clusterData) {
         allInputIds.push(...data.clusterIds);
@@ -234,24 +173,18 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
           data.semanticNow,
         );
 
-        if (hasVecSem) {
-          db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
-            data.semanticId, data.embeddingBuffer, 'active'
-          );
-        }
+        db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+          data.semanticId, data.embeddingBuffer, 'active'
+        );
 
         allOutputIds.push(data.semanticId);
         principlesExtracted++;
 
         const markStmt = db.prepare('UPDATE episodes SET consolidated = 1 WHERE id = ?');
-        const markVecStmt = hasVec
-          ? db.prepare('UPDATE vec_episodes SET consolidated = ? WHERE id = ?')
-          : null;
+        const markVecStmt = db.prepare('UPDATE vec_episodes SET consolidated = ? WHERE id = ?');
         for (const ep of data.cluster) {
           markStmt.run(ep.id);
-          if (markVecStmt) {
-            markVecStmt.run(BigInt(1), ep.id);
-          }
+          markVecStmt.run(BigInt(1), ep.id);
         }
       }
 
