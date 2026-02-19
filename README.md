@@ -2,7 +2,6 @@
 
 Biological memory architecture for AI agents. Gives agents cognitive memory that decays, consolidates, self-validates, and learns from experience — not just a database.
 
-Named after the neuroscience concept of an [engram](https://en.wikipedia.org/wiki/Engram_(neuropsychology)) — the physical trace of a memory in the brain.
 
 ## Why Audrey Exists
 
