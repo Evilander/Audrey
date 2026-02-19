@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import * as sqliteVec from 'sqlite-vec';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -98,6 +99,11 @@ const SCHEMA = `
     status TEXT DEFAULT 'running' CHECK(status IN ('running','completed','failed','rolled_back'))
   );
 
+  CREATE TABLE IF NOT EXISTS audrey_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_episodes_created ON episodes(created_at);
   CREATE INDEX IF NOT EXISTS idx_episodes_consolidated ON episodes(consolidated);
   CREATE INDEX IF NOT EXISTS idx_episodes_source ON episodes(source);
@@ -107,7 +113,93 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_consolidation_status ON consolidation_runs(status);
 `;
 
-export function createDatabase(dataDir) {
+function createVec0Tables(db, dimensions) {
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(
+      id text primary key,
+      embedding float[${dimensions}] distance_metric=cosine,
+      source text,
+      consolidated integer
+    );
+  `);
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS vec_semantics USING vec0(
+      id text primary key,
+      embedding float[${dimensions}] distance_metric=cosine,
+      state text
+    );
+  `);
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS vec_procedures USING vec0(
+      id text primary key,
+      embedding float[${dimensions}] distance_metric=cosine,
+      state text
+    );
+  `);
+}
+
+function migrateEmbeddingsToVec0(db) {
+  // Migrate episodes: copy embedding BLOBs from episodes to vec_episodes if vec_episodes is empty
+  const vecEpCount = db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get().c;
+  if (vecEpCount === 0) {
+    const episodes = db.prepare(
+      'SELECT id, embedding, source, consolidated FROM episodes WHERE embedding IS NOT NULL'
+    ).all();
+    if (episodes.length > 0) {
+      const insert = db.prepare(
+        'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+      );
+      const tx = db.transaction(() => {
+        for (const ep of episodes) {
+          insert.run(ep.id, ep.embedding, ep.source, BigInt(ep.consolidated));
+        }
+      });
+      tx();
+    }
+  }
+
+  // Migrate semantics
+  const vecSemCount = db.prepare('SELECT COUNT(*) as c FROM vec_semantics').get().c;
+  if (vecSemCount === 0) {
+    const semantics = db.prepare(
+      'SELECT id, embedding, state FROM semantics WHERE embedding IS NOT NULL'
+    ).all();
+    if (semantics.length > 0) {
+      const insert = db.prepare(
+        'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)'
+      );
+      const tx = db.transaction(() => {
+        for (const sem of semantics) {
+          insert.run(sem.id, sem.embedding, sem.state);
+        }
+      });
+      tx();
+    }
+  }
+
+  // Migrate procedures
+  const vecProcCount = db.prepare('SELECT COUNT(*) as c FROM vec_procedures').get().c;
+  if (vecProcCount === 0) {
+    const procedures = db.prepare(
+      'SELECT id, embedding, state FROM procedures WHERE embedding IS NOT NULL'
+    ).all();
+    if (procedures.length > 0) {
+      const insert = db.prepare(
+        'INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)'
+      );
+      const tx = db.transaction(() => {
+        for (const proc of procedures) {
+          insert.run(proc.id, proc.embedding, proc.state);
+        }
+      });
+      tx();
+    }
+  }
+}
+
+export function createDatabase(dataDir, options = {}) {
+  const { dimensions } = options;
+
   mkdirSync(dataDir, { recursive: true });
   const dbPath = join(dataDir, 'audrey.db');
   const db = new Database(dbPath);
@@ -115,6 +207,37 @@ export function createDatabase(dataDir) {
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
   db.exec(SCHEMA);
+
+  if (dimensions) {
+    // Load sqlite-vec extension
+    sqliteVec.load(db);
+
+    // Validate or store dimensions in config
+    const existing = db.prepare(
+      "SELECT value FROM audrey_config WHERE key = 'dimensions'"
+    ).get();
+
+    if (existing) {
+      const storedDims = parseInt(existing.value, 10);
+      if (storedDims !== dimensions) {
+        db.close();
+        throw new Error(
+          `Dimension mismatch: database was created with ${storedDims} dimensions, but ${dimensions} were requested`
+        );
+      }
+    } else {
+      db.prepare(
+        "INSERT INTO audrey_config (key, value) VALUES ('dimensions', ?)"
+      ).run(String(dimensions));
+    }
+
+    // Create vec0 virtual tables
+    createVec0Tables(db, dimensions);
+
+    // Migrate existing embedding BLOBs into vec0 tables
+    migrateEmbeddingsToVec0(db);
+  }
+
   return db;
 }
 
