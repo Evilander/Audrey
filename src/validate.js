@@ -15,18 +15,39 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
   const episodeVector = await embeddingProvider.embed(episode.content);
   const episodeBuffer = embeddingProvider.vectorToBuffer(episodeVector);
 
-  const semantics = db.prepare(
-    "SELECT * FROM semantics WHERE state IN ('active', 'context_dependent') AND embedding IS NOT NULL"
-  ).all();
+  const hasVec = !!db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_semantics'"
+  ).get();
 
   let bestMatch = null;
   let bestSimilarity = 0;
 
-  for (const sem of semantics) {
-    const similarity = cosineSimilarity(episodeBuffer, sem.embedding, embeddingProvider);
-    if (similarity > bestSimilarity) {
-      bestSimilarity = similarity;
-      bestMatch = sem;
+  if (hasVec) {
+    // KNN k=1: find the single closest semantic memory
+    const result = db.prepare(`
+      SELECT s.*, (1.0 - v.distance) AS similarity
+      FROM vec_semantics v
+      JOIN semantics s ON s.id = v.id
+      WHERE v.embedding MATCH ?
+        AND k = 1
+        AND (v.state = 'active' OR v.state = 'context_dependent')
+    `).get(episodeBuffer);
+
+    if (result) {
+      bestMatch = result;
+      bestSimilarity = result.similarity;
+    }
+  } else {
+    // Fallback: original brute-force scan
+    const semantics = db.prepare(
+      "SELECT * FROM semantics WHERE state IN ('active', 'context_dependent') AND embedding IS NOT NULL"
+    ).all();
+    for (const sem of semantics) {
+      const similarity = cosineSimilarity(episodeBuffer, sem.embedding, embeddingProvider);
+      if (similarity > bestSimilarity) {
+        bestSimilarity = similarity;
+        bestMatch = sem;
+      }
     }
   }
 
