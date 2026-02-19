@@ -14,7 +14,7 @@ describe('clusterEpisodes', () => {
   beforeEach(async () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
     embedding = new MockEmbeddingProvider({ dimensions: 8 });
   });
 
@@ -59,7 +59,7 @@ describe('runConsolidation', () => {
   beforeEach(async () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
     embedding = new MockEmbeddingProvider({ dimensions: 8 });
   });
 
@@ -150,7 +150,7 @@ describe('runConsolidation with LLM', () => {
   beforeEach(async () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR);
+    db = createDatabase(TEST_DIR, { dimensions: 8 });
     embedding = new MockEmbeddingProvider({ dimensions: 8 });
     llm = new MockLLMProvider({
       responses: {
