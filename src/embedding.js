@@ -17,6 +17,10 @@ export class MockEmbeddingProvider {
     return vector.map(v => v / magnitude);
   }
 
+  async embedBatch(texts) {
+    return Promise.all(texts.map(t => this.embed(t)));
+  }
+
   vectorToBuffer(vector) {
     return Buffer.from(new Float32Array(vector).buffer);
   }
@@ -47,6 +51,20 @@ export class OpenAIEmbeddingProvider {
     if (!response.ok) throw new Error(`OpenAI embedding failed: ${response.status}`);
     const data = await response.json();
     return data.data[0].embedding;
+  }
+
+  async embedBatch(texts) {
+    const response = await fetch('https://api.openai.com/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ input: texts, model: this.model, dimensions: this.dimensions }),
+    });
+    if (!response.ok) throw new Error(`OpenAI embedding failed: ${response.status}`);
+    const data = await response.json();
+    return data.data.map(d => d.embedding);
   }
 
   vectorToBuffer(vector) {
