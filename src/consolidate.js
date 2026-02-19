@@ -2,18 +2,69 @@ import { generateId } from './ulid.js';
 import { cosineSimilarity } from './utils.js';
 import { buildPrincipleExtractionPrompt } from './prompts.js';
 
-export function clusterEpisodes(db, embeddingProvider, options = {}) {
-  const {
-    similarityThreshold = 0.85,
-    minClusterSize = 3,
-  } = options;
+function clusterViaKNN(db, episodes, similarityThreshold, minClusterSize) {
+  const n = episodes.length;
+  const k = Math.min(50, n);
+  const idToIndex = new Map(episodes.map((ep, i) => [ep.id, i]));
 
-  const episodes = db.prepare(
-    'SELECT * FROM episodes WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL'
-  ).all();
+  const parent = new Array(n);
+  for (let i = 0; i < n; i++) parent[i] = i;
 
-  if (episodes.length === 0) return [];
+  function find(x) {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  }
 
+  function union(a, b) {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  }
+
+  const getEmbedding = db.prepare('SELECT embedding FROM vec_episodes WHERE id = ?');
+  const knnQuery = db.prepare(`
+    SELECT id, distance
+    FROM vec_episodes
+    WHERE embedding MATCH ? AND k = ? AND consolidated = 0
+  `);
+
+  for (let i = 0; i < n; i++) {
+    const ep = episodes[i];
+    const vecRow = getEmbedding.get(ep.id);
+    if (!vecRow) continue;
+
+    const neighbors = knnQuery.all(vecRow.embedding, k);
+    for (const neighbor of neighbors) {
+      if (neighbor.id === ep.id) continue;
+      const j = idToIndex.get(neighbor.id);
+      if (j === undefined) continue;
+      const similarity = 1.0 - neighbor.distance;
+      if (similarity >= similarityThreshold) {
+        union(i, j);
+      }
+    }
+  }
+
+  const groups = new Map();
+  for (let i = 0; i < n; i++) {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(episodes[i]);
+  }
+
+  const clusters = [];
+  for (const group of groups.values()) {
+    if (group.length >= minClusterSize) {
+      clusters.push(group);
+    }
+  }
+  return clusters;
+}
+
+function clusterBruteForce(episodes, embeddingProvider, similarityThreshold, minClusterSize) {
   const n = episodes.length;
   const parent = new Array(n);
   for (let i = 0; i < n; i++) parent[i] = i;
@@ -54,8 +105,30 @@ export function clusterEpisodes(db, embeddingProvider, options = {}) {
       clusters.push(group);
     }
   }
-
   return clusters;
+}
+
+export function clusterEpisodes(db, embeddingProvider, options = {}) {
+  const {
+    similarityThreshold = 0.85,
+    minClusterSize = 3,
+  } = options;
+
+  const episodes = db.prepare(
+    'SELECT * FROM episodes WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL'
+  ).all();
+
+  if (episodes.length === 0) return [];
+
+  const hasVec = !!db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_episodes'"
+  ).get();
+
+  if (hasVec) {
+    return clusterViaKNN(db, episodes, similarityThreshold, minClusterSize);
+  }
+
+  return clusterBruteForce(episodes, embeddingProvider, similarityThreshold, minClusterSize);
 }
 
 function defaultExtractPrinciple(episodes) {
@@ -127,6 +200,14 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
     const allOutputIds = [];
     let principlesExtracted = 0;
 
+    const hasVec = !!db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_episodes'"
+    ).get();
+
+    const hasVecSem = !!db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='vec_semantics'"
+    ).get();
+
     const promoteAll = db.transaction(() => {
       for (const data of clusterData) {
         allInputIds.push(...data.clusterIds);
@@ -153,12 +234,24 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
           data.semanticNow,
         );
 
+        if (hasVecSem) {
+          db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+            data.semanticId, data.embeddingBuffer, 'active'
+          );
+        }
+
         allOutputIds.push(data.semanticId);
         principlesExtracted++;
 
         const markStmt = db.prepare('UPDATE episodes SET consolidated = 1 WHERE id = ?');
+        const markVecStmt = hasVec
+          ? db.prepare('UPDATE vec_episodes SET consolidated = ? WHERE id = ?')
+          : null;
         for (const ep of data.cluster) {
           markStmt.run(ep.id);
+          if (markVecStmt) {
+            markVecStmt.run(BigInt(1), ep.id);
+          }
         }
       }
 
