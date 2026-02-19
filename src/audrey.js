@@ -3,7 +3,7 @@ import { createDatabase, closeDatabase } from './db.js';
 import { createEmbeddingProvider } from './embedding.js';
 import { createLLMProvider } from './llm.js';
 import { encodeEpisode } from './encode.js';
-import { recall as recallFn } from './recall.js';
+import { recall as recallFn, recallStream as recallStreamFn } from './recall.js';
 import { validateMemory } from './validate.js';
 import { runConsolidation } from './consolidate.js';
 import { applyDecay } from './decay.js';
@@ -23,8 +23,8 @@ export class Audrey extends EventEmitter {
     super();
     this.agent = agent;
     this.dataDir = dataDir;
-    this.db = createDatabase(dataDir);
     this.embeddingProvider = createEmbeddingProvider(embedding);
+    this.db = createDatabase(dataDir, { dimensions: this.embeddingProvider.dimensions });
     this.llmProvider = llm ? createLLMProvider(llm) : null;
     this.consolidationConfig = {
       interval: consolidation.interval || '1h',
@@ -67,8 +67,43 @@ export class Audrey extends EventEmitter {
     return id;
   }
 
+  async encodeBatch(paramsList) {
+    for (const p of paramsList) {
+      if (!p.content || typeof p.content !== 'string') {
+        throw new Error('content must be a non-empty string');
+      }
+    }
+
+    const ids = [];
+    for (const params of paramsList) {
+      const id = await encodeEpisode(this.db, this.embeddingProvider, params);
+      ids.push(id);
+      this.emit('encode', { id, ...params });
+    }
+
+    for (let i = 0; i < ids.length; i++) {
+      validateMemory(this.db, this.embeddingProvider, { id: ids[i], ...paramsList[i] }, {
+        llmProvider: this.llmProvider,
+      })
+        .then(result => {
+          if (result.action === 'reinforced') {
+            this.emit('reinforcement', { episodeId: ids[i], targetId: result.semanticId, similarity: result.similarity });
+          } else if (result.action === 'contradiction') {
+            this.emit('contradiction', { episodeId: ids[i], contradictionId: result.contradictionId, semanticId: result.semanticId, similarity: result.similarity, resolution: result.resolution });
+          }
+        })
+        .catch(err => this.emit('error', err));
+    }
+
+    return ids;
+  }
+
   async recall(query, options = {}) {
     return recallFn(this.db, this.embeddingProvider, query, options);
+  }
+
+  async *recallStream(query, options = {}) {
+    yield* recallStreamFn(this.db, this.embeddingProvider, query, options);
   }
 
   async consolidate(options = {}) {
