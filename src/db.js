@@ -138,63 +138,49 @@ function createVec0Tables(db, dimensions) {
   `);
 }
 
+function migrateTable(db, { source, target, selectCols, insertCols, placeholders, transform }) {
+  const count = db.prepare(`SELECT COUNT(*) as c FROM ${target}`).get().c;
+  if (count > 0) return;
+
+  const rows = db.prepare(`SELECT ${selectCols} FROM ${source} WHERE embedding IS NOT NULL`).all();
+  if (rows.length === 0) return;
+
+  const insert = db.prepare(`INSERT INTO ${target}(${insertCols}) VALUES (${placeholders})`);
+  const tx = db.transaction(() => {
+    for (const row of rows) {
+      insert.run(...transform(row));
+    }
+  });
+  tx();
+}
+
 function migrateEmbeddingsToVec0(db) {
-  // Migrate episodes: copy embedding BLOBs from episodes to vec_episodes if vec_episodes is empty
-  const vecEpCount = db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get().c;
-  if (vecEpCount === 0) {
-    const episodes = db.prepare(
-      'SELECT id, embedding, source, consolidated FROM episodes WHERE embedding IS NOT NULL'
-    ).all();
-    if (episodes.length > 0) {
-      const insert = db.prepare(
-        'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
-      );
-      const tx = db.transaction(() => {
-        for (const ep of episodes) {
-          insert.run(ep.id, ep.embedding, ep.source, BigInt(ep.consolidated));
-        }
-      });
-      tx();
-    }
-  }
+  migrateTable(db, {
+    source: 'episodes',
+    target: 'vec_episodes',
+    selectCols: 'id, embedding, source, consolidated',
+    insertCols: 'id, embedding, source, consolidated',
+    placeholders: '?, ?, ?, ?',
+    transform: (row) => [row.id, row.embedding, row.source, BigInt(row.consolidated ?? 0)],
+  });
 
-  // Migrate semantics
-  const vecSemCount = db.prepare('SELECT COUNT(*) as c FROM vec_semantics').get().c;
-  if (vecSemCount === 0) {
-    const semantics = db.prepare(
-      'SELECT id, embedding, state FROM semantics WHERE embedding IS NOT NULL'
-    ).all();
-    if (semantics.length > 0) {
-      const insert = db.prepare(
-        'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)'
-      );
-      const tx = db.transaction(() => {
-        for (const sem of semantics) {
-          insert.run(sem.id, sem.embedding, sem.state);
-        }
-      });
-      tx();
-    }
-  }
+  migrateTable(db, {
+    source: 'semantics',
+    target: 'vec_semantics',
+    selectCols: 'id, embedding, state',
+    insertCols: 'id, embedding, state',
+    placeholders: '?, ?, ?',
+    transform: (row) => [row.id, row.embedding, row.state],
+  });
 
-  // Migrate procedures
-  const vecProcCount = db.prepare('SELECT COUNT(*) as c FROM vec_procedures').get().c;
-  if (vecProcCount === 0) {
-    const procedures = db.prepare(
-      'SELECT id, embedding, state FROM procedures WHERE embedding IS NOT NULL'
-    ).all();
-    if (procedures.length > 0) {
-      const insert = db.prepare(
-        'INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)'
-      );
-      const tx = db.transaction(() => {
-        for (const proc of procedures) {
-          insert.run(proc.id, proc.embedding, proc.state);
-        }
-      });
-      tx();
-    }
-  }
+  migrateTable(db, {
+    source: 'procedures',
+    target: 'vec_procedures',
+    selectCols: 'id, embedding, state',
+    insertCols: 'id, embedding, state',
+    placeholders: '?, ?, ?',
+    transform: (row) => [row.id, row.embedding, row.state],
+  });
 }
 
 export function createDatabase(dataDir, options = {}) {
@@ -208,7 +194,11 @@ export function createDatabase(dataDir, options = {}) {
   db.pragma('busy_timeout = 5000');
   db.exec(SCHEMA);
 
-  if (dimensions) {
+  if (dimensions != null) {
+    if (!Number.isInteger(dimensions) || dimensions <= 0) {
+      throw new Error(`dimensions must be a positive integer, got: ${dimensions}`);
+    }
+
     // Load sqlite-vec extension
     sqliteVec.load(db);
 
