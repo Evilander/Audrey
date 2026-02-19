@@ -199,10 +199,8 @@ export function createDatabase(dataDir, options = {}) {
       throw new Error(`dimensions must be a positive integer, got: ${dimensions}`);
     }
 
-    // Load sqlite-vec extension
     sqliteVec.load(db);
 
-    // Validate or store dimensions in config
     const existing = db.prepare(
       "SELECT value FROM audrey_config WHERE key = 'dimensions'"
     ).get();
@@ -221,10 +219,8 @@ export function createDatabase(dataDir, options = {}) {
       ).run(String(dimensions));
     }
 
-    // Create vec0 virtual tables
     createVec0Tables(db, dimensions);
 
-    // Migrate existing embedding BLOBs into vec0 tables
     migrateEmbeddingsToVec0(db);
   }
 

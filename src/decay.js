@@ -6,7 +6,6 @@ export function applyDecay(db, { dormantThreshold = 0.1 } = {}) {
   let totalEvaluated = 0;
   let transitionedToDormant = 0;
 
-  // Evaluate active semantic memories
   const semantics = db.prepare(`
     SELECT id, supporting_count, contradicting_count, created_at,
            last_reinforced_at, retrieval_count
@@ -38,7 +37,6 @@ export function applyDecay(db, { dormantThreshold = 0.1 } = {}) {
     }
   }
 
-  // Evaluate active procedural memories
   const procedures = db.prepare(`
     SELECT id, success_count, failure_count, created_at,
            last_reinforced_at, retrieval_count
