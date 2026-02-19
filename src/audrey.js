@@ -27,53 +27,43 @@ export class Audrey extends EventEmitter {
     this.db = createDatabase(dataDir, { dimensions: this.embeddingProvider.dimensions });
     this.llmProvider = llm ? createLLMProvider(llm) : null;
     this.consolidationConfig = {
-      interval: consolidation.interval || '1h',
       minEpisodes: consolidation.minEpisodes || 3,
-      confidenceTarget: consolidation.confidenceTarget || 2.0,
     };
     this.decayConfig = { dormantThreshold: decay.dormantThreshold || 0.1 };
-    this._consolidationTimer = null;
   }
 
-  async encode(params) {
-    if (!params.content || typeof params.content !== 'string') {
-      throw new Error('content must be a non-empty string');
-    }
-    const id = await encodeEpisode(this.db, this.embeddingProvider, params);
-    this.emit('encode', { id, ...params });
-
+  _emitValidation(id, params) {
     validateMemory(this.db, this.embeddingProvider, { id, ...params }, {
       llmProvider: this.llmProvider,
     })
-      .then(result => {
-        if (result.action === 'reinforced') {
+      .then(validation => {
+        if (validation.action === 'reinforced') {
           this.emit('reinforcement', {
             episodeId: id,
-            targetId: result.semanticId,
-            similarity: result.similarity,
+            targetId: validation.semanticId,
+            similarity: validation.similarity,
           });
-        } else if (result.action === 'contradiction') {
+        } else if (validation.action === 'contradiction') {
           this.emit('contradiction', {
             episodeId: id,
-            contradictionId: result.contradictionId,
-            semanticId: result.semanticId,
-            similarity: result.similarity,
-            resolution: result.resolution,
+            contradictionId: validation.contradictionId,
+            semanticId: validation.semanticId,
+            similarity: validation.similarity,
+            resolution: validation.resolution,
           });
         }
       })
       .catch(err => this.emit('error', err));
+  }
 
+  async encode(params) {
+    const id = await encodeEpisode(this.db, this.embeddingProvider, params);
+    this.emit('encode', { id, ...params });
+    this._emitValidation(id, params);
     return id;
   }
 
   async encodeBatch(paramsList) {
-    for (const p of paramsList) {
-      if (!p.content || typeof p.content !== 'string') {
-        throw new Error('content must be a non-empty string');
-      }
-    }
-
     const ids = [];
     for (const params of paramsList) {
       const id = await encodeEpisode(this.db, this.embeddingProvider, params);
@@ -82,23 +72,13 @@ export class Audrey extends EventEmitter {
     }
 
     for (let i = 0; i < ids.length; i++) {
-      validateMemory(this.db, this.embeddingProvider, { id: ids[i], ...paramsList[i] }, {
-        llmProvider: this.llmProvider,
-      })
-        .then(result => {
-          if (result.action === 'reinforced') {
-            this.emit('reinforcement', { episodeId: ids[i], targetId: result.semanticId, similarity: result.similarity });
-          } else if (result.action === 'contradiction') {
-            this.emit('contradiction', { episodeId: ids[i], contradictionId: result.contradictionId, semanticId: result.semanticId, similarity: result.similarity, resolution: result.resolution });
-          }
-        })
-        .catch(err => this.emit('error', err));
+      this._emitValidation(ids[i], paramsList[i]);
     }
 
     return ids;
   }
 
-  async recall(query, options = {}) {
+  recall(query, options = {}) {
     return recallFn(this.db, this.embeddingProvider, query, options);
   }
 
@@ -175,12 +155,14 @@ export class Audrey extends EventEmitter {
   _loadClaimContent(claimId, claimType) {
     if (claimType === 'semantic') {
       const row = this.db.prepare('SELECT content FROM semantics WHERE id = ?').get(claimId);
-      return row?.content || claimId;
+      if (!row) throw new Error(`Semantic memory not found: ${claimId}`);
+      return row.content;
     } else if (claimType === 'episodic') {
       const row = this.db.prepare('SELECT content FROM episodes WHERE id = ?').get(claimId);
-      return row?.content || claimId;
+      if (!row) throw new Error(`Episode not found: ${claimId}`);
+      return row.content;
     }
-    return claimId;
+    throw new Error(`Unknown claim type: ${claimType}`);
   }
 
   consolidationHistory() {
@@ -192,10 +174,6 @@ export class Audrey extends EventEmitter {
   }
 
   close() {
-    if (this._consolidationTimer) {
-      clearInterval(this._consolidationTimer);
-      this._consolidationTimer = null;
-    }
     closeDatabase(this.db);
   }
 }
