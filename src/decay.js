@@ -1,6 +1,11 @@
 import { computeConfidence, DEFAULT_HALF_LIVES } from './confidence.js';
 import { daysBetween } from './utils.js';
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ dormantThreshold?: number }} [options]
+ * @returns {{ totalEvaluated: number, transitionedToDormant: number, timestamp: string }}
+ */
 export function applyDecay(db, { dormantThreshold = 0.1 } = {}) {
   const now = new Date();
   let totalEvaluated = 0;

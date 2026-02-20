@@ -1,6 +1,12 @@
 import { generateId } from './ulid.js';
 import { sourceReliability } from './confidence.js';
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
+ * @param {{ content: string, source: string, salience?: number, causal?: { trigger?: string, consequence?: string }, tags?: string[], supersedes?: string }} params
+ * @returns {Promise<string>}
+ */
 export async function encodeEpisode(db, embeddingProvider, {
   content,
   source,

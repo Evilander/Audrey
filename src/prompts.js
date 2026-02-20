@@ -1,5 +1,9 @@
 import { safeJsonParse } from './utils.js';
 
+/**
+ * @param {Object[]} episodes
+ * @returns {import('./llm.js').ChatMessage[]}
+ */
 export function buildPrincipleExtractionPrompt(episodes) {
   const episodeList = episodes.map((ep, i) => {
     const tags = safeJsonParse(ep.tags, []);
@@ -36,6 +40,11 @@ Rules:
   ];
 }
 
+/**
+ * @param {string} newContent
+ * @param {string} existingContent
+ * @returns {import('./llm.js').ChatMessage[]}
+ */
 export function buildContradictionDetectionPrompt(newContent, existingContent) {
   return [
     {
@@ -67,6 +76,11 @@ EXISTING CLAIM: ${existingContent}`,
   ];
 }
 
+/**
+ * @param {{ content: string, source: string }} cause
+ * @param {{ content: string, source: string }} effect
+ * @returns {import('./llm.js').ChatMessage[]}
+ */
 export function buildCausalArticulationPrompt(cause, effect) {
   return [
     {
@@ -100,6 +114,12 @@ EFFECT: ${effect.content} (source: ${effect.source})`,
   ];
 }
 
+/**
+ * @param {string} claimA
+ * @param {string} claimB
+ * @param {string} [context]
+ * @returns {import('./llm.js').ChatMessage[]}
+ */
 export function buildContextResolutionPrompt(claimA, claimB, context) {
   const contextSection = context
     ? `\n\nADDITIONAL CONTEXT: ${context}`

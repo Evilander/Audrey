@@ -1,5 +1,9 @@
 import { safeJsonParse } from './utils.js';
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @returns {{ episodic: number, semantic: number, procedural: number, causalLinks: number, dormant: number, contradictions: { open: number, resolved: number, context_dependent: number, reopened: number }, lastConsolidation: string|null, totalConsolidationRuns: number }}
+ */
 export function introspect(db) {
   const counts = db.prepare(`
     SELECT

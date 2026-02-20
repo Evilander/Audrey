@@ -1,3 +1,9 @@
+/**
+ * @param {Buffer} bufA
+ * @param {Buffer} bufB
+ * @param {import('./embedding.js').EmbeddingProvider} provider
+ * @returns {number}
+ */
 export function cosineSimilarity(bufA, bufB, provider) {
   const a = provider.bufferToVector(bufA);
   const b = provider.bufferToVector(bufB);
@@ -11,10 +17,20 @@ export function cosineSimilarity(bufA, bufB, provider) {
   return mag === 0 ? 0 : dot / mag;
 }
 
+/**
+ * @param {string} dateStr
+ * @param {Date} now
+ * @returns {number}
+ */
 export function daysBetween(dateStr, now) {
   return Math.max(0, (now.getTime() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24));
 }
 
+/**
+ * @param {string | null | undefined} str
+ * @param {*} [fallback=null]
+ * @returns {*}
+ */
 export function safeJsonParse(str, fallback = null) {
   if (!str) return fallback;
   try { return JSON.parse(str); }

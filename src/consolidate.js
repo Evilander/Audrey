@@ -63,6 +63,12 @@ function clusterViaKNN(db, episodes, similarityThreshold, minClusterSize) {
   return clusters;
 }
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
+ * @param {{ similarityThreshold?: number, minClusterSize?: number }} [options]
+ * @returns {Array<Array<Object>>}
+ */
 export function clusterEpisodes(db, embeddingProvider, options = {}) {
   const {
     similarityThreshold = 0.85,
@@ -91,6 +97,12 @@ async function llmExtractPrinciple(llmProvider, episodes) {
   return llmProvider.json(messages);
 }
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
+ * @param {{ similarityThreshold?: number, minClusterSize?: number, extractPrinciple?: function, llmProvider?: Object }} [options]
+ * @returns {Promise<{ runId: string, episodesEvaluated: number, clustersFound: number, principlesExtracted: number }>}
+ */
 export async function runConsolidation(db, embeddingProvider, options = {}) {
   const {
     similarityThreshold = 0.85,

@@ -183,6 +183,11 @@ function migrateEmbeddingsToVec0(db) {
   });
 }
 
+/**
+ * @param {string} dataDir
+ * @param {{ dimensions?: number }} [options]
+ * @returns {import('better-sqlite3').Database}
+ */
 export function createDatabase(dataDir, options = {}) {
   const { dimensions } = options;
 
@@ -227,6 +232,10 @@ export function createDatabase(dataDir, options = {}) {
   return db;
 }
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @returns {void}
+ */
 export function closeDatabase(db) {
   if (db && db.open) {
     db.close();

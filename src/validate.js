@@ -5,6 +5,13 @@ import { buildContradictionDetectionPrompt } from './prompts.js';
 const REINFORCEMENT_THRESHOLD = 0.85;
 const CONTRADICTION_THRESHOLD = 0.60;
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
+ * @param {{ id: string, content: string, source: string }} episode
+ * @param {{ threshold?: number, contradictionThreshold?: number, llmProvider?: { json: (messages: any) => Promise<any> } }} [options]
+ * @returns {Promise<{ action: string, semanticId?: string, similarity?: number, contradictionId?: string, resolution?: string }>}
+ */
 export async function validateMemory(db, embeddingProvider, episode, options = {}) {
   const {
     threshold = REINFORCEMENT_THRESHOLD,
@@ -121,6 +128,15 @@ function computeSourceDiversity(db, evidenceIds, currentEpisode) {
   return sourceTypes.size;
 }
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} claimAId
+ * @param {string} claimAType
+ * @param {string} claimBId
+ * @param {string} claimBType
+ * @param {object|null} resolution
+ * @returns {string}
+ */
 export function createContradiction(db, claimAId, claimAType, claimBId, claimBType, resolution) {
   const id = generateId();
   const now = new Date().toISOString();
@@ -138,6 +154,12 @@ export function createContradiction(db, claimAId, claimAType, claimBId, claimBTy
   return id;
 }
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} contradictionId
+ * @param {string} newEvidenceId
+ * @returns {void}
+ */
 export function reopenContradiction(db, contradictionId, newEvidenceId) {
   const now = new Date().toISOString();
   db.prepare(`
