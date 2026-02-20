@@ -1,8 +1,113 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Audrey } from '../src/index.js';
+import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, SERVER_NAME } from '../mcp-server/config.js';
 import { existsSync, rmSync } from 'node:fs';
 
 const TEST_DIR = './test-mcp-server';
+
+describe('MCP CLI: buildAudreyConfig', () => {
+  const envBackup = {};
+  const envKeys = [
+    'AUDREY_DATA_DIR', 'AUDREY_AGENT', 'AUDREY_EMBEDDING_PROVIDER',
+    'AUDREY_EMBEDDING_DIMENSIONS', 'AUDREY_LLM_PROVIDER',
+    'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
+  ];
+
+  beforeEach(() => {
+    for (const key of envKeys) {
+      envBackup[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of envKeys) {
+      if (envBackup[key] !== undefined) process.env[key] = envBackup[key];
+      else delete process.env[key];
+    }
+  });
+
+  it('uses defaults when no env vars set', () => {
+    const config = buildAudreyConfig();
+    expect(config.dataDir).toBe(DEFAULT_DATA_DIR);
+    expect(config.agent).toBe('claude-code');
+    expect(config.embedding.provider).toBe('mock');
+    expect(config.embedding.dimensions).toBe(8);
+    expect(config.llm).toBeUndefined();
+  });
+
+  it('respects AUDREY_DATA_DIR and AUDREY_AGENT', () => {
+    process.env.AUDREY_DATA_DIR = '/custom/path';
+    process.env.AUDREY_AGENT = 'my-agent';
+    const config = buildAudreyConfig();
+    expect(config.dataDir).toBe('/custom/path');
+    expect(config.agent).toBe('my-agent');
+  });
+
+  it('configures openai embeddings with API key', () => {
+    process.env.AUDREY_EMBEDDING_PROVIDER = 'openai';
+    process.env.AUDREY_EMBEDDING_DIMENSIONS = '1536';
+    process.env.OPENAI_API_KEY = 'sk-test-key';
+    const config = buildAudreyConfig();
+    expect(config.embedding.provider).toBe('openai');
+    expect(config.embedding.dimensions).toBe(1536);
+    expect(config.embedding.apiKey).toBe('sk-test-key');
+  });
+
+  it('configures anthropic LLM provider', () => {
+    process.env.AUDREY_LLM_PROVIDER = 'anthropic';
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+    const config = buildAudreyConfig();
+    expect(config.llm.provider).toBe('anthropic');
+    expect(config.llm.apiKey).toBe('sk-ant-test');
+  });
+
+  it('configures mock LLM provider', () => {
+    process.env.AUDREY_LLM_PROVIDER = 'mock';
+    const config = buildAudreyConfig();
+    expect(config.llm.provider).toBe('mock');
+  });
+
+  it('does not set LLM when provider is not specified', () => {
+    const config = buildAudreyConfig();
+    expect(config.llm).toBeUndefined();
+  });
+});
+
+describe('MCP CLI: buildInstallArgs', () => {
+  it('builds mock config args when no API keys present', () => {
+    const args = buildInstallArgs({});
+    expect(args).toContain(SERVER_NAME);
+    expect(args).toContain('npx');
+    expect(args).toContain('audrey-mcp');
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    expect(envPairsStr).toContain('AUDREY_EMBEDDING_PROVIDER=mock');
+    expect(envPairsStr).toContain('AUDREY_EMBEDDING_DIMENSIONS=8');
+    expect(envPairsStr).not.toContain('OPENAI_API_KEY');
+  });
+
+  it('detects OPENAI_API_KEY and configures openai embeddings', () => {
+    const args = buildInstallArgs({ OPENAI_API_KEY: 'sk-test' });
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    expect(envPairsStr).toContain('AUDREY_EMBEDDING_PROVIDER=openai');
+    expect(envPairsStr).toContain('AUDREY_EMBEDDING_DIMENSIONS=1536');
+    expect(envPairsStr).toContain('OPENAI_API_KEY=sk-test');
+  });
+
+  it('detects ANTHROPIC_API_KEY and enables LLM provider', () => {
+    const args = buildInstallArgs({ ANTHROPIC_API_KEY: 'sk-ant-test' });
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    expect(envPairsStr).toContain('AUDREY_LLM_PROVIDER=anthropic');
+    expect(envPairsStr).toContain('ANTHROPIC_API_KEY=sk-ant-test');
+  });
+
+  it('places server name before -e flags to avoid variadic parsing bug', () => {
+    const args = buildInstallArgs({ OPENAI_API_KEY: 'sk-test' });
+    const nameIdx = args.indexOf(SERVER_NAME);
+    const firstEnvIdx = args.indexOf('-e');
+    expect(nameIdx).toBeLessThan(firstEnvIdx);
+  });
+});
 
 describe('MCP tool: memory_encode', () => {
   let audrey;

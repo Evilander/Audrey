@@ -24,53 +24,39 @@ Audrey fixes all of this by modeling memory the way the brain does:
 
 ## Install
 
+### MCP Server for Claude Code (one command)
+
+```bash
+npx audrey-mcp install
+```
+
+That's it. Audrey auto-detects API keys from your environment:
+
+- `OPENAI_API_KEY` set? Uses real OpenAI embeddings (1536d) for semantic search.
+- `ANTHROPIC_API_KEY` set? Enables LLM-powered consolidation and contradiction detection.
+- Neither? Runs with mock embeddings — fully functional, upgrade anytime.
+
+To upgrade later, set the keys and re-run `npx audrey-mcp install`.
+
+```bash
+# Check status
+npx audrey-mcp status
+
+# Uninstall
+npx audrey-mcp uninstall
+```
+
+Every Claude Code session now has 5 memory tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`.
+
+### SDK in Your Code
+
 ```bash
 npm install audrey
 ```
 
-Zero external infrastructure. One SQLite file. That's it.
+Zero external infrastructure. One SQLite file.
 
 ## Usage
-
-There are two ways to use Audrey:
-
-### Option A: MCP Server for Claude Code
-
-Give Claude Code persistent memory across sessions. One command:
-
-```bash
-npx audrey-mcp
-```
-
-Register it with Claude Code:
-
-```bash
-# Basic (mock embeddings, good for testing)
-claude mcp add --transport stdio --scope user \
-  --env AUDREY_DATA_DIR=~/.audrey/data \
-  --env AUDREY_EMBEDDING_PROVIDER=mock \
-  audrey-memory -- npx audrey-mcp
-
-# Production (real embeddings + LLM reasoning)
-claude mcp add --transport stdio --scope user \
-  --env AUDREY_DATA_DIR=~/.audrey/data \
-  --env AUDREY_EMBEDDING_PROVIDER=openai \
-  --env AUDREY_EMBEDDING_DIMENSIONS=1536 \
-  --env OPENAI_API_KEY=sk-... \
-  --env AUDREY_LLM_PROVIDER=anthropic \
-  --env ANTHROPIC_API_KEY=sk-ant-... \
-  audrey-memory -- npx audrey-mcp
-```
-
-Now every Claude Code session has 5 memory tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`.
-
-Verify it's registered:
-
-```bash
-claude mcp list
-```
-
-### Option B: SDK in Your Own Code
 
 ```js
 import { Audrey } from 'audrey';
@@ -446,8 +432,8 @@ src/
   index.js           Barrel export.
 
 mcp-server/
-  index.js           MCP tool server (5 tools, stdio transport).
-  register.sh        Claude Code registration helper.
+  index.js           MCP tool server (5 tools, stdio transport) + CLI subcommands.
+  config.js          Shared config (env var parsing, install arg builder).
 ```
 
 ### Database Schema
@@ -470,7 +456,7 @@ All mutations use SQLite transactions. CHECK constraints enforce valid states an
 ## Running Tests
 
 ```bash
-npm test          # 184 tests across 17 files
+npm test          # 194 tests across 17 files
 npm run test:watch
 ```
 
@@ -541,8 +527,9 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] MCP tool server via `@modelcontextprotocol/sdk` with stdio transport
 - [x] 5 tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`
 - [x] Configuration via environment variables (data dir, embedding provider, LLM provider)
-- [x] Registration script for Claude Code (`mcp-server/register.sh`)
-- [x] 184 tests across 17 test files
+- [x] One-command install: `npx audrey-mcp install` (auto-detects API keys)
+- [x] CLI subcommands: `install`, `uninstall`, `status`
+- [x] 194 tests across 17 test files
 
 ### v0.3.5 — Embedding Migration (deferred from v0.3.0)
 
