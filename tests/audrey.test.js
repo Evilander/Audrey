@@ -299,3 +299,42 @@ describe('Audrey batch and streaming', () => {
     expect(count).toBe(1);
   });
 });
+
+describe('encodeBatch', () => {
+  let brain;
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'test-agent',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('encodes all episodes and returns IDs', async () => {
+    const ids = await brain.encodeBatch([
+      { content: 'First observation', source: 'direct-observation' },
+      { content: 'Second observation', source: 'told-by-user' },
+      { content: 'Third observation', source: 'tool-result' },
+    ]);
+
+    expect(ids).toHaveLength(3);
+    ids.forEach(id => expect(typeof id).toBe('string'));
+  });
+
+  it('rejects batch when an episode has invalid content', async () => {
+    await expect(
+      brain.encodeBatch([
+        { content: 'Valid episode', source: 'direct-observation' },
+        { content: '', source: 'direct-observation' },
+        { content: 'Another valid', source: 'told-by-user' },
+      ]),
+    ).rejects.toThrow('content must be a non-empty string');
+  });
+});
