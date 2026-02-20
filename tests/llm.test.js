@@ -91,6 +91,20 @@ describe('AnthropicLLMProvider', () => {
       llm.complete([{ role: 'user', content: 'test' }]),
     ).rejects.toThrow('Anthropic API error: 401');
   });
+
+  it('throws descriptive error on malformed JSON response', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        content: [{ type: 'text', text: 'not valid json {{{' }],
+      }),
+    });
+
+    const llm = new AnthropicLLMProvider({ apiKey: 'test-key' });
+    await expect(
+      llm.json([{ role: 'user', content: 'test' }]),
+    ).rejects.toThrow(/Failed to parse LLM response as JSON/);
+  });
 });
 
 describe('OpenAILLMProvider', () => {
@@ -130,6 +144,20 @@ describe('OpenAILLMProvider', () => {
     await expect(
       llm.complete([{ role: 'user', content: 'test' }]),
     ).rejects.toThrow('OpenAI API error: 429');
+  });
+
+  it('throws descriptive error on malformed JSON response', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        choices: [{ message: { content: 'totally not json' } }],
+      }),
+    });
+
+    const llm = new OpenAILLMProvider({ apiKey: 'test-key' });
+    await expect(
+      llm.json([{ role: 'user', content: 'test' }]),
+    ).rejects.toThrow(/Failed to parse LLM response as JSON/);
   });
 });
 

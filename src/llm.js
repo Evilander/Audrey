@@ -142,7 +142,11 @@ export class AnthropicLLMProvider {
    */
   async json(messages, options = {}) {
     const result = await this.complete(messages, options);
-    return JSON.parse(result.content);
+    try {
+      return JSON.parse(result.content);
+    } catch {
+      throw new Error(`Failed to parse LLM response as JSON: ${result.content.slice(0, 200)}`);
+    }
   }
 }
 
@@ -194,7 +198,11 @@ export class OpenAILLMProvider {
    */
   async json(messages, options = {}) {
     const result = await this.complete(messages, options);
-    return JSON.parse(result.content);
+    try {
+      return JSON.parse(result.content);
+    } catch {
+      throw new Error(`Failed to parse LLM response as JSON: ${result.content.slice(0, 200)}`);
+    }
   }
 }
 
