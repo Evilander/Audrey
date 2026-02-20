@@ -5,7 +5,8 @@
   "type": "module",
   "main": "src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./mcp": "./mcp-server/index.js"
   },
   "bin": {
     "audrey-mcp": "./mcp-server/index.js"
@@ -40,7 +41,12 @@
     "model-context-protocol",
     "recall",
     "consolidation",
-    "confidence"
+    "confidence",
+    "long-term-memory",
+    "persistent-memory",
+    "rag",
+    "claude",
+    "agent-framework"
   ],
   "repository": {
     "type": "git",
@@ -50,7 +56,10 @@
   "bugs": {
     "url": "https://github.com/Evilander/Audrey/issues"
   },
-  "author": "evilander",
+  "author": "Tyler Eveland <j.tyler.eveland@gmail.com>",
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
