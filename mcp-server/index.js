@@ -50,7 +50,6 @@ async function main() {
     version: '0.3.0',
   });
 
-  // --- memory_encode ---
   server.tool(
     'memory_encode',
     {
@@ -69,7 +68,6 @@ async function main() {
     },
   );
 
-  // --- memory_recall ---
   server.tool(
     'memory_recall',
     {
@@ -92,7 +90,6 @@ async function main() {
     },
   );
 
-  // --- memory_consolidate ---
   server.tool(
     'memory_consolidate',
     {
@@ -101,18 +98,17 @@ async function main() {
     },
     async ({ min_cluster_size, similarity_threshold }) => {
       try {
-        const result = await audrey.consolidate({
+        const consolidation = await audrey.consolidate({
           minClusterSize: min_cluster_size,
           similarityThreshold: similarity_threshold,
         });
-        return toolResult(result);
+        return toolResult(consolidation);
       } catch (err) {
         return toolError(err);
       }
     },
   );
 
-  // --- memory_introspect ---
   server.tool(
     'memory_introspect',
     {},
@@ -126,7 +122,6 @@ async function main() {
     },
   );
 
-  // --- memory_resolve_truth ---
   server.tool(
     'memory_resolve_truth',
     {
@@ -134,20 +129,18 @@ async function main() {
     },
     async ({ contradiction_id }) => {
       try {
-        const result = await audrey.resolveTruth(contradiction_id);
-        return toolResult(result);
+        const resolution = await audrey.resolveTruth(contradiction_id);
+        return toolResult(resolution);
       } catch (err) {
         return toolError(err);
       }
     },
   );
 
-  // Connect transport
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('[audrey-mcp] connected via stdio');
 
-  // Graceful shutdown
   process.on('SIGINT', () => {
     console.error('[audrey-mcp] shutting down');
     audrey.close();
