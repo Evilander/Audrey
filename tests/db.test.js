@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createDatabase, closeDatabase } from '../src/db.js';
+import { createDatabase, closeDatabase, readStoredDimensions } from '../src/db.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-audrey-data';
@@ -75,5 +75,31 @@ describe('database', () => {
     const tables = db2.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
     expect(tables.length).toBeGreaterThan(0);
     closeDatabase(db2);
+  });
+});
+
+describe('readStoredDimensions', () => {
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('returns stored dimensions from existing database', () => {
+    const db = createDatabase(TEST_DIR, { dimensions: 1536 });
+    closeDatabase(db);
+    expect(readStoredDimensions(TEST_DIR)).toBe(1536);
+  });
+
+  it('returns null when no dimensions stored', () => {
+    const db = createDatabase(TEST_DIR);
+    closeDatabase(db);
+    expect(readStoredDimensions(TEST_DIR)).toBeNull();
+  });
+
+  it('returns null when database does not exist', () => {
+    expect(readStoredDimensions('./nonexistent-dir-xyz')).toBeNull();
   });
 });

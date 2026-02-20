@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS episodes (
@@ -232,10 +232,21 @@ export function createDatabase(dataDir, options = {}) {
   return db;
 }
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @returns {void}
- */
+export function readStoredDimensions(dataDir) {
+  const dbPath = join(dataDir, 'audrey.db');
+  if (!existsSync(dbPath)) return null;
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get();
+    return row ? parseInt(row.value, 10) : null;
+  } catch (err) {
+    if (err.message?.includes('no such table')) return null;
+    throw err;
+  } finally {
+    db.close();
+  }
+}
+
 export function closeDatabase(db) {
   if (db && db.open) {
     db.close();

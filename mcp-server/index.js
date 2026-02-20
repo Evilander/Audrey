@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { Audrey } from '../src/index.js';
+import { readStoredDimensions } from '../src/db.js';
 import { VERSION, SERVER_NAME, DEFAULT_DATA_DIR, buildAudreyConfig, buildInstallArgs } from './config.js';
 
 const VALID_SOURCES = ['direct-observation', 'told-by-user', 'tool-result', 'inference', 'model-generated'];
@@ -107,10 +108,11 @@ function status() {
 
   if (existsSync(DEFAULT_DATA_DIR)) {
     try {
+      const dimensions = readStoredDimensions(DEFAULT_DATA_DIR) || 8;
       const audrey = new Audrey({
         dataDir: DEFAULT_DATA_DIR,
         agent: 'status-check',
-        embedding: { provider: 'mock', dimensions: 8 },
+        embedding: { provider: 'mock', dimensions },
       });
       const stats = audrey.introspect();
       audrey.close();

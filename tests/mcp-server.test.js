@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Audrey } from '../src/index.js';
+import { readStoredDimensions } from '../src/db.js';
 import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, SERVER_NAME } from '../mcp-server/config.js';
 import { existsSync, rmSync } from 'node:fs';
 
@@ -375,5 +376,39 @@ describe('MCP tool: memory_resolve_truth', () => {
 
   it('throws for nonexistent contradiction', async () => {
     await expect(audrey.resolveTruth('nonexistent-id')).rejects.toThrow('Contradiction not found');
+  });
+});
+
+describe('status: dimension mismatch fix', () => {
+  const STATUS_DIR = './test-mcp-status';
+
+  beforeEach(() => {
+    if (existsSync(STATUS_DIR)) rmSync(STATUS_DIR, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(STATUS_DIR)) rmSync(STATUS_DIR, { recursive: true });
+  });
+
+  it('reopens a 1536d database without dimension mismatch', () => {
+    const original = new Audrey({
+      dataDir: STATUS_DIR,
+      agent: 'setup',
+      embedding: { provider: 'mock', dimensions: 1536 },
+    });
+    original.close();
+
+    const storedDims = readStoredDimensions(STATUS_DIR);
+    expect(storedDims).toBe(1536);
+
+    const reopened = new Audrey({
+      dataDir: STATUS_DIR,
+      agent: 'status-check',
+      embedding: { provider: 'mock', dimensions: storedDims },
+    });
+    const stats = reopened.introspect();
+    reopened.close();
+
+    expect(stats.episodic).toBe(0);
   });
 });
