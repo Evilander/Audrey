@@ -456,7 +456,7 @@ All mutations use SQLite transactions. CHECK constraints enforce valid states an
 ## Running Tests
 
 ```bash
-npm test          # 194 tests across 17 files
+npm test          # 208 tests across 17 files
 npm run test:watch
 ```
 
@@ -522,7 +522,7 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] Automatic migration from v0.2.0 embedding BLOBs to vec0 tables
 - [x] 168 tests across 16 test files
 
-### v0.3.1 — MCP Server + JSDoc Types (current)
+### v0.3.1 — MCP Server + JSDoc Types
 
 - [x] MCP tool server via `@modelcontextprotocol/sdk` with stdio transport
 - [x] 5 tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`
@@ -532,6 +532,15 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] JSDoc type annotations on all public exports (16 source files)
 - [x] Published to npm with proper package metadata
 - [x] 194 tests across 17 test files
+
+### v0.3.3 — Hardening (current)
+
+- [x] Fix status command dimension mismatch (read stored dimensions from existing database)
+- [x] Safe JSON parsing in LLM providers (descriptive errors on malformed responses)
+- [x] Fetch timeouts on all API calls (configurable, default 30s)
+- [x] Config validation in Audrey constructor (dormantThreshold, minEpisodes)
+- [x] encodeBatch error isolation tests
+- [x] 208 tests across 17 test files
 
 ### v0.4.0 — Type Safety & Developer Experience
 
