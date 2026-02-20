@@ -45,6 +45,13 @@ function install() {
     console.log('Detected ANTHROPIC_API_KEY — enabling LLM-powered consolidation + contradiction detection');
   }
 
+  // Remove existing entry first so re-installs work cleanly
+  try {
+    execFileSync('claude', ['mcp', 'remove', SERVER_NAME], { stdio: 'ignore' });
+  } catch {
+    // Not registered yet — that's fine
+  }
+
   const args = buildInstallArgs(process.env);
 
   try {
