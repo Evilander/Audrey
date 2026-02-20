@@ -30,42 +30,126 @@ npm install audrey
 
 Zero external infrastructure. One SQLite file. That's it.
 
-## Quick Start
+## Usage
+
+There are two ways to use Audrey:
+
+### Option A: MCP Server for Claude Code
+
+Give Claude Code persistent memory across sessions. One command:
+
+```bash
+npx audrey-mcp
+```
+
+Register it with Claude Code:
+
+```bash
+# Basic (mock embeddings, good for testing)
+claude mcp add --transport stdio --scope user \
+  --env AUDREY_DATA_DIR=~/.audrey/data \
+  --env AUDREY_EMBEDDING_PROVIDER=mock \
+  audrey-memory -- npx audrey-mcp
+
+# Production (real embeddings + LLM reasoning)
+claude mcp add --transport stdio --scope user \
+  --env AUDREY_DATA_DIR=~/.audrey/data \
+  --env AUDREY_EMBEDDING_PROVIDER=openai \
+  --env AUDREY_EMBEDDING_DIMENSIONS=1536 \
+  --env OPENAI_API_KEY=sk-... \
+  --env AUDREY_LLM_PROVIDER=anthropic \
+  --env ANTHROPIC_API_KEY=sk-ant-... \
+  audrey-memory -- npx audrey-mcp
+```
+
+Now every Claude Code session has 5 memory tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`.
+
+Verify it's registered:
+
+```bash
+claude mcp list
+```
+
+### Option B: SDK in Your Own Code
 
 ```js
 import { Audrey } from 'audrey';
 
+// 1. Create a brain
 const brain = new Audrey({
   dataDir: './agent-memory',
   agent: 'my-agent',
-  embedding: { provider: 'openai', model: 'text-embedding-3-small' },
+  embedding: { provider: 'mock', dimensions: 8 },  // or 'openai' for production
 });
 
-// Agent observes something
+// 2. Encode observations
 await brain.encode({
   content: 'Stripe API returns 429 above 100 req/s',
   source: 'direct-observation',
-  salience: 0.9,
-  causal: { trigger: 'batch-payment-job', consequence: 'queue-stalled' },
   tags: ['stripe', 'rate-limit'],
 });
 
-// Later — agent encounters Stripe again
-const memories = await brain.recall('stripe rate limits', {
-  minConfidence: 0.5,
-  types: ['semantic', 'procedural'],
-  limit: 5,
-});
+// 3. Recall what you know
+const memories = await brain.recall('stripe rate limits', { limit: 5 });
+// Returns: [{ content, type, confidence, score, ... }]
 
-// Run consolidation (the "sleep" cycle)
+// 4. Consolidate episodes into principles (the "sleep" cycle)
 await brain.consolidate();
 
-// Check brain health
+// 5. Check brain health
 const stats = brain.introspect();
 // { episodic: 47, semantic: 12, procedural: 3, dormant: 8, ... }
 
+// 6. Clean up
 brain.close();
 ```
+
+### Configuration
+
+```js
+const brain = new Audrey({
+  dataDir: './audrey-data',     // SQLite database directory
+  agent: 'my-agent',           // Agent identifier
+
+  // Embedding provider (required)
+  embedding: {
+    provider: 'mock',          // 'mock' for testing, 'openai' for production
+    dimensions: 8,             // 8 for mock, 1536 for openai text-embedding-3-small
+    apiKey: '...',             // Required for openai
+  },
+
+  // LLM provider (optional — enables smart consolidation + contradiction detection)
+  llm: {
+    provider: 'anthropic',     // 'mock', 'anthropic', or 'openai'
+    apiKey: '...',             // Required for anthropic/openai
+    model: 'claude-sonnet-4-6', // Optional model override
+  },
+
+  // Consolidation settings
+  consolidation: {
+    minEpisodes: 3,            // Minimum cluster size for principle extraction
+  },
+
+  // Decay settings
+  decay: {
+    dormantThreshold: 0.1,     // Below this confidence = dormant
+  },
+});
+```
+
+**Without an LLM provider**, consolidation uses a default text-based extractor and contradiction detection is similarity-only. **With an LLM provider**, Audrey extracts real generalized principles, detects semantic contradictions, and resolves context-dependent truths.
+
+### Environment Variables (MCP Server)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUDREY_DATA_DIR` | `~/.audrey/data` | SQLite database directory |
+| `AUDREY_AGENT` | `claude-code` | Agent identifier |
+| `AUDREY_EMBEDDING_PROVIDER` | `mock` | `mock` or `openai` |
+| `AUDREY_EMBEDDING_DIMENSIONS` | `8` | Vector dimensions (1536 for openai) |
+| `OPENAI_API_KEY` | — | Required when embedding/LLM provider is openai |
+| `AUDREY_LLM_PROVIDER` | — | `mock`, `anthropic`, or `openai` |
+| `ANTHROPIC_API_KEY` | — | Required when LLM provider is anthropic |
 
 ## Core Concepts
 
@@ -176,25 +260,7 @@ Audrey's defenses:
 
 ### `new Audrey(config)`
 
-```js
-const brain = new Audrey({
-  dataDir: './audrey-data',       // Where the SQLite DB lives
-  agent: 'my-agent',             // Agent identifier
-  embedding: {
-    provider: 'openai',          // 'openai' | 'mock'
-    model: 'text-embedding-3-small',
-    apiKey: process.env.OPENAI_API_KEY,
-  },
-  consolidation: {
-    interval: '1h',              // Auto-consolidation interval
-    minEpisodes: 3,              // Minimum cluster size
-    confidenceTarget: 2.0,       // Adaptive threshold multiplier
-  },
-  decay: {
-    dormantThreshold: 0.1,       // Below this → dormant
-  },
-});
-```
+See [Configuration](#configuration) above for all options.
 
 ### `brain.encode(params)` → `Promise<string>`
 
@@ -252,6 +318,29 @@ Each result:
 
 Retrieval automatically reinforces matched memories (boosts confidence, resets decay clock).
 
+### `brain.encodeBatch(paramsList)` → `Promise<string[]>`
+
+Encode multiple episodes in one call. Same params as `encode()`, but as an array.
+
+```js
+const ids = await brain.encodeBatch([
+  { content: 'Stripe returned 429', source: 'direct-observation' },
+  { content: 'Redis timed out', source: 'tool-result' },
+  { content: 'User reports slow checkout', source: 'told-by-user' },
+]);
+```
+
+### `brain.recallStream(query, options)` → `AsyncGenerator<Memory>`
+
+Streaming version of `recall()`. Yields results one at a time. Supports early `break`.
+
+```js
+for await (const memory of brain.recallStream('stripe issues', { limit: 10 })) {
+  console.log(memory.content, memory.score);
+  if (memory.score > 0.9) break;
+}
+```
+
 ### `brain.consolidate(options)` → `Promise<ConsolidationResult>`
 
 Run the consolidation engine manually.
@@ -286,6 +375,15 @@ brain.rollback('01ABC...');
 // { rolledBackMemories: 3, restoredEpisodes: 9 }
 ```
 
+### `brain.resolveTruth(contradictionId)` → `Promise<Resolution>`
+
+Resolve an open contradiction using LLM reasoning. Requires an LLM provider configured.
+
+```js
+const resolution = await brain.resolveTruth('contradiction-id');
+// { resolution: 'context_dependent', conditions: { a: 'live keys', b: 'test keys' }, explanation: '...' }
+```
+
 ### `brain.introspect()` → `Stats`
 
 Get memory system health stats.
@@ -310,6 +408,7 @@ Full audit trail of all consolidation runs.
 ```js
 brain.on('encode', ({ id, content, source }) => { ... });
 brain.on('reinforcement', ({ episodeId, targetId, similarity }) => { ... });
+brain.on('contradiction', ({ episodeId, contradictionId, semanticId, resolution }) => { ... });
 brain.on('consolidation', ({ runId, principlesExtracted }) => { ... });
 brain.on('decay', ({ totalEvaluated, transitionedToDormant }) => { ... });
 brain.on('rollback', ({ runId, rolledBackMemories }) => { ... });
@@ -330,37 +429,48 @@ audrey-data/
 ```
 src/
   audrey.js          Main class. EventEmitter. Public API surface.
+  causal.js          Causal graph management. LLM-powered mechanism articulation.
   confidence.js      Compositional confidence formula. Pure math.
-  consolidate.js     "Sleep" cycle. Cluster → extract → promote.
-  db.js              SQLite schema. 6 tables. CHECK constraints. Indexes.
+  consolidate.js     "Sleep" cycle. KNN clustering → LLM extraction → promote.
+  db.js              SQLite + sqlite-vec. Schema, vec0 tables, migrations.
   decay.js           Ebbinghaus forgetting curves.
-  embedding.js       Pluggable providers (Mock, OpenAI).
-  encode.js          Immutable episodic memory creation.
+  embedding.js       Pluggable providers (Mock, OpenAI). Batch embedding.
+  encode.js          Immutable episodic memory creation + vec0 writes.
   introspect.js      Health dashboard queries.
-  recall.js          Confidence-weighted vector retrieval.
+  llm.js             Pluggable LLM providers (Mock, Anthropic, OpenAI).
+  prompts.js         Structured prompt templates for LLM operations.
+  recall.js          KNN retrieval + confidence scoring + async streaming.
   rollback.js        Undo consolidation runs.
-  utils.js           Shared: cosine similarity, date math, safe JSON parse.
-  validate.js        Reinforcement + contradiction lifecycle.
+  utils.js           Date math, safe JSON parse.
+  validate.js        KNN validation + LLM contradiction detection.
   index.js           Barrel export.
+
+mcp-server/
+  index.js           MCP tool server (5 tools, stdio transport).
+  register.sh        Claude Code registration helper.
 ```
 
-### Database Schema (6 tables)
+### Database Schema
 
-| Table | Purpose | Key Columns |
-|---|---|---|
-| `episodes` | Immutable raw events | content, embedding, source, salience, causal_trigger/consequence, supersedes |
-| `semantics` | Consolidated principles | content, embedding, state, evidence_episode_ids, source_type_diversity |
-| `procedures` | Learned workflows | content, embedding, trigger_conditions, success/failure_count |
-| `causal_links` | Why things happened | cause_id, effect_id, link_type (causal/correlational/temporal), mechanism |
-| `contradictions` | Dispute tracking | claim_a/b_id, state (open/resolved/context_dependent/reopened), resolution |
-| `consolidation_runs` | Audit trail | input_episode_ids, output_memory_ids, status, checkpoint_cursor |
+| Table | Purpose |
+|---|---|
+| `episodes` | Immutable raw events (content, source, salience, causal context) |
+| `semantics` | Consolidated principles (content, state, evidence chain) |
+| `procedures` | Learned workflows (trigger conditions, success/failure counts) |
+| `causal_links` | Causal relationships (cause, effect, mechanism, link type) |
+| `contradictions` | Dispute tracking (claims, state, resolution) |
+| `consolidation_runs` | Audit trail (inputs, outputs, status) |
+| `vec_episodes` | sqlite-vec KNN index for episode embeddings |
+| `vec_semantics` | sqlite-vec KNN index for semantic embeddings |
+| `vec_procedures` | sqlite-vec KNN index for procedural embeddings |
+| `audrey_config` | Dimension configuration and metadata |
 
-All mutations use SQLite transactions for atomicity. CHECK constraints enforce valid states and source types.
+All mutations use SQLite transactions. CHECK constraints enforce valid states and source types. Vector search uses sqlite-vec with cosine distance.
 
 ## Running Tests
 
 ```bash
-npm test          # 104 tests, ~760ms
+npm test          # 184 tests across 17 files
 npm run test:watch
 ```
 
