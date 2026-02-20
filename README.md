@@ -415,7 +415,7 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] Structured prompt templates for all LLM operations
 - [x] 142 tests across 15 test files
 
-### v0.3.0 — Vector Performance (current)
+### v0.3.0 — Vector Performance
 
 - [x] sqlite-vec native vector indexing (vec0 virtual tables with cosine distance)
 - [x] KNN queries for recall, validation, and consolidation clustering (all vector math in C)
@@ -425,6 +425,14 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] Dimension configuration and mismatch validation
 - [x] Automatic migration from v0.2.0 embedding BLOBs to vec0 tables
 - [x] 168 tests across 16 test files
+
+### v0.3.1 — MCP Server (current)
+
+- [x] MCP tool server via `@modelcontextprotocol/sdk` with stdio transport
+- [x] 5 tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`
+- [x] Configuration via environment variables (data dir, embedding provider, LLM provider)
+- [x] Registration script for Claude Code (`mcp-server/register.sh`)
+- [x] 184 tests across 17 test files
 
 ### v0.3.5 — Embedding Migration (deferred from v0.3.0)
 
