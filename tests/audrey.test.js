@@ -221,6 +221,32 @@ describe('Audrey with LLM', () => {
   });
 });
 
+describe('config validation', () => {
+  it('throws on dormantThreshold > 1', () => {
+    expect(() => new Audrey({
+      dataDir: './test-audrey-badconfig-1',
+      embedding: { provider: 'mock', dimensions: 8 },
+      decay: { dormantThreshold: 1.5 },
+    })).toThrow(/dormantThreshold/);
+  });
+
+  it('throws on dormantThreshold < 0', () => {
+    expect(() => new Audrey({
+      dataDir: './test-audrey-badconfig-2',
+      embedding: { provider: 'mock', dimensions: 8 },
+      decay: { dormantThreshold: -0.1 },
+    })).toThrow(/dormantThreshold/);
+  });
+
+  it('throws on minEpisodes < 1', () => {
+    expect(() => new Audrey({
+      dataDir: './test-audrey-badconfig-3',
+      embedding: { provider: 'mock', dimensions: 8 },
+      consolidation: { minEpisodes: 0 },
+    })).toThrow(/minEpisodes/);
+  });
+});
+
 describe('Audrey batch and streaming', () => {
   let brain;
 

@@ -81,15 +81,24 @@ export class Audrey extends EventEmitter {
     decay = {},
   } = {}) {
     super();
+
+    const dormantThreshold = decay.dormantThreshold ?? 0.1;
+    if (dormantThreshold < 0 || dormantThreshold > 1) {
+      throw new Error(`dormantThreshold must be between 0 and 1, got: ${dormantThreshold}`);
+    }
+
+    const minEpisodes = consolidation.minEpisodes ?? 3;
+    if (!Number.isInteger(minEpisodes) || minEpisodes < 1) {
+      throw new Error(`minEpisodes must be a positive integer, got: ${minEpisodes}`);
+    }
+
     this.agent = agent;
     this.dataDir = dataDir;
     this.embeddingProvider = createEmbeddingProvider(embedding);
     this.db = createDatabase(dataDir, { dimensions: this.embeddingProvider.dimensions });
     this.llmProvider = llm ? createLLMProvider(llm) : null;
-    this.consolidationConfig = {
-      minEpisodes: consolidation.minEpisodes || 3,
-    };
-    this.decayConfig = { dormantThreshold: decay.dormantThreshold || 0.1 };
+    this.consolidationConfig = { minEpisodes };
+    this.decayConfig = { dormantThreshold };
   }
 
   _emitValidation(id, params) {
