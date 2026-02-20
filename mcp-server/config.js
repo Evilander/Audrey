@@ -54,7 +54,7 @@ export function buildInstallArgs(env = process.env) {
   for (const pair of envPairs) {
     args.push('-e', pair);
   }
-  args.push('--', 'npx', 'audrey-mcp');
+  args.push('--', 'npx', 'audrey');
 
   return args;
 }

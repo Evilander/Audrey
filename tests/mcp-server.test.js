@@ -79,7 +79,7 @@ describe('MCP CLI: buildInstallArgs', () => {
     const args = buildInstallArgs({});
     expect(args).toContain(SERVER_NAME);
     expect(args).toContain('npx');
-    expect(args).toContain('audrey-mcp');
+    expect(args).toContain('audrey');
     const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
     expect(envPairsStr).toContain('AUDREY_EMBEDDING_PROVIDER=mock');
     expect(envPairsStr).toContain('AUDREY_EMBEDDING_DIMENSIONS=8');

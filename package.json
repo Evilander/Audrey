@@ -9,6 +9,7 @@
     "./mcp": "./mcp-server/index.js"
   },
   "bin": {
+    "audrey": "mcp-server/index.js",
     "audrey-mcp": "mcp-server/index.js"
   },
   "files": [

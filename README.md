@@ -27,7 +27,7 @@ Audrey fixes all of this by modeling memory the way the brain does:
 ### MCP Server for Claude Code (one command)
 
 ```bash
-npx audrey-mcp install
+npx audrey install
 ```
 
 That's it. Audrey auto-detects API keys from your environment:
@@ -36,14 +36,14 @@ That's it. Audrey auto-detects API keys from your environment:
 - `ANTHROPIC_API_KEY` set? Enables LLM-powered consolidation and contradiction detection.
 - Neither? Runs with mock embeddings — fully functional, upgrade anytime.
 
-To upgrade later, set the keys and re-run `npx audrey-mcp install`.
+To upgrade later, set the keys and re-run `npx audrey install`.
 
 ```bash
 # Check status
-npx audrey-mcp status
+npx audrey status
 
 # Uninstall
-npx audrey-mcp uninstall
+npx audrey uninstall
 ```
 
 Every Claude Code session now has 5 memory tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`.
@@ -527,7 +527,7 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] MCP tool server via `@modelcontextprotocol/sdk` with stdio transport
 - [x] 5 tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`
 - [x] Configuration via environment variables (data dir, embedding provider, LLM provider)
-- [x] One-command install: `npx audrey-mcp install` (auto-detects API keys)
+- [x] One-command install: `npx audrey install` (auto-detects API keys)
 - [x] CLI subcommands: `install`, `uninstall`, `status`
 - [x] 194 tests across 17 test files
 
