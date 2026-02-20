@@ -1,8 +1,10 @@
-import { ulid } from 'ulid';
+import { monotonicFactory } from 'ulid';
 import { createHash } from 'node:crypto';
 
+const monotonic = monotonicFactory();
+
 export function generateId() {
-  return ulid();
+  return monotonic();
 }
 
 export function generateDeterministicId(...parts) {
