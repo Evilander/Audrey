@@ -105,6 +105,21 @@ describe('AnthropicLLMProvider', () => {
       llm.json([{ role: 'user', content: 'test' }]),
     ).rejects.toThrow(/Failed to parse LLM response as JSON/);
   });
+
+  it('aborts fetch after timeout', async () => {
+    global.fetch = vi.fn().mockImplementation((_url, opts) =>
+      new Promise((resolve, reject) => {
+        const onAbort = () => reject(new DOMException('The operation was aborted', 'AbortError'));
+        if (opts?.signal?.aborted) return onAbort();
+        opts?.signal?.addEventListener('abort', onAbort);
+      }),
+    );
+
+    const llm = new AnthropicLLMProvider({ apiKey: 'test-key', timeout: 50 });
+    await expect(
+      llm.complete([{ role: 'user', content: 'test' }]),
+    ).rejects.toThrow();
+  });
 });
 
 describe('OpenAILLMProvider', () => {
@@ -158,6 +173,21 @@ describe('OpenAILLMProvider', () => {
     await expect(
       llm.json([{ role: 'user', content: 'test' }]),
     ).rejects.toThrow(/Failed to parse LLM response as JSON/);
+  });
+
+  it('aborts fetch after timeout', async () => {
+    global.fetch = vi.fn().mockImplementation((_url, opts) =>
+      new Promise((resolve, reject) => {
+        const onAbort = () => reject(new DOMException('The operation was aborted', 'AbortError'));
+        if (opts?.signal?.aborted) return onAbort();
+        opts?.signal?.addEventListener('abort', onAbort);
+      }),
+    );
+
+    const llm = new OpenAILLMProvider({ apiKey: 'test-key', timeout: 50 });
+    await expect(
+      llm.complete([{ role: 'user', content: 'test' }]),
+    ).rejects.toThrow();
   });
 });
 

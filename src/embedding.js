@@ -76,10 +76,11 @@ export class MockEmbeddingProvider {
 /** @implements {EmbeddingProvider} */
 export class OpenAIEmbeddingProvider {
   /** @param {Partial<OpenAIEmbeddingConfig>} [config={}] */
-  constructor({ apiKey, model = 'text-embedding-3-small', dimensions = 1536 } = {}) {
+  constructor({ apiKey, model = 'text-embedding-3-small', dimensions = 1536, timeout = 30000 } = {}) {
     this.apiKey = apiKey || process.env.OPENAI_API_KEY;
     this.model = model;
     this.dimensions = dimensions;
+    this.timeout = timeout;
     this.modelName = model;
     this.modelVersion = 'latest';
   }
@@ -89,17 +90,24 @@ export class OpenAIEmbeddingProvider {
    * @returns {Promise<number[]>}
    */
   async embed(text) {
-    const response = await fetch('https://api.openai.com/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ input: text, model: this.model, dimensions: this.dimensions }),
-    });
-    if (!response.ok) throw new Error(`OpenAI embedding failed: ${response.status}`);
-    const data = await response.json();
-    return data.data[0].embedding;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const response = await fetch('https://api.openai.com/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ input: text, model: this.model, dimensions: this.dimensions }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`OpenAI embedding failed: ${response.status}`);
+      const data = await response.json();
+      return data.data[0].embedding;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -107,17 +115,24 @@ export class OpenAIEmbeddingProvider {
    * @returns {Promise<number[][]>}
    */
   async embedBatch(texts) {
-    const response = await fetch('https://api.openai.com/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ input: texts, model: this.model, dimensions: this.dimensions }),
-    });
-    if (!response.ok) throw new Error(`OpenAI embedding failed: ${response.status}`);
-    const data = await response.json();
-    return data.data.map(d => d.embedding);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const response = await fetch('https://api.openai.com/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ input: texts, model: this.model, dimensions: this.dimensions }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`OpenAI embedding failed: ${response.status}`);
+      const data = await response.json();
+      return data.data.map(d => d.embedding);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**

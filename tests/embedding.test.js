@@ -80,6 +80,21 @@ describe('createEmbeddingProvider', () => {
   });
 });
 
+describe('OpenAIEmbeddingProvider timeout', () => {
+  it('aborts fetch after timeout', async () => {
+    global.fetch = vi.fn().mockImplementation((_url, opts) =>
+      new Promise((resolve, reject) => {
+        const onAbort = () => reject(new DOMException('The operation was aborted', 'AbortError'));
+        if (opts?.signal?.aborted) return onAbort();
+        opts?.signal?.addEventListener('abort', onAbort);
+      }),
+    );
+
+    const emb = new OpenAIEmbeddingProvider({ apiKey: 'test-key', timeout: 50 });
+    await expect(emb.embed('test')).rejects.toThrow();
+  });
+});
+
 describe('OpenAIEmbeddingProvider.embedBatch', () => {
   it('sends batch request and returns array of embeddings', async () => {
     const mockEmbeddings = [

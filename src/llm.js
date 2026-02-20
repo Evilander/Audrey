@@ -92,10 +92,11 @@ export class MockLLMProvider {
 /** @implements {LLMProvider} */
 export class AnthropicLLMProvider {
   /** @param {Partial<AnthropicLLMConfig>} [config={}] */
-  constructor({ apiKey, model = 'claude-sonnet-4-6', maxTokens = 1024 } = {}) {
+  constructor({ apiKey, model = 'claude-sonnet-4-6', maxTokens = 1024, timeout = 30000 } = {}) {
     this.apiKey = apiKey || process.env.ANTHROPIC_API_KEY;
     this.model = model;
     this.maxTokens = maxTokens;
+    this.timeout = timeout;
     this.modelName = model;
     this.modelVersion = 'latest';
   }
@@ -116,23 +117,30 @@ export class AnthropicLLMProvider {
     };
     if (systemMsg) body.system = systemMsg;
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': this.apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      throw new Error(`Anthropic API error: ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`Anthropic API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const text = data.content?.[0]?.text || '';
+      return { content: text };
+    } finally {
+      clearTimeout(timer);
     }
-
-    const data = await response.json();
-    const text = data.content?.[0]?.text || '';
-    return { content: text };
   }
 
   /**
@@ -153,10 +161,11 @@ export class AnthropicLLMProvider {
 /** @implements {LLMProvider} */
 export class OpenAILLMProvider {
   /** @param {Partial<OpenAILLMConfig>} [config={}] */
-  constructor({ apiKey, model = 'gpt-4o', maxTokens = 1024 } = {}) {
+  constructor({ apiKey, model = 'gpt-4o', maxTokens = 1024, timeout = 30000 } = {}) {
     this.apiKey = apiKey || process.env.OPENAI_API_KEY;
     this.model = model;
     this.maxTokens = maxTokens;
+    this.timeout = timeout;
     this.modelName = model;
     this.modelVersion = 'latest';
   }
@@ -173,22 +182,29 @@ export class OpenAILLMProvider {
       messages,
     };
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const text = data.choices?.[0]?.message?.content || '';
+      return { content: text };
+    } finally {
+      clearTimeout(timer);
     }
-
-    const data = await response.json();
-    const text = data.choices?.[0]?.message?.content || '';
-    return { content: text };
   }
 
   /**
