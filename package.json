@@ -1,12 +1,21 @@
 {
   "name": "audrey",
   "version": "0.3.0",
-  "description": "Biological memory architecture for AI agents",
+  "description": "Biological memory architecture for AI agents — encode, consolidate, and recall memories with confidence decay, contradiction detection, and causal graphs",
   "type": "module",
   "main": "src/index.js",
   "exports": {
     ".": "./src/index.js"
   },
+  "bin": {
+    "audrey-mcp": "./mcp-server/index.js"
+  },
+  "files": [
+    "src/",
+    "mcp-server/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"
@@ -15,9 +24,32 @@
     "ai",
     "memory",
     "agents",
+    "llm",
     "cognitive",
-    "llm"
+    "sqlite",
+    "embedding",
+    "mcp",
+    "biological-memory",
+    "episodic-memory",
+    "semantic-memory",
+    "forgetting-curve",
+    "vector-search",
+    "knowledge-graph",
+    "causal-graph",
+    "ai-agent",
+    "model-context-protocol",
+    "recall",
+    "consolidation",
+    "confidence"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Evilander/Audrey.git"
+  },
+  "homepage": "https://github.com/Evilander/Audrey",
+  "bugs": {
+    "url": "https://github.com/Evilander/Audrey/issues"
+  },
   "author": "evilander",
   "license": "MIT",
   "dependencies": {

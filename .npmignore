@@ -1,0 +1,14 @@
+tests/
+docs/
+examples/
+node_modules/
+test-*-data/
+.git/
+.gitignore
+.env
+CLAUDE.md
+vitest.config.js
+package-lock.json
+*.db
+*.db-wal
+*.db-shm
