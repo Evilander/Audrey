@@ -1,3 +1,49 @@
+/**
+ * @typedef {Object} ChatMessage
+ * @property {'system' | 'user' | 'assistant'} role
+ * @property {string} content
+ */
+
+/**
+ * @typedef {Object} LLMCompletionResult
+ * @property {string} content
+ */
+
+/**
+ * @typedef {Object} LLMCompletionOptions
+ * @property {number} [maxTokens]
+ */
+
+/**
+ * @typedef {Object} LLMProvider
+ * @property {string} modelName
+ * @property {string} modelVersion
+ * @property {(messages: ChatMessage[], options?: LLMCompletionOptions) => Promise<LLMCompletionResult>} complete
+ * @property {(messages: ChatMessage[], options?: LLMCompletionOptions) => Promise<Object>} json
+ */
+
+/**
+ * @typedef {Object} MockLLMConfig
+ * @property {'mock'} provider
+ * @property {Record<string, Object>} [responses={}]
+ */
+
+/**
+ * @typedef {Object} AnthropicLLMConfig
+ * @property {'anthropic'} provider
+ * @property {string} [apiKey]
+ * @property {string} [model='claude-sonnet-4-6']
+ * @property {number} [maxTokens=1024]
+ */
+
+/**
+ * @typedef {Object} OpenAILLMConfig
+ * @property {'openai'} provider
+ * @property {string} [apiKey]
+ * @property {string} [model='gpt-4o']
+ * @property {number} [maxTokens=1024]
+ */
+
 const PROMPT_TYPE_KEYS = [
   'principleExtraction',
   'contradictionDetection',
@@ -5,7 +51,9 @@ const PROMPT_TYPE_KEYS = [
   'contextResolution',
 ];
 
+/** @implements {LLMProvider} */
 export class MockLLMProvider {
+  /** @param {Partial<MockLLMConfig>} [config={}] */
   constructor({ responses = {} } = {}) {
     this.responses = responses;
     this.modelName = 'mock-llm';
@@ -20,12 +68,20 @@ export class MockLLMProvider {
     return null;
   }
 
+  /**
+   * @param {ChatMessage[]} messages
+   * @returns {Promise<LLMCompletionResult>}
+   */
   async complete(messages) {
     const promptType = this._matchPromptType(messages);
     const cannedResponse = promptType ? this.responses[promptType] : undefined;
     return { content: cannedResponse !== undefined ? JSON.stringify(cannedResponse) : '{}' };
   }
 
+  /**
+   * @param {ChatMessage[]} messages
+   * @returns {Promise<Object>}
+   */
   async json(messages) {
     const promptType = this._matchPromptType(messages);
     const cannedResponse = promptType ? this.responses[promptType] : undefined;
@@ -33,7 +89,9 @@ export class MockLLMProvider {
   }
 }
 
+/** @implements {LLMProvider} */
 export class AnthropicLLMProvider {
+  /** @param {Partial<AnthropicLLMConfig>} [config={}] */
   constructor({ apiKey, model = 'claude-sonnet-4-6', maxTokens = 1024 } = {}) {
     this.apiKey = apiKey || process.env.ANTHROPIC_API_KEY;
     this.model = model;
@@ -42,6 +100,11 @@ export class AnthropicLLMProvider {
     this.modelVersion = 'latest';
   }
 
+  /**
+   * @param {ChatMessage[]} messages
+   * @param {LLMCompletionOptions} [options={}]
+   * @returns {Promise<LLMCompletionResult>}
+   */
   async complete(messages, options = {}) {
     const systemMsg = messages.find(m => m.role === 'system')?.content;
     const nonSystemMsgs = messages.filter(m => m.role !== 'system');
@@ -72,13 +135,20 @@ export class AnthropicLLMProvider {
     return { content: text };
   }
 
+  /**
+   * @param {ChatMessage[]} messages
+   * @param {LLMCompletionOptions} [options={}]
+   * @returns {Promise<Object>}
+   */
   async json(messages, options = {}) {
     const result = await this.complete(messages, options);
     return JSON.parse(result.content);
   }
 }
 
+/** @implements {LLMProvider} */
 export class OpenAILLMProvider {
+  /** @param {Partial<OpenAILLMConfig>} [config={}] */
   constructor({ apiKey, model = 'gpt-4o', maxTokens = 1024 } = {}) {
     this.apiKey = apiKey || process.env.OPENAI_API_KEY;
     this.model = model;
@@ -87,6 +157,11 @@ export class OpenAILLMProvider {
     this.modelVersion = 'latest';
   }
 
+  /**
+   * @param {ChatMessage[]} messages
+   * @param {LLMCompletionOptions} [options={}]
+   * @returns {Promise<LLMCompletionResult>}
+   */
   async complete(messages, options = {}) {
     const body = {
       model: this.model,
@@ -112,12 +187,21 @@ export class OpenAILLMProvider {
     return { content: text };
   }
 
+  /**
+   * @param {ChatMessage[]} messages
+   * @param {LLMCompletionOptions} [options={}]
+   * @returns {Promise<Object>}
+   */
   async json(messages, options = {}) {
     const result = await this.complete(messages, options);
     return JSON.parse(result.content);
   }
 }
 
+/**
+ * @param {MockLLMConfig | AnthropicLLMConfig | OpenAILLMConfig} config
+ * @returns {MockLLMProvider | AnthropicLLMProvider | OpenAILLMProvider}
+ */
 export function createLLMProvider(config) {
   switch (config.provider) {
     case 'mock':

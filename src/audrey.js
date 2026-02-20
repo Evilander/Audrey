@@ -11,7 +11,67 @@ import { rollbackConsolidation, getConsolidationHistory } from './rollback.js';
 import { introspect as introspectFn } from './introspect.js';
 import { buildContextResolutionPrompt } from './prompts.js';
 
+/**
+ * @typedef {'direct-observation' | 'told-by-user' | 'tool-result' | 'inference' | 'model-generated'} SourceType
+ * @typedef {'episodic' | 'semantic' | 'procedural'} MemoryType
+ *
+ * @typedef {Object} EncodeParams
+ * @property {string} content
+ * @property {SourceType} source
+ * @property {number} [salience]
+ * @property {{ trigger?: string, consequence?: string }} [causal]
+ * @property {string[]} [tags]
+ * @property {string} [supersedes]
+ *
+ * @typedef {Object} RecallOptions
+ * @property {number} [minConfidence]
+ * @property {MemoryType[]} [types]
+ * @property {number} [limit]
+ * @property {boolean} [includeProvenance]
+ * @property {boolean} [includeDormant]
+ *
+ * @typedef {Object} RecallResult
+ * @property {string} id
+ * @property {string} content
+ * @property {MemoryType} type
+ * @property {number} confidence
+ * @property {number} score
+ * @property {string} source
+ * @property {string} createdAt
+ *
+ * @typedef {Object} ConsolidationResult
+ * @property {string} runId
+ * @property {number} episodesEvaluated
+ * @property {number} clustersFound
+ * @property {number} principlesExtracted
+ * @property {string} status
+ *
+ * @typedef {Object} IntrospectResult
+ * @property {number} episodic
+ * @property {number} semantic
+ * @property {number} procedural
+ * @property {number} causalLinks
+ * @property {number} dormant
+ * @property {{ open: number, resolved: number, context_dependent: number, reopened: number }} contradictions
+ * @property {string | null} lastConsolidation
+ * @property {number} totalConsolidationRuns
+ *
+ * @typedef {Object} TruthResolution
+ * @property {'a_wins' | 'b_wins' | 'context_dependent'} resolution
+ * @property {Object} [conditions]
+ * @property {string} explanation
+ *
+ * @typedef {Object} AudreyConfig
+ * @property {string} [dataDir]
+ * @property {string} [agent]
+ * @property {{ provider: 'mock' | 'openai', dimensions?: number, apiKey?: string }} [embedding]
+ * @property {{ provider: 'mock' | 'anthropic' | 'openai', apiKey?: string, model?: string }} [llm]
+ * @property {{ minEpisodes?: number }} [consolidation]
+ * @property {{ dormantThreshold?: number }} [decay]
+ */
+
 export class Audrey extends EventEmitter {
+  /** @param {AudreyConfig} [config] */
   constructor({
     dataDir = './audrey-data',
     agent = 'default',
@@ -56,6 +116,10 @@ export class Audrey extends EventEmitter {
       .catch(err => this.emit('error', err));
   }
 
+  /**
+   * @param {EncodeParams} params
+   * @returns {Promise<string>}
+   */
   async encode(params) {
     const id = await encodeEpisode(this.db, this.embeddingProvider, params);
     this.emit('encode', { id, ...params });
@@ -63,6 +127,10 @@ export class Audrey extends EventEmitter {
     return id;
   }
 
+  /**
+   * @param {EncodeParams[]} paramsList
+   * @returns {Promise<string[]>}
+   */
   async encodeBatch(paramsList) {
     const ids = [];
     for (const params of paramsList) {
@@ -78,14 +146,28 @@ export class Audrey extends EventEmitter {
     return ids;
   }
 
+  /**
+   * @param {string} query
+   * @param {RecallOptions} [options]
+   * @returns {Promise<RecallResult[]>}
+   */
   recall(query, options = {}) {
     return recallFn(this.db, this.embeddingProvider, query, options);
   }
 
+  /**
+   * @param {string} query
+   * @param {RecallOptions} [options]
+   * @returns {AsyncGenerator<RecallResult>}
+   */
   async *recallStream(query, options = {}) {
     yield* recallStreamFn(this.db, this.embeddingProvider, query, options);
   }
 
+  /**
+   * @param {{ minClusterSize?: number, similarityThreshold?: number, extractPrinciple?: Function, llmProvider?: import('./llm.js').LLMProvider }} [options]
+   * @returns {Promise<ConsolidationResult>}
+   */
   async consolidate(options = {}) {
     const result = await runConsolidation(this.db, this.embeddingProvider, {
       minClusterSize: options.minClusterSize || this.consolidationConfig.minEpisodes,
@@ -99,6 +181,10 @@ export class Audrey extends EventEmitter {
     return output;
   }
 
+  /**
+   * @param {{ dormantThreshold?: number }} [options]
+   * @returns {{ totalEvaluated: number, transitionedToDormant: number, timestamp: string }}
+   */
   decay(options = {}) {
     const result = applyDecay(this.db, {
       dormantThreshold: options.dormantThreshold || this.decayConfig.dormantThreshold,
@@ -107,12 +193,20 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
+  /**
+   * @param {string} runId
+   * @returns {{ rolledBackMemories: number, restoredEpisodes: number }}
+   */
   rollback(runId) {
     const result = rollbackConsolidation(this.db, runId);
     this.emit('rollback', { runId, ...result });
     return result;
   }
 
+  /**
+   * @param {string} contradictionId
+   * @returns {Promise<TruthResolution>}
+   */
   async resolveTruth(contradictionId) {
     if (!this.llmProvider) {
       throw new Error('resolveTruth requires an LLM provider');
@@ -165,14 +259,17 @@ export class Audrey extends EventEmitter {
     throw new Error(`Unknown claim type: ${claimType}`);
   }
 
+  /** @returns {Array<{ id: string, input_episode_ids: string, output_memory_ids: string, started_at: string, completed_at: string, status: string }>} */
   consolidationHistory() {
     return getConsolidationHistory(this.db);
   }
 
+  /** @returns {IntrospectResult} */
   introspect() {
     return introspectFn(this.db);
   }
 
+  /** @returns {void} */
   close() {
     closeDatabase(this.db);
   }

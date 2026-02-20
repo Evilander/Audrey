@@ -1,6 +1,11 @@
 import { generateId } from './ulid.js';
 import { buildCausalArticulationPrompt } from './prompts.js';
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {{ causeId: string, effectId: string, linkType?: string, mechanism?: string, confidence?: number }} params
+ * @returns {string}
+ */
 export function addCausalLink(db, { causeId, effectId, linkType = 'causal', mechanism, confidence }) {
   const id = generateId();
   const now = new Date().toISOString();
@@ -13,6 +18,12 @@ export function addCausalLink(db, { causeId, effectId, linkType = 'causal', mech
   return id;
 }
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} memoryId
+ * @param {{ depth?: number }} [options]
+ * @returns {Object[]}
+ */
 export function getCausalChain(db, memoryId, options = {}) {
   const { depth = 10 } = options;
   const results = [];
@@ -45,6 +56,13 @@ export function getCausalChain(db, memoryId, options = {}) {
   return results;
 }
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('./llm.js').LLMProvider} llmProvider
+ * @param {{ id: string, content: string, source: string }} cause
+ * @param {{ id: string, content: string, source: string }} effect
+ * @returns {Promise<{ linkId: string|null, mechanism: string, linkType: string, confidence: number, spurious: boolean }>}
+ */
 export async function articulateCausalLink(db, llmProvider, cause, effect) {
   const messages = buildCausalArticulationPrompt(cause, effect);
   const result = await llmProvider.json(messages);

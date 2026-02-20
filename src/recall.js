@@ -190,6 +190,13 @@ function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeP
   return { results, matchedIds };
 }
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
+ * @param {string} query
+ * @param {{ minConfidence?: number, types?: string[], limit?: number, includeProvenance?: boolean, includeDormant?: boolean }} [options]
+ * @returns {AsyncGenerator<{ id: string, content: string, type: string, confidence: number, score: number, source: string, createdAt: string }>}
+ */
 export async function* recallStream(db, embeddingProvider, query, options = {}) {
   const {
     minConfidence = 0,
@@ -251,6 +258,13 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   }
 }
 
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
+ * @param {string} query
+ * @param {{ minConfidence?: number, types?: string[], limit?: number, includeProvenance?: boolean, includeDormant?: boolean }} [options]
+ * @returns {Promise<Array<{ id: string, content: string, type: string, confidence: number, score: number, source: string, createdAt: string }>>}
+ */
 export async function recall(db, embeddingProvider, query, options = {}) {
   const results = [];
   for await (const entry of recallStream(db, embeddingProvider, query, options)) {
