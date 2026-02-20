@@ -403,7 +403,7 @@ brain.on('error', (err) => { ... });
 
 ### `brain.close()`
 
-Close the database connection and stop auto-consolidation.
+Close the database connection.
 
 ## Architecture
 
@@ -522,28 +522,28 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] Automatic migration from v0.2.0 embedding BLOBs to vec0 tables
 - [x] 168 tests across 16 test files
 
-### v0.3.1 — MCP Server (current)
+### v0.3.1 — MCP Server + JSDoc Types (current)
 
 - [x] MCP tool server via `@modelcontextprotocol/sdk` with stdio transport
 - [x] 5 tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`
 - [x] Configuration via environment variables (data dir, embedding provider, LLM provider)
 - [x] One-command install: `npx audrey install` (auto-detects API keys)
 - [x] CLI subcommands: `install`, `uninstall`, `status`
+- [x] JSDoc type annotations on all public exports (16 source files)
+- [x] Published to npm with proper package metadata
 - [x] 194 tests across 17 test files
-
-### v0.3.5 — Embedding Migration (deferred from v0.3.0)
-
-- [ ] Embedding migration pipeline (re-embed when models change)
-- [ ] Re-consolidation queue (re-run consolidation with new embedding model)
 
 ### v0.4.0 — Type Safety & Developer Experience
 
 - [ ] Full TypeScript conversion with strict mode
-- [ ] JSDoc types on all exports (interim before TS conversion)
 - [ ] Published type declarations (.d.ts)
 - [ ] Schema versioning and migration system
 - [ ] Structured logging (optional, pluggable)
-- [ ] npm publish with proper package metadata
+
+### v0.4.5 — Embedding Migration (deferred from v0.3.0)
+
+- [ ] Embedding migration pipeline (re-embed when models change)
+- [ ] Re-consolidation queue (re-run consolidation with new embedding model)
 
 ### v0.5.0 — Advanced Memory Features
 
