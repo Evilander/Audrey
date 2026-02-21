@@ -5,6 +5,7 @@ import {
   evidenceAgreement,
   recencyDecay,
   retrievalReinforcement,
+  salienceModifier,
   DEFAULT_WEIGHTS,
   DEFAULT_SOURCE_RELIABILITY,
   DEFAULT_HALF_LIVES,
@@ -79,6 +80,24 @@ describe('retrievalReinforcement', () => {
 
   it('never exceeds 1.0', () => {
     expect(retrievalReinforcement(1000, 0)).toBeLessThanOrEqual(1.0);
+  });
+});
+
+describe('salienceModifier', () => {
+  it('returns 1.0 for default salience (0.5)', () => {
+    expect(salienceModifier(0.5)).toBeCloseTo(1.0);
+  });
+
+  it('returns 0.5 for zero salience', () => {
+    expect(salienceModifier(0)).toBeCloseTo(0.5);
+  });
+
+  it('returns 1.5 for max salience (1.0)', () => {
+    expect(salienceModifier(1.0)).toBeCloseTo(1.5);
+  });
+
+  it('returns 1.0 for undefined salience', () => {
+    expect(salienceModifier(undefined)).toBeCloseTo(1.0);
   });
 });
 
