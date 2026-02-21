@@ -1,5 +1,6 @@
 import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier } from './confidence.js';
 import { interferenceModifier } from './interference.js';
+import { contextMatchRatio, contextModifier } from './context.js';
 import { daysBetween, safeJsonParse } from './utils.js';
 
 function computeEpisodicConfidence(ep, now, confidenceConfig = {}) {
@@ -64,7 +65,7 @@ function computeProceduralConfidence(proc, now, confidenceConfig = {}) {
   return Math.max(0, Math.min(1, confidence));
 }
 
-function buildEpisodicEntry(ep, confidence, score, includeProvenance) {
+function buildEpisodicEntry(ep, confidence, score, includeProvenance, contextMatch) {
   const entry = {
     id: ep.id,
     content: ep.content,
@@ -74,6 +75,9 @@ function buildEpisodicEntry(ep, confidence, score, includeProvenance) {
     source: ep.source,
     createdAt: ep.created_at,
   };
+  if (contextMatch !== undefined) {
+    entry.contextMatch = contextMatch;
+  }
   if (includeProvenance) {
     entry.provenance = {
       source: ep.source,
@@ -154,10 +158,19 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
       if (!filters.tags.some(t => rowTags.includes(t))) continue;
     }
     if (filters.sources?.length && !filters.sources.includes(row.source)) continue;
-    const confidence = computeEpisodicConfidence(row, now, confidenceConfig);
+    let confidence = computeEpisodicConfidence(row, now, confidenceConfig);
+
+    let ctxMatch;
+    if (confidenceConfig?.retrievalContext) {
+      const encodingCtx = safeJsonParse(row.context, {});
+      ctxMatch = contextMatchRatio(encodingCtx, confidenceConfig.retrievalContext);
+      confidence *= contextModifier(encodingCtx, confidenceConfig.retrievalContext, confidenceConfig.contextWeight);
+      confidence = Math.max(0, Math.min(1, confidence));
+    }
+
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
-    results.push(buildEpisodicEntry(row, confidence, score, includeProvenance));
+    results.push(buildEpisodicEntry(row, confidence, score, includeProvenance, ctxMatch));
   }
   return results;
 }
