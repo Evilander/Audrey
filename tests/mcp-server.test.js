@@ -463,6 +463,51 @@ describe('MCP tool: memory_export + memory_import', () => {
   });
 });
 
+describe('MCP tool: context parameters', () => {
+  let audrey;
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    audrey = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'mcp-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    audrey.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('memory_encode accepts context parameter', async () => {
+    const id = await audrey.encode({
+      content: 'mcp context test',
+      source: 'direct-observation',
+      context: { task: 'mcp-testing' },
+    });
+    expect(typeof id).toBe('string');
+    const row = audrey.db.prepare('SELECT context FROM episodes WHERE id = ?').get(id);
+    expect(JSON.parse(row.context)).toEqual({ task: 'mcp-testing' });
+  });
+
+  it('memory_recall accepts context parameter', async () => {
+    await audrey.encode({
+      content: 'mcp recall context test',
+      source: 'direct-observation',
+      context: { task: 'mcp-testing' },
+    });
+    const results = await audrey.recall('mcp recall context test', {
+      types: ['episodic'],
+      context: { task: 'mcp-testing' },
+    });
+    expect(results.length).toBeGreaterThan(0);
+    const match = results.find(r => r.content === 'mcp recall context test');
+    expect(match).toBeDefined();
+    expect(match.contextMatch).toBe(1.0);
+  });
+});
+
 describe('MCP tool: memory_forget + memory_decay', () => {
   let audrey;
   const TOOL_DIR = './test-mcp-forget';

@@ -163,10 +163,11 @@ async function main() {
       source: z.enum(VALID_SOURCES).describe('Source type of the memory'),
       tags: z.array(z.string()).optional().describe('Optional tags for categorization'),
       salience: z.number().min(0).max(1).optional().describe('Importance weight 0-1'),
+      context: z.record(z.string()).optional().describe('Situational context as key-value pairs (e.g., {task: "debugging", domain: "payments"})'),
     },
-    async ({ content, source, tags, salience }) => {
+    async ({ content, source, tags, salience, context }) => {
       try {
-        const id = await audrey.encode({ content, source, tags, salience });
+        const id = await audrey.encode({ content, source, tags, salience, context });
         return toolResult({ id, content, source });
       } catch (err) {
         return toolError(err);
@@ -185,8 +186,9 @@ async function main() {
       sources: z.array(z.enum(VALID_SOURCES)).optional().describe('Only return episodic memories from these sources'),
       after: z.string().optional().describe('Only return memories created after this ISO date'),
       before: z.string().optional().describe('Only return memories created before this ISO date'),
+      context: z.record(z.string()).optional().describe('Retrieval context — memories encoded in matching context get boosted'),
     },
-    async ({ query, limit, types, min_confidence, tags, sources, after, before }) => {
+    async ({ query, limit, types, min_confidence, tags, sources, after, before, context }) => {
       try {
         const results = await audrey.recall(query, {
           limit: limit ?? 10,
@@ -196,6 +198,7 @@ async function main() {
           sources,
           after,
           before,
+          context,
         });
         return toolResult(results);
       } catch (err) {
