@@ -213,6 +213,15 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
 
     promoteAll();
 
+    db.prepare(`
+      INSERT INTO consolidation_metrics (id, run_id, min_cluster_size, similarity_threshold,
+        episodes_evaluated, clusters_found, principles_extracted, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      generateId(), runId, minClusterSize, similarityThreshold,
+      episodesEvaluated, clusters.length, principlesExtracted, new Date().toISOString(),
+    );
+
     return {
       runId,
       episodesEvaluated,
