@@ -152,6 +152,7 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
         embeddingBuffer,
         semanticId: generateId(),
         semanticNow: new Date().toISOString(),
+        maxSalience: Math.max(...cluster.map(ep => ep.salience ?? 0.5)),
       });
     }
 
@@ -168,8 +169,8 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
             id, content, embedding, state, evidence_episode_ids,
             evidence_count, supporting_count, source_type_diversity,
             consolidation_checkpoint, embedding_model, embedding_version,
-            consolidation_model, created_at
-          ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            consolidation_model, created_at, salience
+          ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           entry.semanticId,
           entry.principle.content,
@@ -183,6 +184,7 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
           embeddingProvider.modelVersion,
           llmProvider?.modelName || null,
           entry.semanticNow,
+          entry.maxSalience,
         );
 
         db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
