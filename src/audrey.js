@@ -215,13 +215,9 @@ export class Audrey extends EventEmitter {
    */
   async recall(query, options = {}) {
     await this._ensureMigrated();
-    const baseConfig = options.confidenceConfig ?? this.confidenceConfig;
-    const confidenceConfig = this.contextConfig.enabled && options.context
-      ? { ...baseConfig, retrievalContext: options.context }
-      : baseConfig;
     return recallFn(this.db, this.embeddingProvider, query, {
       ...options,
-      confidenceConfig,
+      confidenceConfig: this._recallConfig(options),
     });
   }
 
@@ -232,14 +228,17 @@ export class Audrey extends EventEmitter {
    */
   async *recallStream(query, options = {}) {
     await this._ensureMigrated();
-    const baseConfig = options.confidenceConfig ?? this.confidenceConfig;
-    const confidenceConfig = this.contextConfig.enabled && options.context
-      ? { ...baseConfig, retrievalContext: options.context }
-      : baseConfig;
     yield* recallStreamFn(this.db, this.embeddingProvider, query, {
       ...options,
-      confidenceConfig,
+      confidenceConfig: this._recallConfig(options),
     });
+  }
+
+  _recallConfig(options) {
+    const base = options.confidenceConfig ?? this.confidenceConfig;
+    return this.contextConfig.enabled && options.context
+      ? { ...base, retrievalContext: options.context }
+      : base;
   }
 
   /**
