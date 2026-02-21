@@ -217,7 +217,7 @@ function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeP
  * @param {import('better-sqlite3').Database} db
  * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
  * @param {string} query
- * @param {{ minConfidence?: number, types?: string[], limit?: number, includeProvenance?: boolean, includeDormant?: boolean }} [options]
+ * @param {{ minConfidence?: number, types?: string[], limit?: number, includeProvenance?: boolean, includeDormant?: boolean, tags?: string[], sources?: string[], after?: string, before?: string }} [options]
  * @returns {AsyncGenerator<{ id: string, content: string, type: string, confidence: number, score: number, source: string, createdAt: string }>}
  */
 export async function* recallStream(db, embeddingProvider, query, options = {}) {
@@ -292,7 +292,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
  * @param {import('better-sqlite3').Database} db
  * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
  * @param {string} query
- * @param {{ minConfidence?: number, types?: string[], limit?: number, includeProvenance?: boolean, includeDormant?: boolean }} [options]
+ * @param {{ minConfidence?: number, types?: string[], limit?: number, includeProvenance?: boolean, includeDormant?: boolean, tags?: string[], sources?: string[], after?: string, before?: string }} [options]
  * @returns {Promise<Array<{ id: string, content: string, type: string, confidence: number, score: number, source: string, createdAt: string }>>}
  */
 export async function recall(db, embeddingProvider, query, options = {}) {
