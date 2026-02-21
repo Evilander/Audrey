@@ -238,6 +238,21 @@ describe('runConsolidation with LLM', () => {
     expect(sem.consolidation_model).toBe('mock-llm');
   });
 
+  it('consolidated semantic inherits max salience from source episodes', async () => {
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'direct-observation', salience: 0.3 });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'tool-result', salience: 0.9 });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'told-by-user', salience: 0.6 });
+
+    await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: () => ({ content: 'Salience test', type: 'semantic' }),
+    });
+
+    const sem = db.prepare("SELECT salience FROM semantics WHERE state = 'active'").get();
+    expect(sem.salience).toBe(0.9);
+  });
+
   it('falls back to default extraction when no LLM and no callback', async () => {
     await encodeEpisode(db, embedding, { content: 'same thing', source: 'direct-observation' });
     await encodeEpisode(db, embedding, { content: 'same thing', source: 'tool-result' });
