@@ -144,4 +144,23 @@ describe('encodeEpisode', () => {
     expect(row).toBeDefined();
     expect(Number(row.consolidated)).toBe(0);
   });
+
+  it('stores context as JSON', async () => {
+    const id = await encodeEpisode(db, embedding, {
+      content: 'context test',
+      source: 'direct-observation',
+      context: { task: 'debugging', domain: 'payments' },
+    });
+    const row = db.prepare('SELECT context FROM episodes WHERE id = ?').get(id);
+    expect(JSON.parse(row.context)).toEqual({ task: 'debugging', domain: 'payments' });
+  });
+
+  it('defaults context to empty object', async () => {
+    const id = await encodeEpisode(db, embedding, {
+      content: 'no context test',
+      source: 'direct-observation',
+    });
+    const row = db.prepare('SELECT context FROM episodes WHERE id = ?').get(id);
+    expect(JSON.parse(row.context)).toEqual({});
+  });
 });
