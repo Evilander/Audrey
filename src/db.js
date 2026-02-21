@@ -104,6 +104,18 @@ const SCHEMA = `
     value TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS consolidation_metrics (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    min_cluster_size INTEGER NOT NULL,
+    similarity_threshold REAL NOT NULL,
+    episodes_evaluated INTEGER NOT NULL,
+    clusters_found INTEGER NOT NULL,
+    principles_extracted INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES consolidation_runs(id)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_episodes_created ON episodes(created_at);
   CREATE INDEX IF NOT EXISTS idx_episodes_consolidated ON episodes(consolidated);
   CREATE INDEX IF NOT EXISTS idx_episodes_source ON episodes(source);
