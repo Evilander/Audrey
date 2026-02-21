@@ -34,6 +34,10 @@ import { reembedAll } from './migrate.js';
  * @property {number} [limit]
  * @property {boolean} [includeProvenance]
  * @property {boolean} [includeDormant]
+ * @property {string[]} [tags]
+ * @property {string[]} [sources]
+ * @property {string} [after]
+ * @property {string} [before]
  *
  * @typedef {Object} RecallResult
  * @property {string} id
