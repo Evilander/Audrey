@@ -585,6 +585,75 @@ describe('forget and purge', () => {
   });
 });
 
+describe('v0.7.0 biological modifiers', () => {
+  const BIO_DIR = './test-bio-modifiers';
+
+  afterEach(() => {
+    if (existsSync(BIO_DIR)) rmSync(BIO_DIR, { recursive: true });
+  });
+
+  it('salience flows through encode to recall', async () => {
+    const brain = new Audrey({
+      dataDir: BIO_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await brain.encode({ content: 'critical security update required immediately', source: 'told-by-user', salience: 1.0 });
+    await brain.encode({ content: 'minor style fix in documentation', source: 'told-by-user', salience: 0.0 });
+
+    const results = await brain.recall('critical security update required immediately', { types: ['episodic'] });
+    const critical = results.find(r => r.content.includes('critical'));
+    expect(critical).toBeDefined();
+    expect(critical.confidence).toBeGreaterThan(0);
+    brain.close();
+  });
+
+  it('interference config defaults are applied', () => {
+    const brain = new Audrey({ dataDir: BIO_DIR });
+    expect(brain.interferenceConfig).toEqual({
+      enabled: true,
+      k: 5,
+      threshold: 0.6,
+      weight: 0.1,
+    });
+    brain.close();
+  });
+
+  it('custom interference config is accepted', () => {
+    const brain = new Audrey({
+      dataDir: BIO_DIR,
+      interference: { enabled: false, k: 10, threshold: 0.8, weight: 0.2 },
+    });
+    expect(brain.interferenceConfig).toEqual({
+      enabled: false,
+      k: 10,
+      threshold: 0.8,
+      weight: 0.2,
+    });
+    brain.close();
+  });
+
+  it('high-salience episodic memory has higher confidence than low-salience', async () => {
+    const brain = new Audrey({
+      dataDir: BIO_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await brain.encode({ content: 'high importance memory', source: 'told-by-user', salience: 1.0 });
+    await brain.encode({ content: 'low importance memory', source: 'told-by-user', salience: 0.0 });
+
+    const highResults = await brain.recall('high importance memory', { types: ['episodic'] });
+    const lowResults = await brain.recall('low importance memory', { types: ['episodic'] });
+
+    const high = highResults.find(r => r.content === 'high importance memory');
+    const low = lowResults.find(r => r.content === 'low importance memory');
+
+    expect(high).toBeDefined();
+    expect(low).toBeDefined();
+    // salience=1.0 gives modifier 1.5, salience=0.0 gives modifier 0.5
+    expect(high.confidence).toBeGreaterThan(low.confidence);
+    brain.close();
+  });
+});
+
 describe('interference on encode', () => {
   const INT_DIR = './test-interference-audrey';
   let brain;
