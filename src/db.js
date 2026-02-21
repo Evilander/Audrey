@@ -42,7 +42,9 @@ const SCHEMA = `
     created_at TEXT NOT NULL,
     last_reinforced_at TEXT,
     retrieval_count INTEGER DEFAULT 0,
-    challenge_count INTEGER DEFAULT 0
+    challenge_count INTEGER DEFAULT 0,
+    interference_count INTEGER DEFAULT 0,
+    salience REAL DEFAULT 0.5
   );
 
   CREATE TABLE IF NOT EXISTS procedures (
@@ -58,7 +60,9 @@ const SCHEMA = `
     embedding_version TEXT,
     created_at TEXT NOT NULL,
     last_reinforced_at TEXT,
-    retrieval_count INTEGER DEFAULT 0
+    retrieval_count INTEGER DEFAULT 0,
+    interference_count INTEGER DEFAULT 0,
+    salience REAL DEFAULT 0.5
   );
 
   CREATE TABLE IF NOT EXISTS causal_links (
