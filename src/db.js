@@ -11,6 +11,7 @@ const SCHEMA = `
     source TEXT NOT NULL CHECK(source IN ('direct-observation','told-by-user','tool-result','inference','model-generated')),
     source_reliability REAL NOT NULL,
     salience REAL DEFAULT 0.5,
+    context TEXT DEFAULT '{}',
     tags TEXT,
     causal_trigger TEXT,
     causal_consequence TEXT,
