@@ -14,7 +14,7 @@ describe('recall', () => {
   beforeEach(async () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR, { dimensions: 8 });
+    ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
     embedding = new MockEmbeddingProvider({ dimensions: 8 });
 
     // Seed episodic memories (encodeEpisode already writes to vec_episodes)

@@ -26,7 +26,7 @@ describe('sqlite-vec foundation', () => {
   });
 
   it('loads sqlite-vec and creates vec0 tables when dimensions provided', () => {
-    const db = createDatabase(TEST_DIR, { dimensions: 8 });
+    const { db } = createDatabase(TEST_DIR, { dimensions: 8 });
     const tables = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     ).all().map(t => t.name);
@@ -37,7 +37,7 @@ describe('sqlite-vec foundation', () => {
   });
 
   it('creates audrey_config table and stores dimensions', () => {
-    const db = createDatabase(TEST_DIR, { dimensions: 64 });
+    const { db } = createDatabase(TEST_DIR, { dimensions: 64 });
     const row = db.prepare(
       "SELECT value FROM audrey_config WHERE key = 'dimensions'"
     ).get();
@@ -46,16 +46,20 @@ describe('sqlite-vec foundation', () => {
     closeDatabase(db);
   });
 
-  it('validates dimensions on re-open — throws on mismatch', () => {
-    const db1 = createDatabase(TEST_DIR, { dimensions: 64 });
+  it('migrates vec tables on dimension change instead of throwing', () => {
+    const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 64 });
     closeDatabase(db1);
-    expect(() => createDatabase(TEST_DIR, { dimensions: 128 })).toThrow(/dimension/i);
+    const { db: db2, migrated } = createDatabase(TEST_DIR, { dimensions: 128 });
+    expect(migrated).toBe(true);
+    const row = db2.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get();
+    expect(row.value).toBe('128');
+    closeDatabase(db2);
   });
 
   it('re-opens successfully with matching dimensions', () => {
-    const db1 = createDatabase(TEST_DIR, { dimensions: 64 });
+    const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 64 });
     closeDatabase(db1);
-    const db2 = createDatabase(TEST_DIR, { dimensions: 64 });
+    const { db: db2 } = createDatabase(TEST_DIR, { dimensions: 64 });
     const row = db2.prepare(
       "SELECT value FROM audrey_config WHERE key = 'dimensions'"
     ).get();
@@ -64,7 +68,7 @@ describe('sqlite-vec foundation', () => {
   });
 
   it('does NOT create vec0 tables when dimensions not provided (backwards compat)', () => {
-    const db = createDatabase(TEST_DIR);
+    const { db } = createDatabase(TEST_DIR);
     const tables = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     ).all().map(t => t.name);
@@ -78,7 +82,7 @@ describe('sqlite-vec foundation', () => {
 
   it('can insert and KNN query a vector in vec_episodes', () => {
     const dims = 8;
-    const db = createDatabase(TEST_DIR, { dimensions: dims });
+    const { db } = createDatabase(TEST_DIR, { dimensions: dims });
 
     const v1 = makeVector(dims, 1.0);
     const v2 = makeVector(dims, 2.0);
@@ -108,7 +112,7 @@ describe('sqlite-vec foundation', () => {
 
   it('supports metadata filtering in KNN queries', () => {
     const dims = 8;
-    const db = createDatabase(TEST_DIR, { dimensions: dims });
+    const { db } = createDatabase(TEST_DIR, { dimensions: dims });
 
     const v1 = makeVector(dims, 1.0);
     const v2 = makeVector(dims, 1.01);
@@ -140,7 +144,7 @@ describe('sqlite-vec foundation', () => {
 
   it('can insert and KNN query vec_semantics with state filtering', () => {
     const dims = 8;
-    const db = createDatabase(TEST_DIR, { dimensions: dims });
+    const { db } = createDatabase(TEST_DIR, { dimensions: dims });
 
     const v1 = makeVector(dims, 1.0);
     const v2 = makeVector(dims, 1.01);
@@ -164,7 +168,7 @@ describe('sqlite-vec foundation', () => {
 
   it('can insert and KNN query vec_procedures with state filtering', () => {
     const dims = 8;
-    const db = createDatabase(TEST_DIR, { dimensions: dims });
+    const { db } = createDatabase(TEST_DIR, { dimensions: dims });
 
     const v1 = makeVector(dims, 1.0);
     const v2 = makeVector(dims, 1.01);
@@ -190,7 +194,7 @@ describe('sqlite-vec foundation', () => {
     it('copies episode embeddings to vec_episodes on first open with dimensions', () => {
       const dims = 8;
       // First: create DB without dimensions (old-style)
-      const db1 = createDatabase(TEST_DIR);
+      const { db: db1 } = createDatabase(TEST_DIR);
       const v1 = makeVector(dims, 1.0);
       const v2 = makeVector(dims, 2.0);
       db1.prepare(`INSERT INTO episodes (id, content, embedding, source, source_reliability, consolidated, created_at)
@@ -209,7 +213,7 @@ describe('sqlite-vec foundation', () => {
       closeDatabase(db1);
 
       // Re-open WITH dimensions — migration should run
-      const db2 = createDatabase(TEST_DIR, { dimensions: dims });
+      const { db: db2 } = createDatabase(TEST_DIR, { dimensions: dims });
       const rows = db2.prepare(
         'SELECT id, distance FROM vec_episodes WHERE embedding MATCH ? AND k = ?'
       ).all(Buffer.from(v1.buffer), 10);
@@ -224,7 +228,7 @@ describe('sqlite-vec foundation', () => {
 
     it('copies semantic embeddings to vec_semantics on first open with dimensions', () => {
       const dims = 8;
-      const db1 = createDatabase(TEST_DIR);
+      const { db: db1 } = createDatabase(TEST_DIR);
       const v1 = makeVector(dims, 1.0);
       db1.prepare(`INSERT INTO semantics (id, content, embedding, state, created_at)
                     VALUES (?, ?, ?, ?, ?)`).run(
@@ -232,7 +236,7 @@ describe('sqlite-vec foundation', () => {
       );
       closeDatabase(db1);
 
-      const db2 = createDatabase(TEST_DIR, { dimensions: dims });
+      const { db: db2 } = createDatabase(TEST_DIR, { dimensions: dims });
       const rows = db2.prepare(
         'SELECT id, distance FROM vec_semantics WHERE embedding MATCH ? AND k = ?'
       ).all(Buffer.from(v1.buffer), 10);
@@ -245,7 +249,7 @@ describe('sqlite-vec foundation', () => {
 
     it('copies procedure embeddings to vec_procedures on first open with dimensions', () => {
       const dims = 8;
-      const db1 = createDatabase(TEST_DIR);
+      const { db: db1 } = createDatabase(TEST_DIR);
       const v1 = makeVector(dims, 3.0);
       db1.prepare(`INSERT INTO procedures (id, content, embedding, state, created_at)
                     VALUES (?, ?, ?, ?, ?)`).run(
@@ -253,7 +257,7 @@ describe('sqlite-vec foundation', () => {
       );
       closeDatabase(db1);
 
-      const db2 = createDatabase(TEST_DIR, { dimensions: dims });
+      const { db: db2 } = createDatabase(TEST_DIR, { dimensions: dims });
       const rows = db2.prepare(
         'SELECT id, distance FROM vec_procedures WHERE embedding MATCH ? AND k = ?'
       ).all(Buffer.from(v1.buffer), 10);
@@ -266,7 +270,7 @@ describe('sqlite-vec foundation', () => {
 
     it('does not duplicate if migration already ran', () => {
       const dims = 8;
-      const db1 = createDatabase(TEST_DIR);
+      const { db: db1 } = createDatabase(TEST_DIR);
       const v1 = makeVector(dims, 1.0);
       db1.prepare(`INSERT INTO episodes (id, content, embedding, source, source_reliability, consolidated, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
@@ -275,11 +279,11 @@ describe('sqlite-vec foundation', () => {
       closeDatabase(db1);
 
       // Open with dimensions (triggers migration)
-      const db2 = createDatabase(TEST_DIR, { dimensions: dims });
+      const { db: db2 } = createDatabase(TEST_DIR, { dimensions: dims });
       closeDatabase(db2);
 
       // Open again (migration should not duplicate)
-      const db3 = createDatabase(TEST_DIR, { dimensions: dims });
+      const { db: db3 } = createDatabase(TEST_DIR, { dimensions: dims });
       const rows = db3.prepare(
         'SELECT id, distance FROM vec_episodes WHERE embedding MATCH ? AND k = ?'
       ).all(Buffer.from(v1.buffer), 10);

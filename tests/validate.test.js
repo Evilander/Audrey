@@ -13,7 +13,7 @@ describe('validateMemory', () => {
   beforeEach(async () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR, { dimensions: 8 });
+    ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
     embedding = new MockEmbeddingProvider({ dimensions: 8 });
   });
 
@@ -88,7 +88,7 @@ describe('createContradiction', () => {
   beforeEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR, { dimensions: 8 });
+    ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
   });
 
   afterEach(() => {
@@ -118,7 +118,7 @@ describe('reopenContradiction', () => {
   beforeEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR, { dimensions: 8 });
+    ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
   });
 
   afterEach(() => {
@@ -142,7 +142,7 @@ describe('validateMemory with LLM contradiction detection', () => {
   beforeEach(async () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     mkdirSync(TEST_DIR, { recursive: true });
-    db = createDatabase(TEST_DIR, { dimensions: 8 });
+    ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
     embedding = new MockEmbeddingProvider({ dimensions: 8 });
   });
 
