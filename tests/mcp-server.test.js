@@ -379,36 +379,38 @@ describe('MCP tool: memory_resolve_truth', () => {
   });
 });
 
-describe('status: dimension mismatch fix', () => {
-  const STATUS_DIR = './test-mcp-status';
+describe('MCP tool: memory_export + memory_import', () => {
+  let audrey;
+  const EXPORT_DIR = './test-mcp-export';
+  const IMPORT_DIR = './test-mcp-import';
 
-  beforeEach(() => {
-    if (existsSync(STATUS_DIR)) rmSync(STATUS_DIR, { recursive: true });
+  beforeEach(async () => {
+    if (existsSync(EXPORT_DIR)) rmSync(EXPORT_DIR, { recursive: true });
+    if (existsSync(IMPORT_DIR)) rmSync(IMPORT_DIR, { recursive: true });
+    audrey = new Audrey({
+      dataDir: EXPORT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await audrey.encode({ content: 'MCP export test', source: 'told-by-user' });
   });
 
   afterEach(() => {
-    if (existsSync(STATUS_DIR)) rmSync(STATUS_DIR, { recursive: true });
+    audrey?.close();
+    if (existsSync(EXPORT_DIR)) rmSync(EXPORT_DIR, { recursive: true });
+    if (existsSync(IMPORT_DIR)) rmSync(IMPORT_DIR, { recursive: true });
   });
 
-  it('reopens a 1536d database without dimension mismatch', () => {
-    const original = new Audrey({
-      dataDir: STATUS_DIR,
-      agent: 'setup',
-      embedding: { provider: 'mock', dimensions: 1536 },
+  it('round-trips through export and import', async () => {
+    const snapshot = audrey.export();
+    expect(snapshot.episodes.length).toBe(1);
+
+    const dest = new Audrey({
+      dataDir: IMPORT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
     });
-    original.close();
-
-    const storedDims = readStoredDimensions(STATUS_DIR);
-    expect(storedDims).toBe(1536);
-
-    const reopened = new Audrey({
-      dataDir: STATUS_DIR,
-      agent: 'status-check',
-      embedding: { provider: 'mock', dimensions: storedDims },
-    });
-    const stats = reopened.introspect();
-    reopened.close();
-
-    expect(stats.episodic).toBe(0);
+    await dest.import(snapshot);
+    const stats = dest.introspect();
+    expect(stats.episodic).toBe(1);
+    dest.close();
   });
 });

@@ -10,3 +10,6 @@ export {
   buildCausalArticulationPrompt,
   buildContextResolutionPrompt,
 } from './prompts.js';
+export { exportMemories } from './export.js';
+export { importMemories } from './import.js';
+export { suggestConsolidationParams } from './adaptive.js';

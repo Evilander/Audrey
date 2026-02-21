@@ -149,6 +149,28 @@ describe('applyDecay', () => {
     expect(result.transitionedToDormant).toBe(1);
   });
 
+  it('respects custom halfLives for semantic decay', () => {
+    const id = generateId();
+    db.prepare(`
+      INSERT INTO semantics (id, content, state, supporting_count, contradicting_count,
+        retrieval_count, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, 'Test half-life fact', 'active', 1, 2, 0, daysAgo(10));
+
+    const defaultResult = applyDecay(db, { dormantThreshold: 0.5 });
+    const afterDefault = db.prepare('SELECT state FROM semantics WHERE id = ?').get(id);
+    expect(afterDefault.state).toBe('active');
+
+    db.prepare("UPDATE semantics SET state = 'active' WHERE id = ?").run(id);
+
+    const customResult = applyDecay(db, {
+      dormantThreshold: 0.5,
+      halfLives: { semantic: 1, procedural: 90 },
+    });
+    const afterCustom = db.prepare('SELECT state FROM semantics WHERE id = ?').get(id);
+    expect(afterCustom.state).toBe('dormant');
+  });
+
   it('handles empty database gracefully', () => {
     const result = applyDecay(db);
 

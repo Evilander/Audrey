@@ -65,12 +65,14 @@ function install() {
   console.log(`
 Audrey registered as "${SERVER_NAME}" with Claude Code.
 
-5 tools available in every session:
+7 tools available in every session:
   memory_encode        — Store observations, facts, preferences
   memory_recall        — Search memories by semantic similarity
   memory_consolidate   — Extract principles from accumulated episodes
   memory_introspect    — Check memory system health
   memory_resolve_truth — Resolve contradictions between claims
+  memory_export        — Export all memories as JSON snapshot
+  memory_import        — Import a snapshot into a fresh database
 
 Data stored in: ${DEFAULT_DATA_DIR}
 Verify: claude mcp list
@@ -233,6 +235,44 @@ async function main() {
       try {
         const resolution = await audrey.resolveTruth(contradiction_id);
         return toolResult(resolution);
+      } catch (err) {
+        return toolError(err);
+      }
+    },
+  );
+
+  server.tool(
+    'memory_export',
+    {},
+    async () => {
+      try {
+        const snapshot = audrey.export();
+        return toolResult(snapshot);
+      } catch (err) {
+        return toolError(err);
+      }
+    },
+  );
+
+  server.tool(
+    'memory_import',
+    {
+      snapshot: z.object({
+        version: z.string(),
+        episodes: z.array(z.any()),
+        semantics: z.array(z.any()).optional(),
+        procedures: z.array(z.any()).optional(),
+        causalLinks: z.array(z.any()).optional(),
+        contradictions: z.array(z.any()).optional(),
+        consolidationRuns: z.array(z.any()).optional(),
+        config: z.record(z.string()).optional(),
+      }).passthrough().describe('A snapshot from memory_export'),
+    },
+    async ({ snapshot }) => {
+      try {
+        await audrey.import(snapshot);
+        const stats = audrey.introspect();
+        return toolResult({ imported: true, stats });
       } catch (err) {
         return toolError(err);
       }

@@ -224,6 +224,33 @@ describe('recall', () => {
     expect(results.length).toBe(2);
   });
 
+  it('respects custom halfLives passed via confidenceConfig', async () => {
+    const shortHalfLife = await recall(db, embedding, 'rate limit', {
+      confidenceConfig: {
+        halfLives: { episodic: 0.001, semantic: 0.001, procedural: 0.001 },
+      },
+      types: ['episodic'],
+    });
+    const normalHalfLife = await recall(db, embedding, 'rate limit', {
+      types: ['episodic'],
+    });
+    if (shortHalfLife.length > 0 && normalHalfLife.length > 0) {
+      expect(shortHalfLife[0].confidence).toBeLessThan(normalHalfLife[0].confidence);
+    }
+  });
+
+  it('respects custom weights passed via confidenceConfig', async () => {
+    const sourceOnly = await recall(db, embedding, 'rate limit', {
+      confidenceConfig: {
+        weights: { source: 1.0, evidence: 0, recency: 0, retrieval: 0 },
+      },
+      types: ['episodic'],
+    });
+    if (sourceOnly.length > 0) {
+      expect(sourceOnly[0].confidence).toBeCloseTo(0.95, 1);
+    }
+  });
+
   it('recall and recallStream return same results (behavioral parity)', async () => {
     const arrayResults = await recall(db, embedding, 'Stripe rate limit', { limit: 5 });
     const streamResults = [];
