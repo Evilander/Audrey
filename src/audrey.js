@@ -13,6 +13,7 @@ import { buildContextResolutionPrompt } from './prompts.js';
 import { exportMemories } from './export.js';
 import { importMemories } from './import.js';
 import { suggestConsolidationParams as suggestParamsFn } from './adaptive.js';
+import { reembedAll } from './migrate.js';
 
 /**
  * @typedef {'direct-observation' | 'told-by-user' | 'tool-result' | 'inference' | 'model-generated'} SourceType
@@ -115,6 +116,13 @@ export class Audrey extends EventEmitter {
     this._autoConsolidateTimer = null;
   }
 
+  async _ensureMigrated() {
+    if (!this._migrationPending) return;
+    const counts = await reembedAll(this.db, this.embeddingProvider);
+    this._migrationPending = false;
+    this.emit('migration', counts);
+  }
+
   _emitValidation(id, params) {
     validateMemory(this.db, this.embeddingProvider, { id, ...params }, {
       llmProvider: this.llmProvider,
@@ -144,6 +152,7 @@ export class Audrey extends EventEmitter {
    * @returns {Promise<string>}
    */
   async encode(params) {
+    await this._ensureMigrated();
     const id = await encodeEpisode(this.db, this.embeddingProvider, params);
     this.emit('encode', { id, ...params });
     this._emitValidation(id, params);
@@ -155,6 +164,7 @@ export class Audrey extends EventEmitter {
    * @returns {Promise<string[]>}
    */
   async encodeBatch(paramsList) {
+    await this._ensureMigrated();
     const ids = [];
     for (const params of paramsList) {
       const id = await encodeEpisode(this.db, this.embeddingProvider, params);
@@ -174,7 +184,8 @@ export class Audrey extends EventEmitter {
    * @param {RecallOptions} [options]
    * @returns {Promise<RecallResult[]>}
    */
-  recall(query, options = {}) {
+  async recall(query, options = {}) {
+    await this._ensureMigrated();
     return recallFn(this.db, this.embeddingProvider, query, {
       ...options,
       confidenceConfig: options.confidenceConfig ?? this.confidenceConfig,
@@ -187,6 +198,7 @@ export class Audrey extends EventEmitter {
    * @returns {AsyncGenerator<RecallResult>}
    */
   async *recallStream(query, options = {}) {
+    await this._ensureMigrated();
     yield* recallStreamFn(this.db, this.embeddingProvider, query, {
       ...options,
       confidenceConfig: options.confidenceConfig ?? this.confidenceConfig,
@@ -198,6 +210,7 @@ export class Audrey extends EventEmitter {
    * @returns {Promise<ConsolidationResult>}
    */
   async consolidate(options = {}) {
+    await this._ensureMigrated();
     const result = await runConsolidation(this.db, this.embeddingProvider, {
       minClusterSize: options.minClusterSize || this.consolidationConfig.minEpisodes,
       similarityThreshold: options.similarityThreshold || 0.80,
