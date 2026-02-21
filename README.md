@@ -398,6 +398,7 @@ brain.on('contradiction', ({ episodeId, contradictionId, semanticId, resolution 
 brain.on('consolidation', ({ runId, principlesExtracted }) => { ... });
 brain.on('decay', ({ totalEvaluated, transitionedToDormant }) => { ... });
 brain.on('rollback', ({ runId, rolledBackMemories }) => { ... });
+brain.on('migration', ({ episodes, semantics, procedures }) => { ... });
 brain.on('error', (err) => { ... });
 ```
 
@@ -429,10 +430,14 @@ src/
   rollback.js        Undo consolidation runs.
   utils.js           Date math, safe JSON parse.
   validate.js        KNN validation + LLM contradiction detection.
+  migrate.js         Dimension migration re-embedding.
+  adaptive.js        Adaptive consolidation parameter suggestions.
+  export.js          Memory export (JSON snapshots).
+  import.js          Memory import with re-embedding.
   index.js           Barrel export.
 
 mcp-server/
-  index.js           MCP tool server (5 tools, stdio transport) + CLI subcommands.
+  index.js           MCP tool server (7 tools, stdio transport) + CLI subcommands.
   config.js          Shared config (env var parsing, install arg builder).
 ```
 
@@ -456,7 +461,7 @@ All mutations use SQLite transactions. CHECK constraints enforce valid states an
 ## Running Tests
 
 ```bash
-npm test          # 208 tests across 17 files
+npm test          # 243 tests across 22 files
 npm run test:watch
 ```
 
@@ -544,7 +549,7 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] Auto-consolidation scheduling (`startAutoConsolidate` / `stopAutoConsolidate`)
 - [x] Consolidation metrics tracking (per-run params and results)
 - [x] Adaptive consolidation parameter suggestions based on historical yield
-- [x] 220+ tests across 20 test files
+- [x] 243 tests across 22 test files
 
 ### v0.4.0 — Type Safety & Developer Experience
 
