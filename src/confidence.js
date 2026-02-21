@@ -71,6 +71,11 @@ export function retrievalReinforcement(retrievalCount, daysSinceRetrieval) {
   return Math.min(1.0, 0.3 * Math.log(1 + retrievalCount) * Math.exp(-lambdaRet * daysSinceRetrieval));
 }
 
+export function salienceModifier(salience) {
+  const s = salience ?? 0.5;
+  return 0.5 + s;
+}
+
 /**
  * @param {object} params
  * @param {string} params.sourceType
