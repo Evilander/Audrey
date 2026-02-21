@@ -115,6 +115,7 @@ export class Audrey extends EventEmitter {
       weights: confidence.weights,
       halfLives: confidence.halfLives,
       sourceReliability: confidence.sourceReliability,
+      interferenceWeight: interference.weight ?? 0.1,
     };
     this.consolidationConfig = {
       minEpisodes: consolidation.minEpisodes || 3,
