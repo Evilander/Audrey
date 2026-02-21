@@ -12,6 +12,7 @@ import { introspect as introspectFn } from './introspect.js';
 import { buildContextResolutionPrompt } from './prompts.js';
 import { exportMemories } from './export.js';
 import { importMemories } from './import.js';
+import { suggestConsolidationParams as suggestParamsFn } from './adaptive.js';
 
 /**
  * @typedef {'direct-observation' | 'told-by-user' | 'tool-result' | 'inference' | 'model-generated'} SourceType
@@ -98,6 +99,7 @@ export class Audrey extends EventEmitter {
       minEpisodes: consolidation.minEpisodes || 3,
     };
     this.decayConfig = { dormantThreshold: decay.dormantThreshold || 0.1 };
+    this._autoConsolidateTimer = null;
   }
 
   _emitValidation(id, params) {
@@ -292,8 +294,32 @@ export class Audrey extends EventEmitter {
     return importMemories(this.db, this.embeddingProvider, snapshot);
   }
 
+  startAutoConsolidate(intervalMs, options = {}) {
+    if (intervalMs < 1000) {
+      throw new Error('Auto-consolidation interval must be at least 1000ms');
+    }
+    if (this._autoConsolidateTimer) {
+      throw new Error('Auto-consolidation is already running');
+    }
+    this._autoConsolidateTimer = setInterval(() => {
+      this.consolidate(options).catch(err => this.emit('error', err));
+    }, intervalMs);
+  }
+
+  stopAutoConsolidate() {
+    if (this._autoConsolidateTimer) {
+      clearInterval(this._autoConsolidateTimer);
+      this._autoConsolidateTimer = null;
+    }
+  }
+
+  suggestConsolidationParams() {
+    return suggestParamsFn(this.db);
+  }
+
   /** @returns {void} */
   close() {
+    this.stopAutoConsolidate();
     closeDatabase(this.db);
   }
 }
