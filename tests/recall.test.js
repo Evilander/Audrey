@@ -264,4 +264,92 @@ describe('recall', () => {
       expect(streamResults[i].type).toBe(arrayResults[i].type);
     }
   });
+
+  // --- filter tests ---
+
+  it('filters episodic memories by tags', async () => {
+    await encodeEpisode(db, embedding, {
+      content: 'Tagged memory alpha',
+      source: 'direct-observation',
+      tags: ['debugging', 'api'],
+    });
+    await encodeEpisode(db, embedding, {
+      content: 'Tagged memory beta',
+      source: 'told-by-user',
+      tags: ['deployment'],
+    });
+
+    const results = await recall(db, embedding, 'tagged memory', {
+      tags: ['debugging'],
+      types: ['episodic'],
+    });
+    expect(results.length).toBeGreaterThan(0);
+    for (const mem of results) {
+      expect(mem.content).toContain('alpha');
+    }
+  });
+
+  it('returns all episodic when no tag filter', async () => {
+    await encodeEpisode(db, embedding, {
+      content: 'No tag filter test',
+      source: 'direct-observation',
+      tags: ['special'],
+    });
+    const results = await recall(db, embedding, 'no tag filter test', {
+      types: ['episodic'],
+    });
+    const found = results.find(r => r.content === 'No tag filter test');
+    expect(found).toBeDefined();
+  });
+
+  it('filters episodic memories by source', async () => {
+    const results = await recall(db, embedding, 'rate limit', {
+      sources: ['told-by-user'],
+      types: ['episodic'],
+    });
+    for (const mem of results) {
+      expect(mem.source).toBe('told-by-user');
+    }
+  });
+
+  it('filters memories by date range (after)', async () => {
+    const yesterday = new Date(Date.now() - 86400000).toISOString();
+    const results = await recall(db, embedding, 'rate limit', {
+      after: yesterday,
+    });
+    for (const mem of results) {
+      expect(mem.createdAt > yesterday).toBe(true);
+    }
+  });
+
+  it('filters memories by date range (before)', async () => {
+    const farPast = new Date(Date.now() - 86400000 * 365).toISOString();
+    const results = await recall(db, embedding, 'rate limit', {
+      before: farPast,
+    });
+    expect(results.length).toBe(0);
+  });
+
+  it('combines tag and source filters', async () => {
+    await encodeEpisode(db, embedding, {
+      content: 'Combined filter test',
+      source: 'tool-result',
+      tags: ['combo'],
+    });
+    await encodeEpisode(db, embedding, {
+      content: 'Wrong source for combo',
+      source: 'direct-observation',
+      tags: ['combo'],
+    });
+
+    const results = await recall(db, embedding, 'combined filter', {
+      tags: ['combo'],
+      sources: ['tool-result'],
+      types: ['episodic'],
+    });
+    expect(results.length).toBeGreaterThan(0);
+    for (const mem of results) {
+      expect(mem.source).toBe('tool-result');
+    }
+  });
 });

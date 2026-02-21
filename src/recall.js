@@ -121,7 +121,13 @@ function buildProceduralEntry(proc, confidence, score, includeProvenance) {
   return entry;
 }
 
-function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig) {
+function matchesDateFilters(createdAt, filters) {
+  if (filters.after && createdAt <= filters.after) return false;
+  if (filters.before && createdAt >= filters.before) return false;
+  return true;
+}
+
+function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters = {}) {
   const rows = db.prepare(`
     SELECT e.*, (1.0 - v.distance) AS similarity
     FROM vec_episodes v
@@ -133,6 +139,12 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
 
   const results = [];
   for (const row of rows) {
+    if (!matchesDateFilters(row.created_at, filters)) continue;
+    if (filters.tags) {
+      const rowTags = safeJsonParse(row.tags, []);
+      if (!filters.tags.some(t => rowTags.includes(t))) continue;
+    }
+    if (filters.sources && !filters.sources.includes(row.source)) continue;
     const confidence = computeEpisodicConfidence(row, now, confidenceConfig);
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
@@ -141,7 +153,7 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
   return results;
 }
 
-function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig) {
+function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}) {
   let stateFilter;
   if (includeDormant) {
     stateFilter = "AND (v.state = 'active' OR v.state = 'context_dependent' OR v.state = 'dormant')";
@@ -161,6 +173,7 @@ function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includePro
   const results = [];
   const matchedIds = [];
   for (const row of rows) {
+    if (!matchesDateFilters(row.created_at, filters)) continue;
     const confidence = computeSemanticConfidence(row, now, confidenceConfig);
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
@@ -170,7 +183,7 @@ function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includePro
   return { results, matchedIds };
 }
 
-function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig) {
+function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}) {
   let stateFilter;
   if (includeDormant) {
     stateFilter = "AND (v.state = 'active' OR v.state = 'context_dependent' OR v.state = 'dormant')";
@@ -190,6 +203,7 @@ function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeP
   const results = [];
   const matchedIds = [];
   for (const row of rows) {
+    if (!matchesDateFilters(row.created_at, filters)) continue;
     const confidence = computeProceduralConfidence(row, now, confidenceConfig);
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
@@ -214,24 +228,30 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
     includeProvenance = false,
     includeDormant = false,
     confidenceConfig,
+    tags,
+    sources,
+    after,
+    before,
   } = options;
 
   const queryVector = await embeddingProvider.embed(query);
   const queryBuffer = embeddingProvider.vectorToBuffer(queryVector);
   const searchTypes = types || ['episodic', 'semantic', 'procedural'];
   const now = new Date();
-  const candidateK = limit * 3;
+  const hasFilters = tags || sources || after || before;
+  const candidateK = hasFilters ? limit * 5 : limit * 3;
+  const filters = { tags, sources, after, before };
 
   const allResults = [];
 
   if (searchTypes.includes('episodic')) {
-    const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig);
+    const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters);
     allResults.push(...episodic);
   }
 
   if (searchTypes.includes('semantic')) {
     const { results: semResults, matchedIds: semIds } =
-      knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig);
+      knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters);
     allResults.push(...semResults);
 
     if (semIds.length > 0) {
@@ -247,7 +267,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
 
   if (searchTypes.includes('procedural')) {
     const { results: procResults, matchedIds: procIds } =
-      knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig);
+      knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters);
     allResults.push(...procResults);
 
     if (procIds.length > 0) {
