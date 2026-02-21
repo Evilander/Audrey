@@ -99,7 +99,9 @@ export class Audrey extends EventEmitter {
     this.agent = agent;
     this.dataDir = dataDir;
     this.embeddingProvider = createEmbeddingProvider(embedding);
-    this.db = createDatabase(dataDir, { dimensions: this.embeddingProvider.dimensions });
+    const { db, migrated } = createDatabase(dataDir, { dimensions: this.embeddingProvider.dimensions });
+    this.db = db;
+    this._migrationPending = migrated;
     this.llmProvider = llm ? createLLMProvider(llm) : null;
     this.confidenceConfig = {
       weights: confidence.weights,
