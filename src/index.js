@@ -16,3 +16,4 @@ export { suggestConsolidationParams } from './adaptive.js';
 export { reembedAll } from './migrate.js';
 export { forgetMemory, forgetByQuery, purgeMemories } from './forget.js';
 export { applyInterference, interferenceModifier } from './interference.js';
+export { contextMatchRatio, contextModifier } from './context.js';
