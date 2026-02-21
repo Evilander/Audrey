@@ -83,6 +83,26 @@ describe('retrievalReinforcement', () => {
   });
 });
 
+describe('retrievalReinforcement with spaced repetition', () => {
+  it('spaced bonus partially offsets decay at long intervals', () => {
+    const withBonus = retrievalReinforcement(3, 60);
+    // Pure exponential decay at 60 days would be near zero
+    // The spaced bonus keeps it meaningfully above that
+    expect(withBonus).toBeGreaterThan(0.05);
+  });
+
+  it('caps spaced bonus at 0.15', () => {
+    const extreme = retrievalReinforcement(1, 10000);
+    expect(extreme).toBeLessThanOrEqual(1.0);
+    // At extreme intervals, base decays to ~0 so result is purely the capped bonus
+    expect(extreme).toBeCloseTo(0.15, 1);
+  });
+
+  it('still returns 0 for zero retrieval count', () => {
+    expect(retrievalReinforcement(0, 100)).toBe(0);
+  });
+});
+
 describe('salienceModifier', () => {
   it('returns 1.0 for default salience (0.5)', () => {
     expect(salienceModifier(0.5)).toBeCloseTo(1.0);
