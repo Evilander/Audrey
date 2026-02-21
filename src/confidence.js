@@ -67,8 +67,11 @@ export function recencyDecay(ageDays, halfLifeDays) {
  */
 export function retrievalReinforcement(retrievalCount, daysSinceRetrieval) {
   if (retrievalCount === 0) return 0;
-  const lambdaRet = Math.LN2 / 14; // 14-day half-life for retrieval decay
-  return Math.min(1.0, 0.3 * Math.log(1 + retrievalCount) * Math.exp(-lambdaRet * daysSinceRetrieval));
+  const lambdaRet = Math.LN2 / 14;
+  const baseReinforcement = 0.3 * Math.log(1 + retrievalCount);
+  const recencyWeight = Math.exp(-lambdaRet * daysSinceRetrieval);
+  const spacedBonus = Math.min(0.15, 0.02 * Math.log(1 + daysSinceRetrieval));
+  return Math.min(1.0, baseReinforcement * recencyWeight + spacedBonus);
 }
 
 export function salienceModifier(salience) {
