@@ -353,6 +353,120 @@ describe('recall', () => {
     }
   });
 
+  describe('context-dependent retrieval', () => {
+    it('matching context boosts episodic recall score', async () => {
+      await encodeEpisode(db, embedding, {
+        content: 'debugging context episode',
+        source: 'direct-observation',
+        context: { task: 'debugging', domain: 'payments' },
+      });
+      await encodeEpisode(db, embedding, {
+        content: 'deployment context episode',
+        source: 'direct-observation',
+        context: { task: 'deployment', domain: 'infra' },
+      });
+
+      const withContext = await recall(db, embedding, 'debugging context episode', {
+        types: ['episodic'],
+        confidenceConfig: { retrievalContext: { task: 'debugging', domain: 'payments' }, contextWeight: 0.3 },
+      });
+      const withoutContext = await recall(db, embedding, 'debugging context episode', {
+        types: ['episodic'],
+      });
+
+      const ctxMatch = withContext.find(r => r.content === 'debugging context episode');
+      const noCtxMatch = withoutContext.find(r => r.content === 'debugging context episode');
+      expect(ctxMatch).toBeDefined();
+      expect(noCtxMatch).toBeDefined();
+      expect(ctxMatch.score).toBeGreaterThan(noCtxMatch.score);
+    });
+
+    it('non-matching context gets no boost', async () => {
+      await encodeEpisode(db, embedding, {
+        content: 'specific context episode test',
+        source: 'direct-observation',
+        context: { task: 'debugging' },
+      });
+
+      const mismatch = await recall(db, embedding, 'specific context episode test', {
+        types: ['episodic'],
+        confidenceConfig: { retrievalContext: { task: 'deployment' }, contextWeight: 0.3 },
+      });
+      const noContext = await recall(db, embedding, 'specific context episode test', {
+        types: ['episodic'],
+      });
+
+      const mismatchResult = mismatch.find(r => r.content === 'specific context episode test');
+      const noCtxResult = noContext.find(r => r.content === 'specific context episode test');
+      expect(mismatchResult).toBeDefined();
+      expect(noCtxResult).toBeDefined();
+      expect(mismatchResult.score).toBeCloseTo(noCtxResult.score, 5);
+    });
+
+    it('includes contextMatch field in episodic results when context provided', async () => {
+      await encodeEpisode(db, embedding, {
+        content: 'context match field test',
+        source: 'direct-observation',
+        context: { task: 'debugging', domain: 'payments' },
+      });
+
+      const results = await recall(db, embedding, 'context match field test', {
+        types: ['episodic'],
+        confidenceConfig: { retrievalContext: { task: 'debugging', domain: 'billing' }, contextWeight: 0.3 },
+      });
+      const match = results.find(r => r.content === 'context match field test');
+      expect(match).toBeDefined();
+      expect(match.contextMatch).toBeCloseTo(0.5);
+    });
+
+    it('no contextMatch field when no retrieval context', async () => {
+      await encodeEpisode(db, embedding, {
+        content: 'no context field test',
+        source: 'direct-observation',
+        context: { task: 'debugging' },
+      });
+
+      const results = await recall(db, embedding, 'no context field test', {
+        types: ['episodic'],
+      });
+      const match = results.find(r => r.content === 'no context field test');
+      expect(match).toBeDefined();
+      expect(match.contextMatch).toBeUndefined();
+    });
+
+    it('semantic results are not affected by context', async () => {
+      const now = new Date().toISOString();
+      const semId = generateId();
+      const semVec = await embedding.embed('semantic context immunity test');
+      const semBuf = embedding.vectorToBuffer(semVec);
+      db.prepare(`
+        INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
+          contradicting_count, retrieval_count, created_at, embedding_model, embedding_version)
+        VALUES (?, ?, ?, 'active', 3, 3, 0, 0, ?, ?, ?)
+      `).run(semId, 'semantic context immunity test', semBuf, now, embedding.modelName, embedding.modelVersion);
+      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(semId, semBuf, 'active');
+
+      // Call without context first to avoid retrieval_count drift between calls
+      const withoutCtx = await recall(db, embedding, 'semantic context immunity test', {
+        types: ['semantic'],
+      });
+      // Reset retrieval_count so both calls see the same state
+      db.prepare('UPDATE semantics SET retrieval_count = 0, last_reinforced_at = NULL WHERE id = ?').run(semId);
+
+      const withCtx = await recall(db, embedding, 'semantic context immunity test', {
+        types: ['semantic'],
+        confidenceConfig: { retrievalContext: { task: 'debugging' }, contextWeight: 0.3 },
+      });
+
+      const ctxResult = withCtx.find(r => r.id === semId);
+      const noCtxResult = withoutCtx.find(r => r.id === semId);
+      expect(ctxResult).toBeDefined();
+      expect(noCtxResult).toBeDefined();
+      expect(ctxResult.score).toBeCloseTo(noCtxResult.score, 5);
+      expect(ctxResult.contextMatch).toBeUndefined();
+    });
+  });
+
   describe('interference and salience modifiers in recall', () => {
     it('high interference_count reduces semantic recall confidence', async () => {
       const now = new Date().toISOString();
