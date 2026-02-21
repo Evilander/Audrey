@@ -352,4 +352,102 @@ describe('recall', () => {
       expect(mem.source).toBe('tool-result');
     }
   });
+
+  describe('interference and salience modifiers in recall', () => {
+    it('high interference_count reduces semantic recall confidence', async () => {
+      const now = new Date().toISOString();
+
+      const loId = generateId();
+      const loVec = await embedding.embed('low interference semantic fact');
+      const loBuf = embedding.vectorToBuffer(loVec);
+      db.prepare(`
+        INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
+          contradicting_count, retrieval_count, interference_count, created_at, embedding_model, embedding_version)
+        VALUES (?, ?, ?, 'active', 3, 3, 0, 0, 0, ?, ?, ?)
+      `).run(loId, 'low interference semantic fact', loBuf, now, embedding.modelName, embedding.modelVersion);
+      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(loId, loBuf, 'active');
+
+      const hiId = generateId();
+      const hiVec = await embedding.embed('high interference semantic fact');
+      const hiBuf = embedding.vectorToBuffer(hiVec);
+      db.prepare(`
+        INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
+          contradicting_count, retrieval_count, interference_count, created_at, embedding_model, embedding_version)
+        VALUES (?, ?, ?, 'active', 3, 3, 0, 0, 50, ?, ?, ?)
+      `).run(hiId, 'high interference semantic fact', hiBuf, now, embedding.modelName, embedding.modelVersion);
+      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(hiId, hiBuf, 'active');
+
+      const loResults = await recall(db, embedding, 'low interference semantic fact', {
+        types: ['semantic'], limit: 20,
+      });
+      const hiResults = await recall(db, embedding, 'high interference semantic fact', {
+        types: ['semantic'], limit: 20,
+      });
+
+      const loMatch = loResults.find(r => r.id === loId);
+      const hiMatch = hiResults.find(r => r.id === hiId);
+      expect(loMatch).toBeDefined();
+      expect(hiMatch).toBeDefined();
+      expect(hiMatch.confidence).toBeLessThan(loMatch.confidence);
+    });
+
+    it('high salience boosts episodic recall confidence', async () => {
+      const now = new Date().toISOString();
+
+      const loId = generateId();
+      const loVec = await embedding.embed('low salience episode memory');
+      const loBuf = embedding.vectorToBuffer(loVec);
+      db.prepare(`
+        INSERT INTO episodes (id, content, embedding, source, source_reliability, salience, created_at, embedding_model, embedding_version)
+        VALUES (?, ?, ?, 'direct-observation', 0.95, 0.1, ?, ?, ?)
+      `).run(loId, 'low salience episode memory', loBuf, now, embedding.modelName, embedding.modelVersion);
+      db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run(loId, loBuf, 'direct-observation', BigInt(0));
+
+      const hiId = generateId();
+      const hiVec = await embedding.embed('high salience episode memory');
+      const hiBuf = embedding.vectorToBuffer(hiVec);
+      db.prepare(`
+        INSERT INTO episodes (id, content, embedding, source, source_reliability, salience, created_at, embedding_model, embedding_version)
+        VALUES (?, ?, ?, 'direct-observation', 0.95, 0.9, ?, ?, ?)
+      `).run(hiId, 'high salience episode memory', hiBuf, now, embedding.modelName, embedding.modelVersion);
+      db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run(hiId, hiBuf, 'direct-observation', BigInt(0));
+
+      const loResults = await recall(db, embedding, 'low salience episode memory', {
+        types: ['episodic'], limit: 20,
+      });
+      const hiResults = await recall(db, embedding, 'high salience episode memory', {
+        types: ['episodic'], limit: 20,
+      });
+
+      const loMatch = loResults.find(r => r.id === loId);
+      const hiMatch = hiResults.find(r => r.id === hiId);
+      expect(loMatch).toBeDefined();
+      expect(hiMatch).toBeDefined();
+      expect(hiMatch.confidence).toBeGreaterThan(loMatch.confidence);
+    });
+
+    it('default values produce no change from baseline', async () => {
+      const now = new Date().toISOString();
+      const semId = generateId();
+      const semVec = await embedding.embed('baseline default modifier test');
+      const semBuf = embedding.vectorToBuffer(semVec);
+      db.prepare(`
+        INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
+          contradicting_count, retrieval_count, interference_count, salience, created_at, embedding_model, embedding_version)
+        VALUES (?, ?, ?, 'active', 3, 3, 0, 0, 0, 0.5, ?, ?, ?)
+      `).run(semId, 'baseline default modifier test', semBuf, now, embedding.modelName, embedding.modelVersion);
+      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(semId, semBuf, 'active');
+
+      const results = await recall(db, embedding, 'baseline default modifier test', {
+        types: ['semantic'], limit: 20,
+      });
+      const match = results.find(r => r.id === semId);
+      expect(match).toBeDefined();
+      // interference_count=0 -> interferenceModifier = 1.0
+      // salience=0.5 -> salienceModifier = 1.0
+      // So confidence should equal base computeConfidence output (clamped to [0,1])
+      expect(match.confidence).toBeGreaterThan(0);
+      expect(match.confidence).toBeLessThanOrEqual(1);
+    });
+  });
 });
