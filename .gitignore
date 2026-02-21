@@ -6,3 +6,4 @@ audrey-data/
 .env
 CLAUDE.md
 docs/plans/
+.worktrees/
