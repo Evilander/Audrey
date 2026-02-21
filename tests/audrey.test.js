@@ -584,3 +584,74 @@ describe('forget and purge', () => {
     expect(emitted.episodes).toBe(1);
   });
 });
+
+describe('interference on encode', () => {
+  const INT_DIR = './test-interference-audrey';
+  let brain;
+
+  beforeEach(() => {
+    if (existsSync(INT_DIR)) rmSync(INT_DIR, { recursive: true });
+  });
+
+  afterEach(() => {
+    brain?.close();
+    if (existsSync(INT_DIR)) rmSync(INT_DIR, { recursive: true });
+  });
+
+  it('emits interference event when new episode overlaps existing semantics', async () => {
+    brain = new Audrey({
+      dataDir: INT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+
+    const sharedContent = 'cats are obligate carnivores';
+    const vec = await brain.embeddingProvider.embed(sharedContent);
+    const vecBuf = brain.embeddingProvider.vectorToBuffer(vec);
+    brain.db.prepare(`INSERT INTO semantics (id, content, embedding, state, evidence_count,
+      supporting_count, source_type_diversity, created_at, evidence_episode_ids,
+      interference_count, salience)
+      VALUES (?, ?, ?, 'active', 1, 1, 1, ?, '[]', 0, 0.5)`).run(
+      'sem-int', sharedContent, vecBuf, new Date().toISOString()
+    );
+    brain.db.prepare('INSERT INTO vec_semantics (id, embedding, state) VALUES (?, ?, ?)').run(
+      'sem-int', vecBuf, 'active'
+    );
+
+    const events = [];
+    brain.on('interference', e => events.push(e));
+
+    await brain.encode({ content: sharedContent, source: 'told-by-user' });
+    await new Promise(r => setTimeout(r, 200));
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(events[0]).toHaveProperty('episodeId');
+    expect(events[0]).toHaveProperty('affected');
+  });
+
+  it('respects interference.enabled = false', async () => {
+    brain = new Audrey({
+      dataDir: INT_DIR,
+      interference: { enabled: false },
+    });
+    const events = [];
+    brain.on('interference', e => events.push(e));
+    await brain.encode({ content: 'test memory', source: 'told-by-user' });
+    await new Promise(r => setTimeout(r, 50));
+    expect(events).toEqual([]);
+  });
+
+  it('accepts interference config', () => {
+    brain = new Audrey({
+      dataDir: INT_DIR,
+      interference: { enabled: true, k: 3, threshold: 0.7, weight: 0.2 },
+    });
+    expect(brain.interferenceConfig.k).toBe(3);
+    expect(brain.interferenceConfig.threshold).toBe(0.7);
+    expect(brain.interferenceConfig.weight).toBe(0.2);
+  });
+
+  it('interference is enabled by default', () => {
+    brain = new Audrey({ dataDir: INT_DIR });
+    expect(brain.interferenceConfig.enabled).toBe(true);
+  });
+});

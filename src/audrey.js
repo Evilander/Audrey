@@ -15,6 +15,7 @@ import { exportMemories } from './export.js';
 import { importMemories } from './import.js';
 import { suggestConsolidationParams as suggestParamsFn } from './adaptive.js';
 import { reembedAll } from './migrate.js';
+import { applyInterference } from './interference.js';
 
 /**
  * @typedef {'direct-observation' | 'told-by-user' | 'tool-result' | 'inference' | 'model-generated'} SourceType
@@ -89,6 +90,7 @@ export class Audrey extends EventEmitter {
     confidence = {},
     consolidation = {},
     decay = {},
+    interference = {},
   } = {}) {
     super();
 
@@ -119,6 +121,12 @@ export class Audrey extends EventEmitter {
     };
     this.decayConfig = { dormantThreshold: decay.dormantThreshold || 0.1 };
     this._autoConsolidateTimer = null;
+    this.interferenceConfig = {
+      enabled: interference.enabled ?? true,
+      k: interference.k ?? 5,
+      threshold: interference.threshold ?? 0.6,
+      weight: interference.weight ?? 0.1,
+    };
   }
 
   async _ensureMigrated() {
@@ -160,6 +168,15 @@ export class Audrey extends EventEmitter {
     await this._ensureMigrated();
     const id = await encodeEpisode(this.db, this.embeddingProvider, params);
     this.emit('encode', { id, ...params });
+    if (this.interferenceConfig.enabled) {
+      applyInterference(this.db, this.embeddingProvider, id, params, this.interferenceConfig)
+        .then(affected => {
+          if (affected.length > 0) {
+            this.emit('interference', { episodeId: id, affected });
+          }
+        })
+        .catch(err => this.emit('error', err));
+    }
     this._emitValidation(id, params);
     return id;
   }
