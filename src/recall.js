@@ -1,10 +1,11 @@
-import { computeConfidence, DEFAULT_HALF_LIVES } from './confidence.js';
+import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier } from './confidence.js';
+import { interferenceModifier } from './interference.js';
 import { daysBetween, safeJsonParse } from './utils.js';
 
 function computeEpisodicConfidence(ep, now, confidenceConfig = {}) {
   const ageDays = daysBetween(ep.created_at, now);
   const halfLives = confidenceConfig.halfLives || DEFAULT_HALF_LIVES;
-  return computeConfidence({
+  let confidence = computeConfidence({
     sourceType: ep.source,
     supportingCount: 1,
     contradictingCount: 0,
@@ -15,6 +16,8 @@ function computeEpisodicConfidence(ep, now, confidenceConfig = {}) {
     weights: confidenceConfig.weights,
     customSourceReliability: confidenceConfig.sourceReliability,
   });
+  confidence *= salienceModifier(ep.salience);
+  return Math.max(0, Math.min(1, confidence));
 }
 
 function computeSemanticConfidence(sem, now, confidenceConfig = {}) {
@@ -23,7 +26,7 @@ function computeSemanticConfidence(sem, now, confidenceConfig = {}) {
     ? daysBetween(sem.last_reinforced_at, now)
     : ageDays;
   const halfLives = confidenceConfig.halfLives || DEFAULT_HALF_LIVES;
-  return computeConfidence({
+  let confidence = computeConfidence({
     sourceType: 'tool-result',
     supportingCount: sem.supporting_count || 0,
     contradictingCount: sem.contradicting_count || 0,
@@ -34,6 +37,9 @@ function computeSemanticConfidence(sem, now, confidenceConfig = {}) {
     weights: confidenceConfig.weights,
     customSourceReliability: confidenceConfig.sourceReliability,
   });
+  confidence *= interferenceModifier(sem.interference_count || 0, confidenceConfig.interferenceWeight);
+  confidence *= salienceModifier(sem.salience);
+  return Math.max(0, Math.min(1, confidence));
 }
 
 function computeProceduralConfidence(proc, now, confidenceConfig = {}) {
@@ -42,7 +48,7 @@ function computeProceduralConfidence(proc, now, confidenceConfig = {}) {
     ? daysBetween(proc.last_reinforced_at, now)
     : ageDays;
   const halfLives = confidenceConfig.halfLives || DEFAULT_HALF_LIVES;
-  return computeConfidence({
+  let confidence = computeConfidence({
     sourceType: 'tool-result',
     supportingCount: proc.success_count || 0,
     contradictingCount: proc.failure_count || 0,
@@ -53,6 +59,9 @@ function computeProceduralConfidence(proc, now, confidenceConfig = {}) {
     weights: confidenceConfig.weights,
     customSourceReliability: confidenceConfig.sourceReliability,
   });
+  confidence *= interferenceModifier(proc.interference_count || 0, confidenceConfig.interferenceWeight);
+  confidence *= salienceModifier(proc.salience);
+  return Math.max(0, Math.min(1, confidence));
 }
 
 function buildEpisodicEntry(ep, confidence, score, includeProvenance) {
