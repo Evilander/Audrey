@@ -2,7 +2,6 @@
 
 Biological memory architecture for AI agents. Gives agents cognitive memory that decays, consolidates, self-validates, and learns from experience — not just a database.
 
-
 ## Why Audrey Exists
 
 Every AI memory tool today (Mem0, Zep, LangChain Memory) is a filing cabinet. Store stuff, retrieve stuff. None of them do what biological memory actually does:
@@ -46,7 +45,7 @@ npx audrey status
 npx audrey uninstall
 ```
 
-Every Claude Code session now has 7 memory tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`, `memory_export`, `memory_import`.
+Every Claude Code session now has 9 memory tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`, `memory_export`, `memory_import`, `memory_forget`, `memory_decay`.
 
 ### SDK in Your Code
 
@@ -79,14 +78,26 @@ await brain.encode({
 const memories = await brain.recall('stripe rate limits', { limit: 5 });
 // Returns: [{ content, type, confidence, score, ... }]
 
-// 4. Consolidate episodes into principles (the "sleep" cycle)
+// 4. Filtered recall — by tag, source, or date range
+const recent = await brain.recall('stripe', {
+  tags: ['rate-limit'],
+  sources: ['direct-observation'],
+  after: '2026-02-01T00:00:00Z',
+});
+
+// 5. Consolidate episodes into principles (the "sleep" cycle)
 await brain.consolidate();
 
-// 5. Check brain health
+// 6. Forget something
+brain.forget(memoryId);                                 // soft-delete
+brain.forget(memoryId, { purge: true });                // hard-delete
+await brain.forgetByQuery('old API endpoint', { minSimilarity: 0.9 });
+
+// 7. Check brain health
 const stats = brain.introspect();
 // { episodic: 47, semantic: 12, procedural: 3, dormant: 8, ... }
 
-// 6. Clean up
+// 8. Clean up
 brain.close();
 ```
 
@@ -219,6 +230,16 @@ Context-dependent truths are modeled explicitly:
 
 New high-confidence evidence can reopen resolved disputes.
 
+### Forget and Purge
+
+Memories can be explicitly forgotten — by ID or by semantic query:
+
+**Soft-delete** (default) — Marks the memory as forgotten/superseded and removes its vector index. The record stays in the database but is excluded from recall. Reversible via direct database access.
+
+**Hard-delete** (`purge: true`) — Permanently removes the memory from both the main table and the vector index. Irreversible.
+
+**Bulk purge** — Removes all forgotten, dormant, superseded, and rolled-back memories in one operation. Useful for GDPR compliance or storage cleanup.
+
 ### Rollback
 
 Bad consolidation? Undo it:
@@ -268,19 +289,37 @@ const id = await brain.encode({
 
 Episodes are **immutable**. Corrections create new records with `supersedes` links. The original is preserved.
 
+### `brain.encodeBatch(paramsList)` → `Promise<string[]>`
+
+Encode multiple episodes in one call. Same params as `encode()`, but as an array.
+
+```js
+const ids = await brain.encodeBatch([
+  { content: 'Stripe returned 429', source: 'direct-observation' },
+  { content: 'Redis timed out', source: 'tool-result' },
+  { content: 'User reports slow checkout', source: 'told-by-user' },
+]);
+```
+
 ### `brain.recall(query, options)` → `Promise<Memory[]>`
 
 Retrieve memories ranked by `similarity * confidence`.
 
 ```js
 const memories = await brain.recall('stripe rate limits', {
-  minConfidence: 0.5,            // Filter below this confidence
-  types: ['semantic'],           // Filter by memory type
-  limit: 5,                     // Max results
-  includeProvenance: true,       // Include evidence chains
-  includeDormant: false,         // Include dormant memories
+  limit: 5,                       // Max results (default 10)
+  minConfidence: 0.5,             // Filter below this confidence
+  types: ['semantic'],            // Filter by memory type
+  includeProvenance: true,        // Include evidence chains
+  includeDormant: false,          // Include dormant memories
+  tags: ['rate-limit'],           // Only episodic memories with these tags
+  sources: ['direct-observation'], // Only episodic memories from these sources
+  after: '2026-02-01T00:00:00Z', // Only memories created after this date
+  before: '2026-03-01T00:00:00Z', // Only memories created before this date
 });
 ```
+
+Tag and source filters only apply to episodic memories (semantic and procedural memories don't have tags or sources). Date filters apply to all memory types.
 
 Each result:
 
@@ -304,27 +343,46 @@ Each result:
 
 Retrieval automatically reinforces matched memories (boosts confidence, resets decay clock).
 
-### `brain.encodeBatch(paramsList)` → `Promise<string[]>`
-
-Encode multiple episodes in one call. Same params as `encode()`, but as an array.
-
-```js
-const ids = await brain.encodeBatch([
-  { content: 'Stripe returned 429', source: 'direct-observation' },
-  { content: 'Redis timed out', source: 'tool-result' },
-  { content: 'User reports slow checkout', source: 'told-by-user' },
-]);
-```
-
 ### `brain.recallStream(query, options)` → `AsyncGenerator<Memory>`
 
-Streaming version of `recall()`. Yields results one at a time. Supports early `break`.
+Streaming version of `recall()`. Yields results one at a time. Supports early `break`. Same options as `recall()`.
 
 ```js
 for await (const memory of brain.recallStream('stripe issues', { limit: 10 })) {
   console.log(memory.content, memory.score);
   if (memory.score > 0.9) break;
 }
+```
+
+### `brain.forget(id, options)` → `ForgetResult`
+
+Forget a memory by ID. Works on any memory type (episodic, semantic, procedural).
+
+```js
+brain.forget(memoryId);                       // soft-delete
+brain.forget(memoryId, { purge: true });      // hard-delete (permanent)
+// { id, type: 'episodic', purged: false }
+```
+
+### `brain.forgetByQuery(query, options)` → `Promise<ForgetResult | null>`
+
+Find the closest matching memory by semantic search and forget it. Searches all three memory types, picks the best match.
+
+```js
+const result = await brain.forgetByQuery('old API endpoint', {
+  minSimilarity: 0.9,    // Threshold for match (default 0.9)
+  purge: false,          // Hard-delete? (default false)
+});
+// null if no match above threshold
+```
+
+### `brain.purge()` → `PurgeCounts`
+
+Bulk hard-delete all dead memories: forgotten episodes, dormant/superseded/rolled-back semantics and procedures.
+
+```js
+const counts = brain.purge();
+// { episodes: 12, semantics: 3, procedures: 0 }
 ```
 
 ### `brain.consolidate(options)` → `Promise<ConsolidationResult>`
@@ -389,6 +447,15 @@ brain.introspect();
 
 Full audit trail of all consolidation runs.
 
+### `brain.export()` / `brain.import(snapshot)`
+
+Export all memories as a JSON snapshot, or import from one.
+
+```js
+const snapshot = brain.export();   // { version, episodes, semantics, procedures, ... }
+await brain.import(snapshot);      // Re-embeds everything with current provider
+```
+
 ### Events
 
 ```js
@@ -398,6 +465,8 @@ brain.on('contradiction', ({ episodeId, contradictionId, semanticId, resolution 
 brain.on('consolidation', ({ runId, principlesExtracted }) => { ... });
 brain.on('decay', ({ totalEvaluated, transitionedToDormant }) => { ... });
 brain.on('rollback', ({ runId, rolledBackMemories }) => { ... });
+brain.on('forget', ({ id, type, purged }) => { ... });
+brain.on('purge', ({ episodes, semantics, procedures }) => { ... });
 brain.on('migration', ({ episodes, semantics, procedures }) => { ... });
 brain.on('error', (err) => { ... });
 ```
@@ -410,7 +479,7 @@ Close the database connection.
 
 ```
 audrey-data/
-  audrey.db          ← Single SQLite file. WAL mode. That's your brain.
+  audrey.db          <- Single SQLite file. WAL mode. That's your brain.
 ```
 
 ```
@@ -418,15 +487,16 @@ src/
   audrey.js          Main class. EventEmitter. Public API surface.
   causal.js          Causal graph management. LLM-powered mechanism articulation.
   confidence.js      Compositional confidence formula. Pure math.
-  consolidate.js     "Sleep" cycle. KNN clustering → LLM extraction → promote.
+  consolidate.js     "Sleep" cycle. KNN clustering -> LLM extraction -> promote.
   db.js              SQLite + sqlite-vec. Schema, vec0 tables, migrations.
   decay.js           Ebbinghaus forgetting curves.
   embedding.js       Pluggable providers (Mock, OpenAI). Batch embedding.
   encode.js          Immutable episodic memory creation + vec0 writes.
+  forget.js          Soft-delete, hard-delete, query-based forget, bulk purge.
   introspect.js      Health dashboard queries.
   llm.js             Pluggable LLM providers (Mock, Anthropic, OpenAI).
   prompts.js         Structured prompt templates for LLM operations.
-  recall.js          KNN retrieval + confidence scoring + async streaming.
+  recall.js          KNN retrieval + confidence scoring + filtered recall + streaming.
   rollback.js        Undo consolidation runs.
   utils.js           Date math, safe JSON parse.
   validate.js        KNN validation + LLM contradiction detection.
@@ -437,7 +507,7 @@ src/
   index.js           Barrel export.
 
 mcp-server/
-  index.js           MCP tool server (7 tools, stdio transport) + CLI subcommands.
+  index.js           MCP tool server (9 tools, stdio transport) + CLI subcommands.
   config.js          Shared config (env var parsing, install arg builder).
 ```
 
@@ -461,7 +531,7 @@ All mutations use SQLite transactions. CHECK constraints enforce valid states an
 ## Running Tests
 
 ```bash
-npm test          # 243 tests across 22 files
+npm test          # 278 tests across 23 files
 npm run test:watch
 ```
 
@@ -471,115 +541,60 @@ npm run test:watch
 node examples/stripe-demo.js
 ```
 
-Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate into principle → recall proactively.
+Demonstrates the full pipeline: encode 3 rate-limit observations, consolidate into principle, recall proactively.
 
 ---
 
-## Roadmap
+## Changelog
 
-### v0.1.0 — Foundation
+### v0.6.0 — Filtered Recall + Forget (current)
 
-- [x] Immutable episodic memory with append-only records
-- [x] Compositional confidence formula (source + evidence + recency + retrieval)
-- [x] Ebbinghaus-inspired forgetting curves with configurable half-lives
-- [x] Dormancy transitions for low-confidence memories
-- [x] Confidence-weighted recall across episodic/semantic/procedural types
-- [x] Provenance chains (which episodes contributed to which principles)
-- [x] Retrieval reinforcement (frequently accessed memories resist decay)
-- [x] Consolidation engine with clustering and principle extraction
-- [x] Idempotent consolidation with checkpoint cursors
-- [x] Full consolidation audit trail (input/output IDs per run)
-- [x] Consolidation rollback (undo bad runs, restore episodes)
-- [x] Contradiction lifecycle (open/resolved/context_dependent/reopened)
-- [x] Circular self-confirmation defense (model-generated cap at 0.6)
-- [x] Source type diversity tracking on semantic memories
-- [x] Supersedes links for correcting episodic memories
-- [x] Pluggable embedding providers (Mock for tests, OpenAI for production)
-- [x] Causal context storage (trigger/consequence per episode)
-- [x] Introspection API (memory counts, contradiction stats, consolidation history)
-- [x] EventEmitter lifecycle hooks (encode, reinforcement, consolidation, decay, rollback, error)
-- [x] SQLite with WAL mode, CHECK constraints, indexes, foreign keys
-- [x] Transaction safety on all multi-step mutations
-- [x] Input validation on public API (content, salience, tags, source)
-- [x] Shared utility extraction (cosine similarity, date math, safe JSON parse)
-- [x] 104 tests across 12 test files
-- [x] Proof-of-concept demo (Stripe rate limit scenario)
+- Filtered recall: tag, source, and date-range filters on `recall()` and `recallStream()`
+- `forget()` — soft-delete any memory by ID
+- `forgetByQuery()` — find closest match by semantic search and forget it
+- `purge()` — bulk hard-delete all forgotten/dormant/superseded memories
+- `memory_forget` and `memory_decay` MCP tools (9 tools total)
+- 278 tests across 23 files
 
-### v0.2.0 — LLM Integration
+### v0.5.0 — Feature Depth
 
-- [x] LLM-powered principle extraction (replace callback with Anthropic/OpenAI calls)
-- [x] LLM-based contradiction detection during validation
-- [x] Causal mechanism articulation via LLM (not just trigger/consequence)
-- [x] Spurious correlation detection (require mechanistic explanation for causal links)
-- [x] Context-dependent truth resolution via LLM
-- [x] Configurable LLM provider for consolidation (Mock, Anthropic, OpenAI)
-- [x] Structured prompt templates for all LLM operations
-- [x] 142 tests across 15 test files
+- Configurable confidence weights and decay rates per instance
+- Memory export/import (JSON snapshots with re-embedding)
+- `memory_export` and `memory_import` MCP tools
+- Auto-consolidation scheduling
+- Adaptive consolidation parameter suggestions
+- 243 tests across 22 files
+
+### v0.3.1 — MCP Server
+
+- MCP tool server via `@modelcontextprotocol/sdk` with stdio transport
+- One-command install: `npx audrey install` (auto-detects API keys)
+- CLI subcommands: `install`, `uninstall`, `status`
+- JSDoc type annotations on all public exports
+- Published to npm
+- 194 tests across 17 files
 
 ### v0.3.0 — Vector Performance
 
-- [x] sqlite-vec native vector indexing (vec0 virtual tables with cosine distance)
-- [x] KNN queries for recall, validation, and consolidation clustering (all vector math in C)
-- [x] SQL-native metadata filtering in KNN (state, source, consolidated)
-- [x] Batch encoding API (`encodeBatch` — encode N episodes in one call)
-- [x] Streaming recall with async generators (`recallStream`)
-- [x] Dimension configuration and mismatch validation
-- [x] Automatic migration from v0.2.0 embedding BLOBs to vec0 tables
-- [x] 168 tests across 16 test files
+- sqlite-vec native vector indexing (vec0 virtual tables with cosine distance)
+- KNN queries for recall, validation, and consolidation clustering
+- Batch encoding API and streaming recall with async generators
+- Dimension configuration and automatic migration from v0.2.0
+- 168 tests across 16 files
 
-### v0.3.1 — MCP Server + JSDoc Types
+### v0.2.0 — LLM Integration
 
-- [x] MCP tool server via `@modelcontextprotocol/sdk` with stdio transport
-- [x] 5 tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`
-- [x] Configuration via environment variables (data dir, embedding provider, LLM provider)
-- [x] One-command install: `npx audrey install` (auto-detects API keys)
-- [x] CLI subcommands: `install`, `uninstall`, `status`
-- [x] JSDoc type annotations on all public exports (16 source files)
-- [x] Published to npm with proper package metadata
-- [x] 194 tests across 17 test files
+- LLM-powered principle extraction, contradiction detection, causal articulation
+- Context-dependent truth resolution
+- Configurable LLM providers (Mock, Anthropic, OpenAI)
+- 142 tests across 15 files
 
-### v0.5.0 — Feature Depth (current)
+### v0.1.0 — Foundation
 
-- [x] Configurable confidence weights per Audrey instance
-- [x] Configurable decay rates (half-lives) per Audrey instance
-- [x] Confidence config wired through constructor to recall and decay
-- [x] Memory export (JSON snapshot of all tables, no raw embeddings)
-- [x] Memory import with automatic re-embedding via current provider
-- [x] `memory_export` and `memory_import` MCP tools (7 tools total)
-- [x] Auto-consolidation scheduling (`startAutoConsolidate` / `stopAutoConsolidate`)
-- [x] Consolidation metrics tracking (per-run params and results)
-- [x] Adaptive consolidation parameter suggestions based on historical yield
-- [x] 243 tests across 22 test files
-
-### v0.4.0 — Type Safety & Developer Experience
-
-- [ ] Full TypeScript conversion with strict mode
-- [ ] Published type declarations (.d.ts)
-- [ ] Schema versioning and migration system
-- [ ] Structured logging (optional, pluggable)
-
-### v0.4.5 — Embedding Migration (deferred from v0.3.0)
-
-- [ ] Embedding migration pipeline (re-embed when models change)
-- [ ] Re-consolidation queue (re-run consolidation with new embedding model)
-
-### v0.6.0 — Scale
-
-- [ ] pgvector adapter for PostgreSQL backend
-- [ ] Redis adapter for distributed caching
-- [ ] Connection pooling for concurrent agent access
-- [ ] Pagination on recall queries (cursor-based)
-- [ ] Benchmarks: encode throughput, recall latency at 10k/100k/1M memories
-
-### v1.0.0 — Production Ready
-
-- [ ] Comprehensive error handling at all boundaries
-- [ ] Rate limiting on embedding API calls
-- [ ] Memory usage profiling and optimization
-- [ ] Security audit (injection, data isolation)
-- [ ] Cross-agent knowledge sharing protocol (Hivemind)
-- [ ] Documentation site
-- [ ] Integration guides (LangChain, CrewAI, Claude Code, custom agents)
+- Immutable episodic memory, compositional confidence, Ebbinghaus forgetting curves
+- Consolidation engine, contradiction lifecycle, rollback
+- Circular self-confirmation defense, causal context, introspection
+- 104 tests across 12 files
 
 ## Design Decisions
 
@@ -591,7 +606,7 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 
 **Why model-generated cap at 0.6?** Prevents the most dangerous exploit in AI memory: circular self-confirmation where an agent's own inferences bootstrap themselves into high-confidence "facts" through repeated retrieval.
 
-**Why no TypeScript yet?** Prototyping speed. TypeScript conversion is on the roadmap for v0.4.0. The pure-math modules (`confidence.js`, `utils.js`) are already type-safe in practice.
+**Why soft-delete by default?** Hard-deletes are irreversible. Soft-delete preserves data integrity and audit trails while excluding the memory from recall. Use `purge: true` or `brain.purge()` when you need permanent removal (GDPR, storage cleanup).
 
 ## License
 
