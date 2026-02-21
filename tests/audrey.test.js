@@ -654,6 +654,116 @@ describe('v0.7.0 biological modifiers', () => {
   });
 });
 
+describe('v0.8.0 context-dependent retrieval', () => {
+  let brain;
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'test-agent',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('accepts context config', () => {
+    const b = new Audrey({
+      dataDir: TEST_DIR + '-ctx1',
+      context: { enabled: true, weight: 0.5 },
+    });
+    expect(b.contextConfig.weight).toBe(0.5);
+    expect(b.contextConfig.enabled).toBe(true);
+    b.close();
+    rmSync(TEST_DIR + '-ctx1', { recursive: true, force: true });
+  });
+
+  it('context is enabled by default', () => {
+    expect(brain.contextConfig.enabled).toBe(true);
+    expect(brain.contextConfig.weight).toBe(0.3);
+  });
+
+  it('passes context through encode', async () => {
+    const id = await brain.encode({
+      content: 'context encode test',
+      source: 'direct-observation',
+      context: { task: 'testing' },
+    });
+    const row = brain.db.prepare('SELECT context FROM episodes WHERE id = ?').get(id);
+    expect(JSON.parse(row.context)).toEqual({ task: 'testing' });
+  });
+
+  it('context match boosts episodic recall score', async () => {
+    await brain.encode({
+      content: 'payment debugging memory',
+      source: 'direct-observation',
+      context: { task: 'debugging', domain: 'payments' },
+    });
+
+    const withCtx = await brain.recall('payment debugging memory', {
+      types: ['episodic'],
+      context: { task: 'debugging', domain: 'payments' },
+    });
+    const withoutCtx = await brain.recall('payment debugging memory', {
+      types: ['episodic'],
+    });
+
+    const ctxResult = withCtx.find(r => r.content === 'payment debugging memory');
+    const noCtxResult = withoutCtx.find(r => r.content === 'payment debugging memory');
+    expect(ctxResult).toBeDefined();
+    expect(noCtxResult).toBeDefined();
+    expect(ctxResult.score).toBeGreaterThan(noCtxResult.score);
+    expect(ctxResult.contextMatch).toBe(1.0);
+  });
+
+  it('recallStream also supports context', async () => {
+    await brain.encode({
+      content: 'stream context test memory',
+      source: 'direct-observation',
+      context: { task: 'streaming' },
+    });
+
+    const results = [];
+    for await (const entry of brain.recallStream('stream context test memory', {
+      types: ['episodic'],
+      context: { task: 'streaming' },
+    })) {
+      results.push(entry);
+    }
+    const match = results.find(r => r.content === 'stream context test memory');
+    expect(match).toBeDefined();
+    expect(match.contextMatch).toBe(1.0);
+  });
+
+  it('respects context.enabled = false', async () => {
+    const b = new Audrey({
+      dataDir: TEST_DIR + '-ctx2',
+      embedding: { provider: 'mock', dimensions: 8 },
+      context: { enabled: false },
+    });
+    await b.encode({
+      content: 'disabled context test',
+      source: 'direct-observation',
+      context: { task: 'testing' },
+    });
+
+    const results = await b.recall('disabled context test', {
+      types: ['episodic'],
+      context: { task: 'testing' },
+    });
+    const match = results.find(r => r.content === 'disabled context test');
+    expect(match).toBeDefined();
+    expect(match.contextMatch).toBeUndefined();
+
+    b.close();
+    rmSync(TEST_DIR + '-ctx2', { recursive: true, force: true });
+  });
+});
+
 describe('interference on encode', () => {
   const INT_DIR = './test-interference-audrey';
   let brain;
