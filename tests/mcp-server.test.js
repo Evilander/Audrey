@@ -379,6 +379,54 @@ describe('MCP tool: memory_resolve_truth', () => {
   });
 });
 
+describe('MCP tool: memory_recall filters', () => {
+  let audrey;
+
+  beforeEach(async () => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    audrey = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'mcp-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await audrey.encode({ content: 'Debug log from server', source: 'direct-observation', tags: ['debug', 'server'] });
+    await audrey.encode({ content: 'User likes dark mode', source: 'told-by-user', tags: ['prefs'] });
+    await audrey.encode({ content: 'API returned 500', source: 'tool-result', tags: ['debug', 'api'] });
+  });
+
+  afterEach(() => {
+    audrey.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('filters by tags', async () => {
+    const results = await audrey.recall('debug', { tags: ['debug'], types: ['episodic'] });
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.content).toMatch(/Debug|API/);
+    }
+  });
+
+  it('filters by sources', async () => {
+    const results = await audrey.recall('observation', { sources: ['told-by-user'], types: ['episodic'] });
+    for (const r of results) {
+      expect(r.source).toBe('told-by-user');
+    }
+  });
+
+  it('filters by after date', async () => {
+    const longAgo = '2000-01-01T00:00:00.000Z';
+    const results = await audrey.recall('debug', { after: longAgo, types: ['episodic'] });
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  it('filters by before date excludes future', async () => {
+    const longAgo = '2000-01-01T00:00:00.000Z';
+    const results = await audrey.recall('debug', { before: longAgo, types: ['episodic'] });
+    expect(results.length).toBe(0);
+  });
+});
+
 describe('MCP tool: memory_export + memory_import', () => {
   let audrey;
   const EXPORT_DIR = './test-mcp-export';

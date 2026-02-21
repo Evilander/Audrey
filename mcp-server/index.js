@@ -179,13 +179,21 @@ async function main() {
       limit: z.number().min(1).max(50).optional().describe('Max results (default 10)'),
       types: z.array(z.enum(VALID_TYPES)).optional().describe('Memory types to search'),
       min_confidence: z.number().min(0).max(1).optional().describe('Minimum confidence threshold'),
+      tags: z.array(z.string()).optional().describe('Only return episodic memories with these tags'),
+      sources: z.array(z.enum(VALID_SOURCES)).optional().describe('Only return episodic memories from these sources'),
+      after: z.string().optional().describe('Only return memories created after this ISO date'),
+      before: z.string().optional().describe('Only return memories created before this ISO date'),
     },
-    async ({ query, limit, types, min_confidence }) => {
+    async ({ query, limit, types, min_confidence, tags, sources, after, before }) => {
       try {
         const results = await audrey.recall(query, {
           limit: limit ?? 10,
           types,
           minConfidence: min_confidence,
+          tags,
+          sources,
+          after,
+          before,
         });
         return toolResult(results);
       } catch (err) {

@@ -463,3 +463,50 @@ describe('lazy migration', () => {
     brain2.close();
   });
 });
+
+describe('filtered recall', () => {
+  let brain;
+  const FILTER_DIR = './test-filtered-recall';
+
+  beforeEach(async () => {
+    if (existsSync(FILTER_DIR)) rmSync(FILTER_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: FILTER_DIR,
+      agent: 'test-agent',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await brain.encode({ content: 'Debug observation', source: 'direct-observation', tags: ['debug'] });
+    await brain.encode({ content: 'User preference', source: 'told-by-user', tags: ['prefs'] });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(FILTER_DIR)) rmSync(FILTER_DIR, { recursive: true });
+  });
+
+  it('filters by tags through Audrey.recall()', async () => {
+    const results = await brain.recall('observation', { tags: ['debug'], types: ['episodic'] });
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.content).toContain('Debug');
+    }
+  });
+
+  it('filters by source through Audrey.recall()', async () => {
+    const results = await brain.recall('preference', { sources: ['told-by-user'], types: ['episodic'] });
+    for (const r of results) {
+      expect(r.source).toBe('told-by-user');
+    }
+  });
+
+  it('filters work through recallStream too', async () => {
+    const results = [];
+    for await (const mem of brain.recallStream('observation', { tags: ['debug'], types: ['episodic'] })) {
+      results.push(mem);
+    }
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.content).toContain('Debug');
+    }
+  });
+});
