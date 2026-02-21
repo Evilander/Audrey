@@ -11,6 +11,7 @@ import { rollbackConsolidation, getConsolidationHistory } from './rollback.js';
 import { introspect as introspectFn } from './introspect.js';
 import { buildContextResolutionPrompt } from './prompts.js';
 import { exportMemories } from './export.js';
+import { importMemories } from './import.js';
 
 /**
  * @typedef {'direct-observation' | 'told-by-user' | 'tool-result' | 'inference' | 'model-generated'} SourceType
@@ -285,6 +286,10 @@ export class Audrey extends EventEmitter {
 
   export() {
     return exportMemories(this.db);
+  }
+
+  async import(snapshot) {
+    return importMemories(this.db, this.embeddingProvider, snapshot);
   }
 
   /** @returns {void} */
