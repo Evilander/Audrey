@@ -178,4 +178,58 @@ describe('applyDecay', () => {
     expect(result.transitionedToDormant).toBe(0);
     expect(result.timestamp).toBeTruthy();
   });
+
+  describe('interference affects decay', () => {
+    it('high interference memories go dormant faster', () => {
+      const lowInterference = generateId();
+      const highInterference = generateId();
+      const old = daysAgo(200);
+
+      db.prepare(`
+        INSERT INTO semantics (id, content, state, supporting_count, contradicting_count,
+          retrieval_count, interference_count, salience, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(lowInterference, 'low interference', 'active', 0, 5, 0, 0, 0.5, old);
+
+      db.prepare(`
+        INSERT INTO semantics (id, content, state, supporting_count, contradicting_count,
+          retrieval_count, interference_count, salience, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(highInterference, 'high interference', 'active', 0, 5, 0, 50, 0.5, old);
+
+      applyDecay(db, { dormantThreshold: 0.2 });
+
+      const low = db.prepare('SELECT state FROM semantics WHERE id = ?').get(lowInterference);
+      const high = db.prepare('SELECT state FROM semantics WHERE id = ?').get(highInterference);
+      expect(low.state).toBe('active');
+      expect(high.state).toBe('dormant');
+    });
+  });
+
+  describe('salience affects decay', () => {
+    it('high salience memories resist going dormant', () => {
+      const lowSalience = generateId();
+      const highSalience = generateId();
+      const old = daysAgo(200);
+
+      db.prepare(`
+        INSERT INTO semantics (id, content, state, supporting_count, contradicting_count,
+          retrieval_count, interference_count, salience, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(lowSalience, 'low salience', 'active', 0, 5, 0, 0, 0.0, old);
+
+      db.prepare(`
+        INSERT INTO semantics (id, content, state, supporting_count, contradicting_count,
+          retrieval_count, interference_count, salience, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(highSalience, 'high salience', 'active', 0, 5, 0, 0, 1.0, old);
+
+      applyDecay(db, { dormantThreshold: 0.2 });
+
+      const low = db.prepare('SELECT state FROM semantics WHERE id = ?').get(lowSalience);
+      const high = db.prepare('SELECT state FROM semantics WHERE id = ?').get(highSalience);
+      expect(low.state).toBe('dormant');
+      expect(high.state).toBe('active');
+    });
+  });
 });

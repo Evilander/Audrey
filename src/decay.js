@@ -1,4 +1,5 @@
-import { computeConfidence, DEFAULT_HALF_LIVES } from './confidence.js';
+import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier } from './confidence.js';
+import { interferenceModifier } from './interference.js';
 import { daysBetween } from './utils.js';
 
 /**
@@ -13,7 +14,7 @@ export function applyDecay(db, { dormantThreshold = 0.1, halfLives } = {}) {
 
   const semantics = db.prepare(`
     SELECT id, supporting_count, contradicting_count, created_at,
-           last_reinforced_at, retrieval_count
+           last_reinforced_at, retrieval_count, interference_count, salience
     FROM semantics WHERE state = 'active'
   `).all();
 
@@ -26,7 +27,7 @@ export function applyDecay(db, { dormantThreshold = 0.1, halfLives } = {}) {
       ? daysBetween(sem.last_reinforced_at, now)
       : ageDays;
 
-    const confidence = computeConfidence({
+    let confidence = computeConfidence({
       sourceType: 'tool-result',
       supportingCount: sem.supporting_count || 0,
       contradictingCount: sem.contradicting_count || 0,
@@ -35,6 +36,9 @@ export function applyDecay(db, { dormantThreshold = 0.1, halfLives } = {}) {
       retrievalCount: sem.retrieval_count || 0,
       daysSinceRetrieval,
     });
+    confidence *= interferenceModifier(sem.interference_count || 0);
+    confidence *= salienceModifier(sem.salience ?? 0.5);
+    confidence = Math.max(0, Math.min(1, confidence));
 
     if (confidence < dormantThreshold) {
       markDormantSem.run('dormant', sem.id);
@@ -44,7 +48,7 @@ export function applyDecay(db, { dormantThreshold = 0.1, halfLives } = {}) {
 
   const procedures = db.prepare(`
     SELECT id, success_count, failure_count, created_at,
-           last_reinforced_at, retrieval_count
+           last_reinforced_at, retrieval_count, interference_count, salience
     FROM procedures WHERE state = 'active'
   `).all();
 
@@ -57,7 +61,7 @@ export function applyDecay(db, { dormantThreshold = 0.1, halfLives } = {}) {
       ? daysBetween(proc.last_reinforced_at, now)
       : ageDays;
 
-    const confidence = computeConfidence({
+    let confidence = computeConfidence({
       sourceType: 'tool-result',
       supportingCount: proc.success_count || 0,
       contradictingCount: proc.failure_count || 0,
@@ -66,6 +70,9 @@ export function applyDecay(db, { dormantThreshold = 0.1, halfLives } = {}) {
       retrievalCount: proc.retrieval_count || 0,
       daysSinceRetrieval,
     });
+    confidence *= interferenceModifier(proc.interference_count || 0);
+    confidence *= salienceModifier(proc.salience ?? 0.5);
+    confidence = Math.max(0, Math.min(1, confidence));
 
     if (confidence < dormantThreshold) {
       markDormantProc.run('dormant', proc.id);
