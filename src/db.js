@@ -150,6 +150,12 @@ function createVec0Tables(db, dimensions) {
   `);
 }
 
+function dropVec0Tables(db) {
+  db.exec('DROP TABLE IF EXISTS vec_episodes');
+  db.exec('DROP TABLE IF EXISTS vec_semantics');
+  db.exec('DROP TABLE IF EXISTS vec_procedures');
+}
+
 function migrateTable(db, { source, target, selectCols, insertCols, placeholders, transform }) {
   const count = db.prepare(`SELECT COUNT(*) as c FROM ${target}`).get().c;
   if (count > 0) return;
@@ -198,10 +204,11 @@ function migrateEmbeddingsToVec0(db) {
 /**
  * @param {string} dataDir
  * @param {{ dimensions?: number }} [options]
- * @returns {import('better-sqlite3').Database}
+ * @returns {{ db: import('better-sqlite3').Database, migrated: boolean }}
  */
 export function createDatabase(dataDir, options = {}) {
   const { dimensions } = options;
+  let migrated = false;
 
   mkdirSync(dataDir, { recursive: true });
   const dbPath = join(dataDir, 'audrey.db');
@@ -225,10 +232,11 @@ export function createDatabase(dataDir, options = {}) {
     if (existing) {
       const storedDims = parseInt(existing.value, 10);
       if (storedDims !== dimensions) {
-        db.close();
-        throw new Error(
-          `Dimension mismatch: database was created with ${storedDims} dimensions, but ${dimensions} were requested`
-        );
+        dropVec0Tables(db);
+        db.prepare(
+          "UPDATE audrey_config SET value = ? WHERE key = 'dimensions'"
+        ).run(String(dimensions));
+        migrated = true;
       }
     } else {
       db.prepare(
@@ -238,10 +246,12 @@ export function createDatabase(dataDir, options = {}) {
 
     createVec0Tables(db, dimensions);
 
-    migrateEmbeddingsToVec0(db);
+    if (!migrated) {
+      migrateEmbeddingsToVec0(db);
+    }
   }
 
-  return db;
+  return { db, migrated };
 }
 
 export function readStoredDimensions(dataDir) {
