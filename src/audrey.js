@@ -91,6 +91,7 @@ export class Audrey extends EventEmitter {
     consolidation = {},
     decay = {},
     interference = {},
+    context = {},
   } = {}) {
     super();
 
@@ -116,6 +117,7 @@ export class Audrey extends EventEmitter {
       halfLives: confidence.halfLives,
       sourceReliability: confidence.sourceReliability,
       interferenceWeight: interference.weight ?? 0.1,
+      contextWeight: context.weight ?? 0.3,
     };
     this.consolidationConfig = {
       minEpisodes: consolidation.minEpisodes || 3,
@@ -127,6 +129,10 @@ export class Audrey extends EventEmitter {
       k: interference.k ?? 5,
       threshold: interference.threshold ?? 0.6,
       weight: interference.weight ?? 0.1,
+    };
+    this.contextConfig = {
+      enabled: context.enabled ?? true,
+      weight: context.weight ?? 0.3,
     };
   }
 
@@ -209,9 +215,13 @@ export class Audrey extends EventEmitter {
    */
   async recall(query, options = {}) {
     await this._ensureMigrated();
+    const baseConfig = options.confidenceConfig ?? this.confidenceConfig;
+    const confidenceConfig = this.contextConfig.enabled && options.context
+      ? { ...baseConfig, retrievalContext: options.context }
+      : baseConfig;
     return recallFn(this.db, this.embeddingProvider, query, {
       ...options,
-      confidenceConfig: options.confidenceConfig ?? this.confidenceConfig,
+      confidenceConfig,
     });
   }
 
@@ -222,9 +232,13 @@ export class Audrey extends EventEmitter {
    */
   async *recallStream(query, options = {}) {
     await this._ensureMigrated();
+    const baseConfig = options.confidenceConfig ?? this.confidenceConfig;
+    const confidenceConfig = this.contextConfig.enabled && options.context
+      ? { ...baseConfig, retrievalContext: options.context }
+      : baseConfig;
     yield* recallStreamFn(this.db, this.embeddingProvider, query, {
       ...options,
-      confidenceConfig: options.confidenceConfig ?? this.confidenceConfig,
+      confidenceConfig,
     });
   }
 
