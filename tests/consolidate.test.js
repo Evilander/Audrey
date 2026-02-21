@@ -125,6 +125,24 @@ describe('runConsolidation', () => {
     expect(run2.episodesEvaluated).toBe(0);
   });
 
+  it('logs consolidation metrics per run', async () => {
+    await encodeEpisode(db, embedding, { content: 'metric test', source: 'told-by-user' });
+    await encodeEpisode(db, embedding, { content: 'metric test', source: 'direct-observation' });
+    await encodeEpisode(db, embedding, { content: 'metric test', source: 'tool-result' });
+
+    const result = await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+    });
+
+    const metrics = db.prepare('SELECT * FROM consolidation_metrics WHERE run_id = ?').all(result.runId);
+    expect(metrics.length).toBeGreaterThanOrEqual(1);
+    expect(metrics[0]).toHaveProperty('min_cluster_size');
+    expect(metrics[0]).toHaveProperty('similarity_threshold');
+    expect(metrics[0]).toHaveProperty('clusters_found');
+    expect(metrics[0]).toHaveProperty('principles_extracted');
+  });
+
   it('records audit trail with input/output IDs', async () => {
     await encodeEpisode(db, embedding, { content: 'same', source: 'direct-observation' });
     await encodeEpisode(db, embedding, { content: 'same', source: 'tool-result' });

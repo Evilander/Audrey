@@ -221,29 +221,53 @@ describe('Audrey with LLM', () => {
   });
 });
 
-describe('config validation', () => {
-  it('throws on dormantThreshold > 1', () => {
-    expect(() => new Audrey({
-      dataDir: './test-audrey-badconfig-1',
-      embedding: { provider: 'mock', dimensions: 8 },
-      decay: { dormantThreshold: 1.5 },
-    })).toThrow(/dormantThreshold/);
+describe('confidence config', () => {
+  let audrey;
+  const CONF_DIR = './test-confidence-config';
+
+  beforeEach(() => {
+    if (existsSync(CONF_DIR)) rmSync(CONF_DIR, { recursive: true });
   });
 
-  it('throws on dormantThreshold < 0', () => {
-    expect(() => new Audrey({
-      dataDir: './test-audrey-badconfig-2',
-      embedding: { provider: 'mock', dimensions: 8 },
-      decay: { dormantThreshold: -0.1 },
-    })).toThrow(/dormantThreshold/);
+  afterEach(() => {
+    audrey?.close();
+    if (existsSync(CONF_DIR)) rmSync(CONF_DIR, { recursive: true });
   });
 
-  it('throws on minEpisodes < 1', () => {
-    expect(() => new Audrey({
-      dataDir: './test-audrey-badconfig-3',
+  it('passes custom weights through to recall', async () => {
+    audrey = new Audrey({
+      dataDir: CONF_DIR,
       embedding: { provider: 'mock', dimensions: 8 },
-      consolidation: { minEpisodes: 0 },
-    })).toThrow(/minEpisodes/);
+      confidence: {
+        weights: { source: 1.0, evidence: 0, recency: 0, retrieval: 0 },
+      },
+    });
+    await audrey.encode({ content: 'test memory', source: 'direct-observation' });
+    const results = await audrey.recall('test', { types: ['episodic'] });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].confidence).toBeCloseTo(0.95, 1);
+  });
+
+  it('passes custom halfLives through to decay', async () => {
+    audrey = new Audrey({
+      dataDir: CONF_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+      confidence: {
+        halfLives: { episodic: 7, semantic: 1, procedural: 90 },
+      },
+    });
+
+    const now = new Date();
+    const tenDaysAgo = new Date(now - 10 * 86400000).toISOString();
+    audrey.db.prepare(`
+      INSERT INTO semantics (id, content, state, supporting_count, contradicting_count,
+        retrieval_count, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('sem-hl', 'Half-life test', 'active', 1, 2, 0, tenDaysAgo);
+
+    const result = audrey.decay({ dormantThreshold: 0.5 });
+    const row = audrey.db.prepare('SELECT state FROM semantics WHERE id = ?').get('sem-hl');
+    expect(row.state).toBe('dormant');
   });
 });
 

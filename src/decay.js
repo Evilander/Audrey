@@ -6,7 +6,7 @@ import { daysBetween } from './utils.js';
  * @param {{ dormantThreshold?: number }} [options]
  * @returns {{ totalEvaluated: number, transitionedToDormant: number, timestamp: string }}
  */
-export function applyDecay(db, { dormantThreshold = 0.1 } = {}) {
+export function applyDecay(db, { dormantThreshold = 0.1, halfLives } = {}) {
   const now = new Date();
   let totalEvaluated = 0;
   let transitionedToDormant = 0;
@@ -31,7 +31,7 @@ export function applyDecay(db, { dormantThreshold = 0.1 } = {}) {
       supportingCount: sem.supporting_count || 0,
       contradictingCount: sem.contradicting_count || 0,
       ageDays,
-      halfLifeDays: DEFAULT_HALF_LIVES.semantic,
+      halfLifeDays: halfLives?.semantic ?? DEFAULT_HALF_LIVES.semantic,
       retrievalCount: sem.retrieval_count || 0,
       daysSinceRetrieval,
     });
@@ -62,7 +62,7 @@ export function applyDecay(db, { dormantThreshold = 0.1 } = {}) {
       supportingCount: proc.success_count || 0,
       contradictingCount: proc.failure_count || 0,
       ageDays,
-      halfLifeDays: DEFAULT_HALF_LIVES.procedural,
+      halfLifeDays: halfLives?.procedural ?? DEFAULT_HALF_LIVES.procedural,
       retrievalCount: proc.retrieval_count || 0,
       daysSinceRetrieval,
     });

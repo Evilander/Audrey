@@ -10,6 +10,9 @@ import { applyDecay } from './decay.js';
 import { rollbackConsolidation, getConsolidationHistory } from './rollback.js';
 import { introspect as introspectFn } from './introspect.js';
 import { buildContextResolutionPrompt } from './prompts.js';
+import { exportMemories } from './export.js';
+import { importMemories } from './import.js';
+import { suggestConsolidationParams as suggestParamsFn } from './adaptive.js';
 
 /**
  * @typedef {'direct-observation' | 'told-by-user' | 'tool-result' | 'inference' | 'model-generated'} SourceType
@@ -77,6 +80,7 @@ export class Audrey extends EventEmitter {
     agent = 'default',
     embedding = { provider: 'mock', dimensions: 64 },
     llm,
+    confidence = {},
     consolidation = {},
     decay = {},
   } = {}) {
@@ -97,8 +101,16 @@ export class Audrey extends EventEmitter {
     this.embeddingProvider = createEmbeddingProvider(embedding);
     this.db = createDatabase(dataDir, { dimensions: this.embeddingProvider.dimensions });
     this.llmProvider = llm ? createLLMProvider(llm) : null;
-    this.consolidationConfig = { minEpisodes };
-    this.decayConfig = { dormantThreshold };
+    this.confidenceConfig = {
+      weights: confidence.weights,
+      halfLives: confidence.halfLives,
+      sourceReliability: confidence.sourceReliability,
+    };
+    this.consolidationConfig = {
+      minEpisodes: consolidation.minEpisodes || 3,
+    };
+    this.decayConfig = { dormantThreshold: decay.dormantThreshold || 0.1 };
+    this._autoConsolidateTimer = null;
   }
 
   _emitValidation(id, params) {
@@ -161,7 +173,10 @@ export class Audrey extends EventEmitter {
    * @returns {Promise<RecallResult[]>}
    */
   recall(query, options = {}) {
-    return recallFn(this.db, this.embeddingProvider, query, options);
+    return recallFn(this.db, this.embeddingProvider, query, {
+      ...options,
+      confidenceConfig: options.confidenceConfig ?? this.confidenceConfig,
+    });
   }
 
   /**
@@ -170,7 +185,10 @@ export class Audrey extends EventEmitter {
    * @returns {AsyncGenerator<RecallResult>}
    */
   async *recallStream(query, options = {}) {
-    yield* recallStreamFn(this.db, this.embeddingProvider, query, options);
+    yield* recallStreamFn(this.db, this.embeddingProvider, query, {
+      ...options,
+      confidenceConfig: options.confidenceConfig ?? this.confidenceConfig,
+    });
   }
 
   /**
@@ -197,6 +215,7 @@ export class Audrey extends EventEmitter {
   decay(options = {}) {
     const result = applyDecay(this.db, {
       dormantThreshold: options.dormantThreshold || this.decayConfig.dormantThreshold,
+      halfLives: options.halfLives ?? this.confidenceConfig.halfLives,
     });
     this.emit('decay', result);
     return result;
@@ -278,8 +297,40 @@ export class Audrey extends EventEmitter {
     return introspectFn(this.db);
   }
 
+  export() {
+    return exportMemories(this.db);
+  }
+
+  async import(snapshot) {
+    return importMemories(this.db, this.embeddingProvider, snapshot);
+  }
+
+  startAutoConsolidate(intervalMs, options = {}) {
+    if (intervalMs < 1000) {
+      throw new Error('Auto-consolidation interval must be at least 1000ms');
+    }
+    if (this._autoConsolidateTimer) {
+      throw new Error('Auto-consolidation is already running');
+    }
+    this._autoConsolidateTimer = setInterval(() => {
+      this.consolidate(options).catch(err => this.emit('error', err));
+    }, intervalMs);
+  }
+
+  stopAutoConsolidate() {
+    if (this._autoConsolidateTimer) {
+      clearInterval(this._autoConsolidateTimer);
+      this._autoConsolidateTimer = null;
+    }
+  }
+
+  suggestConsolidationParams() {
+    return suggestParamsFn(this.db);
+  }
+
   /** @returns {void} */
   close() {
+    this.stopAutoConsolidate();
     closeDatabase(this.db);
   }
 }

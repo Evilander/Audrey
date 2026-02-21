@@ -46,7 +46,7 @@ npx audrey status
 npx audrey uninstall
 ```
 
-Every Claude Code session now has 5 memory tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`.
+Every Claude Code session now has 7 memory tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`, `memory_export`, `memory_import`.
 
 ### SDK in Your Code
 
@@ -533,14 +533,18 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 - [x] Published to npm with proper package metadata
 - [x] 194 tests across 17 test files
 
-### v0.3.3 — Hardening (current)
+### v0.5.0 — Feature Depth (current)
 
-- [x] Fix status command dimension mismatch (read stored dimensions from existing database)
-- [x] Safe JSON parsing in LLM providers (descriptive errors on malformed responses)
-- [x] Fetch timeouts on all API calls (configurable, default 30s)
-- [x] Config validation in Audrey constructor (dormantThreshold, minEpisodes)
-- [x] encodeBatch error isolation tests
-- [x] 208 tests across 17 test files
+- [x] Configurable confidence weights per Audrey instance
+- [x] Configurable decay rates (half-lives) per Audrey instance
+- [x] Confidence config wired through constructor to recall and decay
+- [x] Memory export (JSON snapshot of all tables, no raw embeddings)
+- [x] Memory import with automatic re-embedding via current provider
+- [x] `memory_export` and `memory_import` MCP tools (7 tools total)
+- [x] Auto-consolidation scheduling (`startAutoConsolidate` / `stopAutoConsolidate`)
+- [x] Consolidation metrics tracking (per-run params and results)
+- [x] Adaptive consolidation parameter suggestions based on historical yield
+- [x] 220+ tests across 20 test files
 
 ### v0.4.0 — Type Safety & Developer Experience
 
@@ -553,16 +557,6 @@ Demonstrates the full pipeline: encode 3 rate-limit observations → consolidate
 
 - [ ] Embedding migration pipeline (re-embed when models change)
 - [ ] Re-consolidation queue (re-run consolidation with new embedding model)
-
-### v0.5.0 — Advanced Memory Features
-
-- [ ] Adaptive consolidation threshold (learn optimal N per domain, not fixed N=3)
-- [ ] Source-aware confidence for semantic memories (track strongest source composition)
-- [ ] Configurable decay rates per Audrey instance
-- [ ] Configurable confidence weights per Audrey instance
-- [ ] PII detection and redaction (opt-in)
-- [ ] Memory export/import (JSON snapshot)
-- [ ] Auto-consolidation scheduling (setInterval with configurable interval)
 
 ### v0.6.0 — Scale
 
