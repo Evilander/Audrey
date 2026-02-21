@@ -65,7 +65,7 @@ function install() {
   console.log(`
 Audrey registered as "${SERVER_NAME}" with Claude Code.
 
-7 tools available in every session:
+9 tools available in every session:
   memory_encode        — Store observations, facts, preferences
   memory_recall        — Search memories by semantic similarity
   memory_consolidate   — Extract principles from accumulated episodes
@@ -73,6 +73,8 @@ Audrey registered as "${SERVER_NAME}" with Claude Code.
   memory_resolve_truth — Resolve contradictions between claims
   memory_export        — Export all memories as JSON snapshot
   memory_import        — Import a snapshot into a fresh database
+  memory_forget        — Forget a specific memory by ID or query
+  memory_decay         — Apply forgetting curves, transition low-confidence to dormant
 
 Data stored in: ${DEFAULT_DATA_DIR}
 Verify: claude mcp list
@@ -281,6 +283,53 @@ async function main() {
         await audrey.import(snapshot);
         const stats = audrey.introspect();
         return toolResult({ imported: true, stats });
+      } catch (err) {
+        return toolError(err);
+      }
+    },
+  );
+
+  server.tool(
+    'memory_forget',
+    {
+      id: z.string().optional().describe('ID of the memory to forget'),
+      query: z.string().optional().describe('Semantic query to find and forget the closest matching memory'),
+      min_similarity: z.number().min(0).max(1).optional().describe('Minimum similarity for query-based forget (default 0.9)'),
+      purge: z.boolean().optional().describe('Hard-delete the memory permanently (default false, soft-delete)'),
+    },
+    async ({ id, query, min_similarity, purge }) => {
+      try {
+        if (!id && !query) {
+          return toolError(new Error('Provide either id or query'));
+        }
+        let result;
+        if (id) {
+          result = audrey.forget(id, { purge: purge ?? false });
+        } else {
+          result = await audrey.forgetByQuery(query, {
+            minSimilarity: min_similarity ?? 0.9,
+            purge: purge ?? false,
+          });
+          if (!result) {
+            return toolResult({ forgotten: false, reason: 'No memory found above similarity threshold' });
+          }
+        }
+        return toolResult({ forgotten: true, ...result });
+      } catch (err) {
+        return toolError(err);
+      }
+    },
+  );
+
+  server.tool(
+    'memory_decay',
+    {
+      dormant_threshold: z.number().min(0).max(1).optional().describe('Confidence below which memories go dormant (default 0.1)'),
+    },
+    async ({ dormant_threshold }) => {
+      try {
+        const result = audrey.decay({ dormantThreshold: dormant_threshold });
+        return toolResult(result);
       } catch (err) {
         return toolError(err);
       }

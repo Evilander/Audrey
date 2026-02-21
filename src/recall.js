@@ -140,11 +140,11 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
   const results = [];
   for (const row of rows) {
     if (!matchesDateFilters(row.created_at, filters)) continue;
-    if (filters.tags) {
+    if (filters.tags?.length) {
       const rowTags = safeJsonParse(row.tags, []);
       if (!filters.tags.some(t => rowTags.includes(t))) continue;
     }
-    if (filters.sources && !filters.sources.includes(row.source)) continue;
+    if (filters.sources?.length && !filters.sources.includes(row.source)) continue;
     const confidence = computeEpisodicConfidence(row, now, confidenceConfig);
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
@@ -238,7 +238,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   const queryBuffer = embeddingProvider.vectorToBuffer(queryVector);
   const searchTypes = types || ['episodic', 'semantic', 'procedural'];
   const now = new Date();
-  const hasFilters = tags || sources || after || before;
+  const hasFilters = tags?.length || sources?.length || after || before;
   const candidateK = hasFilters ? limit * 5 : limit * 3;
   const filters = { tags, sources, after, before };
 

@@ -510,3 +510,77 @@ describe('filtered recall', () => {
     }
   });
 });
+
+describe('forget and purge', () => {
+  let brain;
+  const FORGET_DIR = './test-forget-audrey';
+
+  beforeEach(async () => {
+    if (existsSync(FORGET_DIR)) rmSync(FORGET_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: FORGET_DIR,
+      agent: 'test-agent',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(FORGET_DIR)) rmSync(FORGET_DIR, { recursive: true });
+  });
+
+  it('forgets a memory by ID', async () => {
+    const id = await brain.encode({ content: 'Forget me', source: 'direct-observation' });
+    const result = brain.forget(id);
+    expect(result.type).toBe('episodic');
+
+    const results = await brain.recall('forget me', { types: ['episodic'] });
+    const found = results.find(r => r.id === id);
+    expect(found).toBeUndefined();
+  });
+
+  it('emits forget event', async () => {
+    const id = await brain.encode({ content: 'Event test', source: 'direct-observation' });
+    let emitted = null;
+    brain.on('forget', (e) => { emitted = e; });
+    brain.forget(id);
+    expect(emitted).not.toBeNull();
+    expect(emitted.id).toBe(id);
+  });
+
+  it('forgets by query', async () => {
+    await brain.encode({ content: 'Wrong information stored here', source: 'told-by-user' });
+    const result = await brain.forgetByQuery('Wrong information stored here', { minSimilarity: 0.5 });
+    expect(result).not.toBeNull();
+    expect(result.type).toBe('episodic');
+  });
+
+  it('purges all forgotten and dormant memories', async () => {
+    const id = await brain.encode({ content: 'To purge', source: 'direct-observation' });
+    brain.forget(id);
+
+    const result = brain.purge();
+    expect(result.episodes).toBe(1);
+
+    const ep = brain.db.prepare('SELECT * FROM episodes WHERE id = ?').get(id);
+    expect(ep).toBeUndefined();
+  });
+
+  it('hard-deletes with purge flag', async () => {
+    const id = await brain.encode({ content: 'Hard delete', source: 'direct-observation' });
+    brain.forget(id, { purge: true });
+
+    const ep = brain.db.prepare('SELECT * FROM episodes WHERE id = ?').get(id);
+    expect(ep).toBeUndefined();
+  });
+
+  it('emits purge event', async () => {
+    const id = await brain.encode({ content: 'Purge event test', source: 'direct-observation' });
+    brain.forget(id);
+    let emitted = null;
+    brain.on('purge', (e) => { emitted = e; });
+    brain.purge();
+    expect(emitted).not.toBeNull();
+    expect(emitted.episodes).toBe(1);
+  });
+});

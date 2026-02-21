@@ -462,3 +462,55 @@ describe('MCP tool: memory_export + memory_import', () => {
     dest.close();
   });
 });
+
+describe('MCP tool: memory_forget + memory_decay', () => {
+  let audrey;
+  const TOOL_DIR = './test-mcp-forget';
+
+  beforeEach(async () => {
+    if (existsSync(TOOL_DIR)) rmSync(TOOL_DIR, { recursive: true });
+    audrey = new Audrey({
+      dataDir: TOOL_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    audrey?.close();
+    if (existsSync(TOOL_DIR)) rmSync(TOOL_DIR, { recursive: true });
+  });
+
+  it('forgets a memory by ID via SDK', async () => {
+    const id = await audrey.encode({ content: 'MCP forget test', source: 'direct-observation' });
+    const result = audrey.forget(id);
+    expect(result.type).toBe('episodic');
+    expect(result.purged).toBe(false);
+
+    const results = await audrey.recall('MCP forget test', { types: ['episodic'] });
+    expect(results.find(r => r.id === id)).toBeUndefined();
+  });
+
+  it('forgets by query via SDK', async () => {
+    await audrey.encode({ content: 'Forget by query MCP', source: 'told-by-user' });
+    const result = await audrey.forgetByQuery('forget by query MCP', { minSimilarity: 0.5 });
+    expect(result).not.toBeNull();
+    expect(result.type).toBe('episodic');
+  });
+
+  it('decay runs via SDK', () => {
+    const result = audrey.decay();
+    expect(result).toHaveProperty('totalEvaluated');
+    expect(result).toHaveProperty('transitionedToDormant');
+    expect(result).toHaveProperty('timestamp');
+  });
+
+  it('purge runs via SDK', async () => {
+    const id = await audrey.encode({ content: 'Purge MCP test', source: 'direct-observation' });
+    audrey.forget(id);
+    const result = audrey.purge();
+    expect(result.episodes).toBe(1);
+
+    const ep = audrey.db.prepare('SELECT * FROM episodes WHERE id = ?').get(id);
+    expect(ep).toBeUndefined();
+  });
+});

@@ -8,6 +8,7 @@ import { validateMemory } from './validate.js';
 import { runConsolidation } from './consolidate.js';
 import { applyDecay } from './decay.js';
 import { rollbackConsolidation, getConsolidationHistory } from './rollback.js';
+import { forgetMemory, forgetByQuery as forgetByQueryFn, purgeMemories } from './forget.js';
 import { introspect as introspectFn } from './introspect.js';
 import { buildContextResolutionPrompt } from './prompts.js';
 import { exportMemories } from './export.js';
@@ -341,6 +342,25 @@ export class Audrey extends EventEmitter {
 
   suggestConsolidationParams() {
     return suggestParamsFn(this.db);
+  }
+
+  forget(id, options = {}) {
+    const result = forgetMemory(this.db, id, options);
+    this.emit('forget', result);
+    return result;
+  }
+
+  async forgetByQuery(query, options = {}) {
+    await this._ensureMigrated();
+    const result = await forgetByQueryFn(this.db, this.embeddingProvider, query, options);
+    if (result) this.emit('forget', result);
+    return result;
+  }
+
+  purge() {
+    const result = purgeMemories(this.db);
+    this.emit('purge', result);
+    return result;
   }
 
   /** @returns {void} */
