@@ -377,3 +377,39 @@ describe('MCP tool: memory_resolve_truth', () => {
     await expect(audrey.resolveTruth('nonexistent-id')).rejects.toThrow('Contradiction not found');
   });
 });
+
+describe('MCP tool: memory_export + memory_import', () => {
+  let audrey;
+  const EXPORT_DIR = './test-mcp-export';
+  const IMPORT_DIR = './test-mcp-import';
+
+  beforeEach(async () => {
+    if (existsSync(EXPORT_DIR)) rmSync(EXPORT_DIR, { recursive: true });
+    if (existsSync(IMPORT_DIR)) rmSync(IMPORT_DIR, { recursive: true });
+    audrey = new Audrey({
+      dataDir: EXPORT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await audrey.encode({ content: 'MCP export test', source: 'told-by-user' });
+  });
+
+  afterEach(() => {
+    audrey?.close();
+    if (existsSync(EXPORT_DIR)) rmSync(EXPORT_DIR, { recursive: true });
+    if (existsSync(IMPORT_DIR)) rmSync(IMPORT_DIR, { recursive: true });
+  });
+
+  it('round-trips through export and import', async () => {
+    const snapshot = audrey.export();
+    expect(snapshot.episodes.length).toBe(1);
+
+    const dest = new Audrey({
+      dataDir: IMPORT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await dest.import(snapshot);
+    const stats = dest.introspect();
+    expect(stats.episodic).toBe(1);
+    dest.close();
+  });
+});
