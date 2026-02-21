@@ -77,6 +77,7 @@ export class Audrey extends EventEmitter {
     agent = 'default',
     embedding = { provider: 'mock', dimensions: 64 },
     llm,
+    confidence = {},
     consolidation = {},
     decay = {},
   } = {}) {
@@ -86,6 +87,11 @@ export class Audrey extends EventEmitter {
     this.embeddingProvider = createEmbeddingProvider(embedding);
     this.db = createDatabase(dataDir, { dimensions: this.embeddingProvider.dimensions });
     this.llmProvider = llm ? createLLMProvider(llm) : null;
+    this.confidenceConfig = {
+      weights: confidence.weights,
+      halfLives: confidence.halfLives,
+      sourceReliability: confidence.sourceReliability,
+    };
     this.consolidationConfig = {
       minEpisodes: consolidation.minEpisodes || 3,
     };
@@ -152,7 +158,10 @@ export class Audrey extends EventEmitter {
    * @returns {Promise<RecallResult[]>}
    */
   recall(query, options = {}) {
-    return recallFn(this.db, this.embeddingProvider, query, options);
+    return recallFn(this.db, this.embeddingProvider, query, {
+      ...options,
+      confidenceConfig: options.confidenceConfig ?? this.confidenceConfig,
+    });
   }
 
   /**
@@ -161,7 +170,10 @@ export class Audrey extends EventEmitter {
    * @returns {AsyncGenerator<RecallResult>}
    */
   async *recallStream(query, options = {}) {
-    yield* recallStreamFn(this.db, this.embeddingProvider, query, options);
+    yield* recallStreamFn(this.db, this.embeddingProvider, query, {
+      ...options,
+      confidenceConfig: options.confidenceConfig ?? this.confidenceConfig,
+    });
   }
 
   /**
@@ -188,6 +200,7 @@ export class Audrey extends EventEmitter {
   decay(options = {}) {
     const result = applyDecay(this.db, {
       dormantThreshold: options.dormantThreshold || this.decayConfig.dormantThreshold,
+      halfLives: options.halfLives ?? this.confidenceConfig.halfLives,
     });
     this.emit('decay', result);
     return result;
