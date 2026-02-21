@@ -1,48 +1,57 @@
 import { computeConfidence, DEFAULT_HALF_LIVES } from './confidence.js';
 import { daysBetween, safeJsonParse } from './utils.js';
 
-function computeEpisodicConfidence(ep, now) {
+function computeEpisodicConfidence(ep, now, confidenceConfig = {}) {
   const ageDays = daysBetween(ep.created_at, now);
+  const halfLives = confidenceConfig.halfLives || DEFAULT_HALF_LIVES;
   return computeConfidence({
     sourceType: ep.source,
     supportingCount: 1,
     contradictingCount: 0,
     ageDays,
-    halfLifeDays: DEFAULT_HALF_LIVES.episodic,
+    halfLifeDays: halfLives.episodic ?? DEFAULT_HALF_LIVES.episodic,
     retrievalCount: 0,
     daysSinceRetrieval: ageDays,
+    weights: confidenceConfig.weights,
+    customSourceReliability: confidenceConfig.sourceReliability,
   });
 }
 
-function computeSemanticConfidence(sem, now) {
+function computeSemanticConfidence(sem, now, confidenceConfig = {}) {
   const ageDays = daysBetween(sem.created_at, now);
   const daysSinceRetrieval = sem.last_reinforced_at
     ? daysBetween(sem.last_reinforced_at, now)
     : ageDays;
+  const halfLives = confidenceConfig.halfLives || DEFAULT_HALF_LIVES;
   return computeConfidence({
     sourceType: 'tool-result',
     supportingCount: sem.supporting_count || 0,
     contradictingCount: sem.contradicting_count || 0,
     ageDays,
-    halfLifeDays: DEFAULT_HALF_LIVES.semantic,
+    halfLifeDays: halfLives.semantic ?? DEFAULT_HALF_LIVES.semantic,
     retrievalCount: sem.retrieval_count || 0,
     daysSinceRetrieval,
+    weights: confidenceConfig.weights,
+    customSourceReliability: confidenceConfig.sourceReliability,
   });
 }
 
-function computeProceduralConfidence(proc, now) {
+function computeProceduralConfidence(proc, now, confidenceConfig = {}) {
   const ageDays = daysBetween(proc.created_at, now);
   const daysSinceRetrieval = proc.last_reinforced_at
     ? daysBetween(proc.last_reinforced_at, now)
     : ageDays;
+  const halfLives = confidenceConfig.halfLives || DEFAULT_HALF_LIVES;
   return computeConfidence({
     sourceType: 'tool-result',
     supportingCount: proc.success_count || 0,
     contradictingCount: proc.failure_count || 0,
     ageDays,
-    halfLifeDays: DEFAULT_HALF_LIVES.procedural,
+    halfLifeDays: halfLives.procedural ?? DEFAULT_HALF_LIVES.procedural,
     retrievalCount: proc.retrieval_count || 0,
     daysSinceRetrieval,
+    weights: confidenceConfig.weights,
+    customSourceReliability: confidenceConfig.sourceReliability,
   });
 }
 
@@ -112,7 +121,7 @@ function buildProceduralEntry(proc, confidence, score, includeProvenance) {
   return entry;
 }
 
-function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance) {
+function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig) {
   const rows = db.prepare(`
     SELECT e.*, (1.0 - v.distance) AS similarity
     FROM vec_episodes v
@@ -124,7 +133,7 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
 
   const results = [];
   for (const row of rows) {
-    const confidence = computeEpisodicConfidence(row, now);
+    const confidence = computeEpisodicConfidence(row, now, confidenceConfig);
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
     results.push(buildEpisodicEntry(row, confidence, score, includeProvenance));
@@ -132,7 +141,7 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
   return results;
 }
 
-function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant) {
+function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig) {
   let stateFilter;
   if (includeDormant) {
     stateFilter = "AND (v.state = 'active' OR v.state = 'context_dependent' OR v.state = 'dormant')";
@@ -152,7 +161,7 @@ function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includePro
   const results = [];
   const matchedIds = [];
   for (const row of rows) {
-    const confidence = computeSemanticConfidence(row, now);
+    const confidence = computeSemanticConfidence(row, now, confidenceConfig);
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
     matchedIds.push(row.id);
@@ -161,7 +170,7 @@ function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includePro
   return { results, matchedIds };
 }
 
-function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant) {
+function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig) {
   let stateFilter;
   if (includeDormant) {
     stateFilter = "AND (v.state = 'active' OR v.state = 'context_dependent' OR v.state = 'dormant')";
@@ -181,7 +190,7 @@ function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeP
   const results = [];
   const matchedIds = [];
   for (const row of rows) {
-    const confidence = computeProceduralConfidence(row, now);
+    const confidence = computeProceduralConfidence(row, now, confidenceConfig);
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
     matchedIds.push(row.id);
@@ -204,6 +213,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
     limit = 10,
     includeProvenance = false,
     includeDormant = false,
+    confidenceConfig,
   } = options;
 
   const queryVector = await embeddingProvider.embed(query);
@@ -215,13 +225,13 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   const allResults = [];
 
   if (searchTypes.includes('episodic')) {
-    const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance);
+    const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig);
     allResults.push(...episodic);
   }
 
   if (searchTypes.includes('semantic')) {
     const { results: semResults, matchedIds: semIds } =
-      knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant);
+      knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig);
     allResults.push(...semResults);
 
     if (semIds.length > 0) {
@@ -237,7 +247,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
 
   if (searchTypes.includes('procedural')) {
     const { results: procResults, matchedIds: procIds } =
-      knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant);
+      knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig);
     allResults.push(...procResults);
 
     if (procIds.length > 0) {
