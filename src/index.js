@@ -13,3 +13,4 @@ export {
 export { exportMemories } from './export.js';
 export { importMemories } from './import.js';
 export { suggestConsolidationParams } from './adaptive.js';
+export { reembedAll } from './migrate.js';

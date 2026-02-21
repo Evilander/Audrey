@@ -362,3 +362,104 @@ describe('encodeBatch', () => {
     ).rejects.toThrow('content must be a non-empty string');
   });
 });
+
+describe('lazy migration', () => {
+  const MIGRATE_DIR = './test-audrey-migrate';
+
+  afterEach(() => {
+    if (existsSync(MIGRATE_DIR)) rmSync(MIGRATE_DIR, { recursive: true });
+  });
+
+  it('re-embeds episodes on first encode after dimension change', async () => {
+    const brain1 = new Audrey({
+      dataDir: MIGRATE_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await brain1.encode({ content: 'existing memory', source: 'direct-observation' });
+    brain1.close();
+
+    const brain2 = new Audrey({
+      dataDir: MIGRATE_DIR,
+      embedding: { provider: 'mock', dimensions: 16 },
+    });
+
+    let migrationEvent = null;
+    brain2.on('migration', (counts) => { migrationEvent = counts; });
+
+    await brain2.encode({ content: 'new memory', source: 'told-by-user' });
+
+    expect(migrationEvent).not.toBeNull();
+    expect(migrationEvent.episodes).toBe(1);
+    expect(brain2._migrationPending).toBe(false);
+
+    const vecCount = brain2.db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get().c;
+    expect(vecCount).toBe(2);
+    brain2.close();
+  });
+
+  it('re-embeds on first recall after dimension change', async () => {
+    const brain1 = new Audrey({
+      dataDir: MIGRATE_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await brain1.encode({ content: 'test recall migration', source: 'direct-observation' });
+    brain1.close();
+
+    const brain2 = new Audrey({
+      dataDir: MIGRATE_DIR,
+      embedding: { provider: 'mock', dimensions: 16 },
+    });
+
+    let migrated = false;
+    brain2.on('migration', () => { migrated = true; });
+
+    await brain2.recall('test');
+    expect(migrated).toBe(true);
+    brain2.close();
+  });
+
+  it('only migrates once even with multiple operations', async () => {
+    const brain1 = new Audrey({
+      dataDir: MIGRATE_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await brain1.encode({ content: 'first', source: 'direct-observation' });
+    brain1.close();
+
+    const brain2 = new Audrey({
+      dataDir: MIGRATE_DIR,
+      embedding: { provider: 'mock', dimensions: 16 },
+    });
+
+    let migrationCount = 0;
+    brain2.on('migration', () => { migrationCount++; });
+
+    await brain2.encode({ content: 'second', source: 'told-by-user' });
+    await brain2.recall('test');
+    await brain2.consolidate();
+
+    expect(migrationCount).toBe(1);
+    brain2.close();
+  });
+
+  it('skips migration when dimensions unchanged', async () => {
+    const brain1 = new Audrey({
+      dataDir: MIGRATE_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await brain1.encode({ content: 'same dims', source: 'direct-observation' });
+    brain1.close();
+
+    const brain2 = new Audrey({
+      dataDir: MIGRATE_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+
+    let migrated = false;
+    brain2.on('migration', () => { migrated = true; });
+
+    await brain2.encode({ content: 'still same', source: 'told-by-user' });
+    expect(migrated).toBe(false);
+    brain2.close();
+  });
+});
