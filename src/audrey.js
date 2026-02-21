@@ -10,6 +10,7 @@ import { applyDecay } from './decay.js';
 import { rollbackConsolidation, getConsolidationHistory } from './rollback.js';
 import { introspect as introspectFn } from './introspect.js';
 import { buildContextResolutionPrompt } from './prompts.js';
+import { exportMemories } from './export.js';
 
 /**
  * @typedef {'direct-observation' | 'told-by-user' | 'tool-result' | 'inference' | 'model-generated'} SourceType
@@ -280,6 +281,10 @@ export class Audrey extends EventEmitter {
   /** @returns {IntrospectResult} */
   introspect() {
     return introspectFn(this.db);
+  }
+
+  export() {
+    return exportMemories(this.db);
   }
 
   /** @returns {void} */
