@@ -14,6 +14,7 @@ export async function encodeEpisode(db, embeddingProvider, {
   causal,
   tags,
   supersedes,
+  context = {},
 }) {
   if (!content || typeof content !== 'string') throw new Error('content must be a non-empty string');
   if (salience < 0 || salience > 1) throw new Error('salience must be between 0 and 1');
@@ -28,12 +29,13 @@ export async function encodeEpisode(db, embeddingProvider, {
   const insertAndLink = db.transaction(() => {
     db.prepare(`
       INSERT INTO episodes (
-        id, content, embedding, source, source_reliability, salience,
+        id, content, embedding, source, source_reliability, salience, context,
         tags, causal_trigger, causal_consequence, created_at,
         embedding_model, embedding_version, supersedes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, content, embeddingBuffer, source, reliability, salience,
+      JSON.stringify(context),
       tags ? JSON.stringify(tags) : null,
       causal?.trigger || null, causal?.consequence || null,
       now, embeddingProvider.modelName, embeddingProvider.modelVersion,
