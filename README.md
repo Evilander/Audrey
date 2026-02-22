@@ -1,6 +1,6 @@
 # Audrey
 
-Biological memory architecture for AI agents. Gives agents cognitive memory that decays, consolidates, self-validates, and learns from experience — not just a database.
+Biological memory architecture for AI agents. Memory that decays, consolidates, feels, and learns — not just a database.
 
 ## Why Audrey Exists
 
@@ -19,7 +19,7 @@ Audrey fixes all of this by modeling memory the way the brain does:
 | Neocortex | Semantic Memory | Consolidated principles and patterns |
 | Sleep Replay | Consolidation Engine | Extracts patterns from episodes, promotes to principles |
 | Prefrontal Cortex | Validation Engine | Truth-checking, contradiction detection |
-| Amygdala | Salience Scorer | Importance weighting for retention priority |
+| Amygdala | Affect System | Emotional encoding, arousal-salience coupling, mood-congruent recall |
 
 ## Install
 
@@ -67,22 +67,26 @@ const brain = new Audrey({
   embedding: { provider: 'mock', dimensions: 8 },  // or 'openai' for production
 });
 
-// 2. Encode observations
+// 2. Encode observations — with optional emotional context
 await brain.encode({
   content: 'Stripe API returns 429 above 100 req/s',
   source: 'direct-observation',
   tags: ['stripe', 'rate-limit'],
+  affect: { valence: -0.4, arousal: 0.7, label: 'frustration' },
 });
 
-// 3. Recall what you know
-const memories = await brain.recall('stripe rate limits', { limit: 5 });
-// Returns: [{ content, type, confidence, score, ... }]
+// 3. Recall what you know — mood-congruent retrieval
+const memories = await brain.recall('stripe rate limits', {
+  limit: 5,
+  mood: { valence: -0.3 },  // frustrated right now? memories encoded in frustration surface first
+});
 
 // 4. Filtered recall — by tag, source, or date range
 const recent = await brain.recall('stripe', {
   tags: ['rate-limit'],
   sources: ['direct-observation'],
   after: '2026-02-01T00:00:00Z',
+  context: { task: 'debugging', domain: 'payments' },  // context-dependent retrieval
 });
 
 // 5. Consolidate episodes into principles (the "sleep" cycle)
@@ -125,6 +129,31 @@ const brain = new Audrey({
   // Consolidation settings
   consolidation: {
     minEpisodes: 3,            // Minimum cluster size for principle extraction
+  },
+
+  // Context-dependent retrieval (v0.8.0)
+  context: {
+    enabled: true,             // Enable encoding-specificity principle
+    weight: 0.3,               // Max 30% confidence boost on full context match
+  },
+
+  // Emotional memory (v0.9.0)
+  affect: {
+    enabled: true,             // Enable affect system
+    weight: 0.2,               // Max 20% mood-congruence boost
+    arousalWeight: 0.3,        // Yerkes-Dodson arousal-salience coupling
+    resonance: {               // Detect emotional echoes across experiences
+      enabled: true,
+      k: 5,                    // How many past episodes to check
+      threshold: 0.5,          // Semantic similarity threshold
+      affectThreshold: 0.6,    // Emotional similarity threshold
+    },
+  },
+
+  // Interference-based forgetting (v0.7.0)
+  interference: {
+    enabled: true,             // New episodes suppress similar existing memories
+    weight: 0.15,              // Suppression strength
   },
 
   // Decay settings
@@ -284,6 +313,12 @@ const id = await brain.encode({
   },
   tags: ['stripe', 'production'],    // Optional. Array of strings.
   supersedes: 'previous-id',         // Optional. ID of episode this corrects.
+  context: { task: 'debugging' },    // Optional. Situational context for retrieval.
+  affect: {                          // Optional. Emotional context.
+    valence: -0.5,                   //   -1 (negative) to 1 (positive)
+    arousal: 0.7,                    //   0 (calm) to 1 (activated)
+    label: 'frustration',            //   Human-readable emotion label
+  },
 });
 ```
 
@@ -316,6 +351,8 @@ const memories = await brain.recall('stripe rate limits', {
   sources: ['direct-observation'], // Only episodic memories from these sources
   after: '2026-02-01T00:00:00Z', // Only memories created after this date
   before: '2026-03-01T00:00:00Z', // Only memories created before this date
+  context: { task: 'debugging' }, // Boost memories encoded in matching context
+  mood: { valence: -0.3, arousal: 0.5 }, // Mood-congruent retrieval
 });
 ```
 
@@ -332,6 +369,8 @@ Each result:
   score: 0.74,          // similarity * confidence
   source: 'consolidation',
   state: 'active',
+  contextMatch: 0.8,   // When retrieval context provided
+  moodCongruence: 0.7, // When mood provided
   provenance: {         // When includeProvenance: true
     evidenceEpisodeIds: ['01XYZ...', '01DEF...'],
     evidenceCount: 3,
@@ -467,6 +506,8 @@ brain.on('decay', ({ totalEvaluated, transitionedToDormant }) => { ... });
 brain.on('rollback', ({ runId, rolledBackMemories }) => { ... });
 brain.on('forget', ({ id, type, purged }) => { ... });
 brain.on('purge', ({ episodes, semantics, procedures }) => { ... });
+brain.on('interference', ({ newEpisodeId, suppressedId, similarity }) => { ... });
+brain.on('resonance', ({ episodeId, resonances }) => { ... });
 brain.on('migration', ({ episodes, semantics, procedures }) => { ... });
 brain.on('error', (err) => { ... });
 ```
@@ -492,6 +533,9 @@ src/
   decay.js           Ebbinghaus forgetting curves.
   embedding.js       Pluggable providers (Mock, OpenAI). Batch embedding.
   encode.js          Immutable episodic memory creation + vec0 writes.
+  affect.js          Emotional memory: arousal-salience coupling, mood-congruent recall, resonance.
+  context.js         Context-dependent retrieval modifier (encoding specificity).
+  interference.js    Competitive memory suppression (engram competition).
   forget.js          Soft-delete, hard-delete, query-based forget, bulk purge.
   introspect.js      Health dashboard queries.
   llm.js             Pluggable LLM providers (Mock, Anthropic, OpenAI).
@@ -531,7 +575,7 @@ All mutations use SQLite transactions. CHECK constraints enforce valid states an
 ## Running Tests
 
 ```bash
-npm test          # 278 tests across 23 files
+npm test          # 379 tests across 28 files
 npm run test:watch
 ```
 
@@ -547,7 +591,29 @@ Demonstrates the full pipeline: encode 3 rate-limit observations, consolidate in
 
 ## Changelog
 
-### v0.6.0 — Filtered Recall + Forget (current)
+### v0.9.0 — Emotional Memory (current)
+
+- Valence-arousal affect model (Russell's circumplex) on every episode
+- Arousal-salience coupling via Yerkes-Dodson inverted-U curve
+- Mood-congruent recall — matching emotional state boosts retrieval confidence
+- Emotional resonance detection — new experiences that echo past emotional patterns emit events
+- MCP server: `memory_encode` accepts `affect`, `memory_recall` accepts `mood`
+- 379 tests across 28 test files
+
+### v0.8.0 — Context-Dependent Retrieval
+
+- Encoding specificity principle: context stored with memory, matching context boosts recall
+- MCP server: `memory_encode` and `memory_recall` accept `context`
+- 340 tests across 27 test files
+
+### v0.7.0 — Interference + Salience
+
+- Interference-based forgetting: new memories competitively suppress similar existing ones
+- Salience-weighted confidence: high-salience memories resist decay
+- Spaced-repetition reconsolidation: retrieval intervals affect reinforcement strength
+- 310 tests across 25 test files
+
+### v0.6.0 — Filtered Recall + Forget
 
 - Filtered recall: tag, source, and date-range filters on `recall()` and `recallStream()`
 - `forget()` — soft-delete any memory by ID
@@ -607,6 +673,8 @@ Demonstrates the full pipeline: encode 3 rate-limit observations, consolidate in
 **Why model-generated cap at 0.6?** Prevents the most dangerous exploit in AI memory: circular self-confirmation where an agent's own inferences bootstrap themselves into high-confidence "facts" through repeated retrieval.
 
 **Why soft-delete by default?** Hard-deletes are irreversible. Soft-delete preserves data integrity and audit trails while excluding the memory from recall. Use `purge: true` or `brain.purge()` when you need permanent removal (GDPR, storage cleanup).
+
+**Why emotional memory?** Every memory system stores facts. Biological memory stores facts with emotional context — and that context changes how memories are retrieved. Emotional arousal modulates encoding strength (amygdala-hippocampal interaction). Current mood biases which memories surface (Bower, 1981). This isn't a novelty feature — it's the foundation for AI that remembers like it cares.
 
 ## License
 
