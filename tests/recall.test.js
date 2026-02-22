@@ -467,6 +467,85 @@ describe('recall', () => {
     });
   });
 
+  describe('mood-congruent recall', () => {
+    it('matching mood boosts episodic recall score', async () => {
+      await encodeEpisode(db, embedding, {
+        content: 'joyful debugging episode',
+        source: 'inference',
+        salience: 0.2,
+        affect: { valence: 0.8, arousal: 0.3, label: 'joy' },
+      });
+
+      const withMood = await recall(db, embedding, 'joyful debugging episode', {
+        types: ['episodic'],
+        confidenceConfig: { retrievalMood: { valence: 0.8, arousal: 0.3 }, affectWeight: 0.2 },
+      });
+      const withoutMood = await recall(db, embedding, 'joyful debugging episode', {
+        types: ['episodic'],
+      });
+
+      const moodMatch = withMood.find(r => r.content === 'joyful debugging episode');
+      const noMoodMatch = withoutMood.find(r => r.content === 'joyful debugging episode');
+      expect(moodMatch).toBeDefined();
+      expect(noMoodMatch).toBeDefined();
+      expect(moodMatch.score).toBeGreaterThan(noMoodMatch.score);
+    });
+
+    it('opposite mood gets no boost', async () => {
+      await encodeEpisode(db, embedding, {
+        content: 'angry debugging episode unique',
+        source: 'direct-observation',
+        affect: { valence: -0.8, arousal: 0.9 },
+      });
+
+      const opposite = await recall(db, embedding, 'angry debugging episode unique', {
+        types: ['episodic'],
+        confidenceConfig: { retrievalMood: { valence: 0.8, arousal: 0.2 }, affectWeight: 0.2 },
+      });
+      const noMood = await recall(db, embedding, 'angry debugging episode unique', {
+        types: ['episodic'],
+      });
+
+      const oppResult = opposite.find(r => r.content === 'angry debugging episode unique');
+      const noResult = noMood.find(r => r.content === 'angry debugging episode unique');
+      expect(oppResult).toBeDefined();
+      expect(noResult).toBeDefined();
+      expect(oppResult.score).toBeCloseTo(noResult.score, 1);
+    });
+
+    it('includes moodCongruence field when mood provided', async () => {
+      await encodeEpisode(db, embedding, {
+        content: 'mood field test episode',
+        source: 'direct-observation',
+        affect: { valence: 0.5, arousal: 0.5 },
+      });
+
+      const results = await recall(db, embedding, 'mood field test episode', {
+        types: ['episodic'],
+        confidenceConfig: { retrievalMood: { valence: 0.5, arousal: 0.5 }, affectWeight: 0.2 },
+      });
+      const match = results.find(r => r.content === 'mood field test episode');
+      expect(match).toBeDefined();
+      expect(match.moodCongruence).toBeDefined();
+      expect(match.moodCongruence).toBeCloseTo(1.0);
+    });
+
+    it('no moodCongruence field when no mood provided', async () => {
+      await encodeEpisode(db, embedding, {
+        content: 'no mood field test episode',
+        source: 'direct-observation',
+        affect: { valence: 0.5 },
+      });
+
+      const results = await recall(db, embedding, 'no mood field test episode', {
+        types: ['episodic'],
+      });
+      const match = results.find(r => r.content === 'no mood field test episode');
+      expect(match).toBeDefined();
+      expect(match.moodCongruence).toBeUndefined();
+    });
+  });
+
   describe('interference and salience modifiers in recall', () => {
     it('high interference_count reduces semantic recall confidence', async () => {
       const now = new Date().toISOString();

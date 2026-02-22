@@ -16,6 +16,7 @@ import { importMemories } from './import.js';
 import { suggestConsolidationParams as suggestParamsFn } from './adaptive.js';
 import { reembedAll } from './migrate.js';
 import { applyInterference } from './interference.js';
+import { detectResonance } from './affect.js';
 
 /**
  * @typedef {'direct-observation' | 'told-by-user' | 'tool-result' | 'inference' | 'model-generated'} SourceType
@@ -92,6 +93,7 @@ export class Audrey extends EventEmitter {
     decay = {},
     interference = {},
     context = {},
+    affect = {},
   } = {}) {
     super();
 
@@ -118,6 +120,7 @@ export class Audrey extends EventEmitter {
       sourceReliability: confidence.sourceReliability,
       interferenceWeight: interference.weight ?? 0.1,
       contextWeight: context.weight ?? 0.3,
+      affectWeight: affect.weight ?? 0.2,
     };
     this.consolidationConfig = {
       minEpisodes: consolidation.minEpisodes || 3,
@@ -133,6 +136,17 @@ export class Audrey extends EventEmitter {
     this.contextConfig = {
       enabled: context.enabled ?? true,
       weight: context.weight ?? 0.3,
+    };
+    this.affectConfig = {
+      enabled: affect.enabled ?? true,
+      weight: affect.weight ?? 0.2,
+      arousalWeight: affect.arousalWeight ?? 0.3,
+      resonance: {
+        enabled: affect.resonance?.enabled ?? true,
+        k: affect.resonance?.k ?? 5,
+        threshold: affect.resonance?.threshold ?? 0.5,
+        affectThreshold: affect.resonance?.affectThreshold ?? 0.6,
+      },
     };
   }
 
@@ -173,13 +187,23 @@ export class Audrey extends EventEmitter {
    */
   async encode(params) {
     await this._ensureMigrated();
-    const id = await encodeEpisode(this.db, this.embeddingProvider, params);
+    const encodeParams = { ...params, arousalWeight: this.affectConfig.arousalWeight };
+    const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams);
     this.emit('encode', { id, ...params });
     if (this.interferenceConfig.enabled) {
       applyInterference(this.db, this.embeddingProvider, id, params, this.interferenceConfig)
         .then(affected => {
           if (affected.length > 0) {
             this.emit('interference', { episodeId: id, affected });
+          }
+        })
+        .catch(err => this.emit('error', err));
+    }
+    if (this.affectConfig.enabled && this.affectConfig.resonance.enabled && params.affect?.valence !== undefined) {
+      detectResonance(this.db, this.embeddingProvider, id, params, this.affectConfig.resonance)
+        .then(echoes => {
+          if (echoes.length > 0) {
+            this.emit('resonance', { episodeId: id, affect: params.affect, echoes });
           }
         })
         .catch(err => this.emit('error', err));
@@ -235,10 +259,14 @@ export class Audrey extends EventEmitter {
   }
 
   _recallConfig(options) {
-    const base = options.confidenceConfig ?? this.confidenceConfig;
-    return this.contextConfig.enabled && options.context
-      ? { ...base, retrievalContext: options.context }
-      : base;
+    let config = options.confidenceConfig ?? this.confidenceConfig;
+    if (this.contextConfig.enabled && options.context) {
+      config = { ...config, retrievalContext: options.context };
+    }
+    if (this.affectConfig.enabled && options.mood) {
+      config = { ...config, retrievalMood: options.mood };
+    }
+    return config;
   }
 
   /**

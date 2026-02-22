@@ -12,6 +12,7 @@ const SCHEMA = `
     source_reliability REAL NOT NULL,
     salience REAL DEFAULT 0.5,
     context TEXT DEFAULT '{}',
+    affect TEXT DEFAULT '{}',
     tags TEXT,
     causal_trigger TEXT,
     causal_consequence TEXT,

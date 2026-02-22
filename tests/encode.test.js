@@ -163,4 +163,52 @@ describe('encodeEpisode', () => {
     const row = db.prepare('SELECT context FROM episodes WHERE id = ?').get(id);
     expect(JSON.parse(row.context)).toEqual({});
   });
+
+  it('stores affect as JSON', async () => {
+    const id = await encodeEpisode(db, embedding, {
+      content: 'affect storage test',
+      source: 'direct-observation',
+      affect: { valence: 0.7, arousal: 0.6, label: 'curiosity' },
+    });
+    const row = db.prepare('SELECT affect FROM episodes WHERE id = ?').get(id);
+    expect(JSON.parse(row.affect)).toEqual({ valence: 0.7, arousal: 0.6, label: 'curiosity' });
+  });
+
+  it('defaults affect to empty object', async () => {
+    const id = await encodeEpisode(db, embedding, {
+      content: 'no affect test',
+      source: 'direct-observation',
+    });
+    const row = db.prepare('SELECT affect FROM episodes WHERE id = ?').get(id);
+    expect(JSON.parse(row.affect)).toEqual({});
+  });
+
+  it('arousal boosts effective salience via inverted-U curve', async () => {
+    const idLow = await encodeEpisode(db, embedding, {
+      content: 'low arousal memory',
+      source: 'direct-observation',
+      salience: 0.5,
+      affect: { valence: 0.0, arousal: 0.1 },
+    });
+    const idOptimal = await encodeEpisode(db, embedding, {
+      content: 'optimal arousal memory',
+      source: 'direct-observation',
+      salience: 0.5,
+      affect: { valence: 0.0, arousal: 0.7 },
+    });
+    const low = db.prepare('SELECT salience FROM episodes WHERE id = ?').get(idLow);
+    const optimal = db.prepare('SELECT salience FROM episodes WHERE id = ?').get(idOptimal);
+    expect(optimal.salience).toBeGreaterThan(low.salience);
+    expect(optimal.salience).toBeGreaterThan(0.7);
+  });
+
+  it('no arousal boost without affect', async () => {
+    const id = await encodeEpisode(db, embedding, {
+      content: 'no affect salience test',
+      source: 'direct-observation',
+      salience: 0.5,
+    });
+    const row = db.prepare('SELECT salience FROM episodes WHERE id = ?').get(id);
+    expect(row.salience).toBe(0.5);
+  });
 });

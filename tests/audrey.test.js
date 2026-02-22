@@ -834,3 +834,153 @@ describe('interference on encode', () => {
     expect(brain.interferenceConfig.enabled).toBe(true);
   });
 });
+
+describe('v0.9.0 emotional memory', () => {
+  const AFF_DIR = './test-affect-audrey';
+  let brain;
+
+  beforeEach(() => {
+    if (existsSync(AFF_DIR)) rmSync(AFF_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: AFF_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain?.close();
+    if (existsSync(AFF_DIR)) rmSync(AFF_DIR, { recursive: true });
+  });
+
+  it('accepts affect config', () => {
+    const b = new Audrey({
+      dataDir: AFF_DIR + '-cfg',
+      affect: { enabled: true, weight: 0.4, arousalWeight: 0.5, resonance: { k: 3, affectThreshold: 0.7 } },
+    });
+    expect(b.affectConfig.weight).toBe(0.4);
+    expect(b.affectConfig.arousalWeight).toBe(0.5);
+    expect(b.affectConfig.resonance.k).toBe(3);
+    expect(b.affectConfig.resonance.affectThreshold).toBe(0.7);
+    b.close();
+    rmSync(AFF_DIR + '-cfg', { recursive: true, force: true });
+  });
+
+  it('affect is enabled by default', () => {
+    expect(brain.affectConfig.enabled).toBe(true);
+    expect(brain.affectConfig.weight).toBe(0.2);
+    expect(brain.affectConfig.arousalWeight).toBe(0.3);
+  });
+
+  it('passes affect through encode', async () => {
+    const id = await brain.encode({
+      content: 'affect encode integration test',
+      source: 'direct-observation',
+      affect: { valence: 0.7, arousal: 0.6, label: 'curiosity' },
+    });
+    const row = brain.db.prepare('SELECT affect FROM episodes WHERE id = ?').get(id);
+    expect(JSON.parse(row.affect)).toEqual({ valence: 0.7, arousal: 0.6, label: 'curiosity' });
+  });
+
+  it('mood boosts episodic recall score', async () => {
+    await brain.encode({
+      content: 'happy memory for mood test',
+      source: 'inference',
+      salience: 0.2,
+      affect: { valence: 0.8, arousal: 0.3 },
+    });
+
+    const withMood = await brain.recall('happy memory for mood test', {
+      types: ['episodic'],
+      mood: { valence: 0.8, arousal: 0.3 },
+    });
+    const withoutMood = await brain.recall('happy memory for mood test', {
+      types: ['episodic'],
+    });
+
+    const moodResult = withMood.find(r => r.content === 'happy memory for mood test');
+    const noMoodResult = withoutMood.find(r => r.content === 'happy memory for mood test');
+    expect(moodResult).toBeDefined();
+    expect(noMoodResult).toBeDefined();
+    expect(moodResult.score).toBeGreaterThan(noMoodResult.score);
+    expect(moodResult.moodCongruence).toBeCloseTo(1.0);
+  });
+
+  it('recallStream also supports mood', async () => {
+    await brain.encode({
+      content: 'stream mood test memory',
+      source: 'direct-observation',
+      affect: { valence: 0.6, arousal: 0.7 },
+    });
+
+    const results = [];
+    for await (const entry of brain.recallStream('stream mood test memory', {
+      types: ['episodic'],
+      mood: { valence: 0.6, arousal: 0.7 },
+    })) {
+      results.push(entry);
+    }
+    const match = results.find(r => r.content === 'stream mood test memory');
+    expect(match).toBeDefined();
+    expect(match.moodCongruence).toBeCloseTo(1.0);
+  });
+
+  it('emits resonance event for emotionally similar episodes', async () => {
+    const resonances = [];
+    brain.on('resonance', (data) => resonances.push(data));
+
+    await brain.encode({
+      content: 'first frustrating debugging session',
+      source: 'direct-observation',
+      affect: { valence: -0.4, arousal: 0.7, label: 'frustration' },
+    });
+
+    await brain.encode({
+      content: 'first frustrating debugging session',
+      source: 'direct-observation',
+      affect: { valence: -0.3, arousal: 0.6, label: 'frustration' },
+    });
+
+    await new Promise(r => setTimeout(r, 200));
+
+    expect(resonances.length).toBeGreaterThan(0);
+    expect(resonances[0].episodeId).toBeDefined();
+    expect(resonances[0].affect).toBeDefined();
+    expect(resonances[0].echoes.length).toBeGreaterThan(0);
+    expect(resonances[0].echoes[0].emotionalSimilarity).toBeGreaterThan(0.5);
+  });
+
+  it('respects affect.enabled = false', async () => {
+    const b = new Audrey({
+      dataDir: AFF_DIR + '-dis',
+      affect: { enabled: false },
+    });
+
+    await b.encode({
+      content: 'disabled affect test',
+      source: 'direct-observation',
+      affect: { valence: 0.5, arousal: 0.7 },
+    });
+
+    const results = await b.recall('disabled affect test', {
+      types: ['episodic'],
+      mood: { valence: 0.5, arousal: 0.7 },
+    });
+    const match = results.find(r => r.content === 'disabled affect test');
+    expect(match).toBeDefined();
+    expect(match.moodCongruence).toBeUndefined();
+
+    b.close();
+    rmSync(AFF_DIR + '-dis', { recursive: true, force: true });
+  });
+
+  it('arousal-salience coupling boosts encoding strength', async () => {
+    const id = await brain.encode({
+      content: 'high arousal memory for salience test',
+      source: 'direct-observation',
+      salience: 0.5,
+      affect: { valence: 0.3, arousal: 0.7 },
+    });
+    const row = brain.db.prepare('SELECT salience FROM episodes WHERE id = ?').get(id);
+    expect(row.salience).toBeGreaterThan(0.5);
+  });
+});

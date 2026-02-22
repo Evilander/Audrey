@@ -1,6 +1,7 @@
 import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier } from './confidence.js';
 import { interferenceModifier } from './interference.js';
 import { contextMatchRatio, contextModifier } from './context.js';
+import { moodCongruenceModifier, affectSimilarity } from './affect.js';
 import { daysBetween, safeJsonParse } from './utils.js';
 
 function computeEpisodicConfidence(ep, now, confidenceConfig = {}) {
@@ -65,7 +66,7 @@ function computeProceduralConfidence(proc, now, confidenceConfig = {}) {
   return Math.max(0, Math.min(1, confidence));
 }
 
-function buildEpisodicEntry(ep, confidence, score, includeProvenance, contextMatch) {
+function buildEpisodicEntry(ep, confidence, score, includeProvenance, contextMatch, moodCongruence) {
   const entry = {
     id: ep.id,
     content: ep.content,
@@ -77,6 +78,9 @@ function buildEpisodicEntry(ep, confidence, score, includeProvenance, contextMat
   };
   if (contextMatch !== undefined) {
     entry.contextMatch = contextMatch;
+  }
+  if (moodCongruence !== undefined) {
+    entry.moodCongruence = moodCongruence;
   }
   if (includeProvenance) {
     entry.provenance = {
@@ -174,9 +178,17 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
       confidence = Math.max(0, Math.min(1, confidence));
     }
 
+    let moodMatch;
+    if (confidenceConfig?.retrievalMood) {
+      const encodingAffect = safeJsonParse(row.affect, {});
+      moodMatch = affectSimilarity(encodingAffect, confidenceConfig.retrievalMood);
+      confidence *= moodCongruenceModifier(encodingAffect, confidenceConfig.retrievalMood, confidenceConfig.affectWeight);
+      confidence = Math.max(0, Math.min(1, confidence));
+    }
+
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
-    results.push(buildEpisodicEntry(row, confidence, score, includeProvenance, ctxMatch));
+    results.push(buildEpisodicEntry(row, confidence, score, includeProvenance, ctxMatch, moodMatch));
   }
   return results;
 }
