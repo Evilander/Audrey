@@ -1,5 +1,6 @@
 import { generateId } from './ulid.js';
 import { sourceReliability } from './confidence.js';
+import { arousalSalienceBoost } from './affect.js';
 
 /**
  * @param {import('better-sqlite3').Database} db
@@ -15,6 +16,8 @@ export async function encodeEpisode(db, embeddingProvider, {
   tags,
   supersedes,
   context = {},
+  affect = {},
+  arousalWeight = 0.3,
 }) {
   if (!content || typeof content !== 'string') throw new Error('content must be a non-empty string');
   if (salience < 0 || salience > 1) throw new Error('salience must be between 0 and 1');
@@ -26,16 +29,20 @@ export async function encodeEpisode(db, embeddingProvider, {
   const id = generateId();
   const now = new Date().toISOString();
 
+  const boost = arousalSalienceBoost(affect.arousal);
+  const effectiveSalience = Math.min(1.0, salience + (boost * arousalWeight));
+
   const insertAndLink = db.transaction(() => {
     db.prepare(`
       INSERT INTO episodes (
-        id, content, embedding, source, source_reliability, salience, context,
+        id, content, embedding, source, source_reliability, salience, context, affect,
         tags, causal_trigger, causal_consequence, created_at,
         embedding_model, embedding_version, supersedes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, content, embeddingBuffer, source, reliability, salience,
+      id, content, embeddingBuffer, source, reliability, effectiveSalience,
       JSON.stringify(context),
+      JSON.stringify(affect),
       tags ? JSON.stringify(tags) : null,
       causal?.trigger || null, causal?.consequence || null,
       now, embeddingProvider.modelName, embeddingProvider.modelVersion,

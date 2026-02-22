@@ -164,10 +164,15 @@ async function main() {
       tags: z.array(z.string()).optional().describe('Optional tags for categorization'),
       salience: z.number().min(0).max(1).optional().describe('Importance weight 0-1'),
       context: z.record(z.string()).optional().describe('Situational context as key-value pairs (e.g., {task: "debugging", domain: "payments"})'),
+      affect: z.object({
+        valence: z.number().min(-1).max(1).describe('Emotional valence: -1 (very negative) to 1 (very positive)'),
+        arousal: z.number().min(0).max(1).optional().describe('Emotional arousal: 0 (calm) to 1 (highly activated)'),
+        label: z.string().optional().describe('Human-readable emotion label (e.g., "curiosity", "frustration", "relief")'),
+      }).optional().describe('Emotional affect — how this memory feels'),
     },
-    async ({ content, source, tags, salience, context }) => {
+    async ({ content, source, tags, salience, context, affect }) => {
       try {
-        const id = await audrey.encode({ content, source, tags, salience, context });
+        const id = await audrey.encode({ content, source, tags, salience, context, affect });
         return toolResult({ id, content, source });
       } catch (err) {
         return toolError(err);
@@ -187,8 +192,12 @@ async function main() {
       after: z.string().optional().describe('Only return memories created after this ISO date'),
       before: z.string().optional().describe('Only return memories created before this ISO date'),
       context: z.record(z.string()).optional().describe('Retrieval context — memories encoded in matching context get boosted'),
+      mood: z.object({
+        valence: z.number().min(-1).max(1).describe('Current emotional valence: -1 (negative) to 1 (positive)'),
+        arousal: z.number().min(0).max(1).optional().describe('Current arousal: 0 (calm) to 1 (activated)'),
+      }).optional().describe('Current mood — boosts recall of memories encoded in similar emotional state'),
     },
-    async ({ query, limit, types, min_confidence, tags, sources, after, before, context }) => {
+    async ({ query, limit, types, min_confidence, tags, sources, after, before, context, mood }) => {
       try {
         const results = await audrey.recall(query, {
           limit: limit ?? 10,
@@ -199,6 +208,7 @@ async function main() {
           after,
           before,
           context,
+          mood,
         });
         return toolResult(results);
       } catch (err) {
