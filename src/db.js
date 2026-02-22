@@ -207,6 +207,42 @@ function migrateEmbeddingsToVec0(db) {
   });
 }
 
+function addColumnIfMissing(db, table, column, definition) {
+  const columns = db.pragma(`table_info(${table})`);
+  const exists = columns.some(col => col.name === column);
+  if (!exists) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+const SCHEMA_VERSION = 6;
+
+const MIGRATIONS = [
+  { version: 1, up(db) { addColumnIfMissing(db, 'episodes', 'context', "TEXT DEFAULT '{}'"); } },
+  { version: 2, up(db) { addColumnIfMissing(db, 'episodes', 'affect', "TEXT DEFAULT '{}'"); } },
+  { version: 3, up(db) { addColumnIfMissing(db, 'semantics', 'interference_count', 'INTEGER DEFAULT 0'); } },
+  { version: 4, up(db) { addColumnIfMissing(db, 'semantics', 'salience', 'REAL DEFAULT 0.5'); } },
+  { version: 5, up(db) { addColumnIfMissing(db, 'procedures', 'interference_count', 'INTEGER DEFAULT 0'); } },
+  { version: 6, up(db) { addColumnIfMissing(db, 'procedures', 'salience', 'REAL DEFAULT 0.5'); } },
+];
+
+function runMigrations(db) {
+  const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get();
+  const currentVersion = row ? Number(row.value) : 0;
+
+  if (currentVersion >= SCHEMA_VERSION) return;
+
+  const pending = MIGRATIONS.filter(m => m.version > currentVersion);
+  for (const migration of pending) {
+    migration.up(db);
+  }
+
+  db.prepare(
+    `INSERT INTO audrey_config (key, value) VALUES ('schema_version', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(String(SCHEMA_VERSION));
+}
+
 /**
  * @param {string} dataDir
  * @param {{ dimensions?: number }} [options]
@@ -223,6 +259,7 @@ export function createDatabase(dataDir, options = {}) {
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
   db.exec(SCHEMA);
+  runMigrations(db);
 
   if (dimensions != null) {
     if (!Number.isInteger(dimensions) || dimensions <= 0) {
