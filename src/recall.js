@@ -281,13 +281,11 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
     allResults.push(...semResults);
 
     if (semIds.length > 0) {
-      const updateStmt = db.prepare(
-        'UPDATE semantics SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id = ?'
-      );
       const nowISO = now.toISOString();
-      for (const id of semIds) {
-        updateStmt.run(nowISO, id);
-      }
+      const placeholders = semIds.map(() => '?').join(',');
+      db.prepare(
+        `UPDATE semantics SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
+      ).run(nowISO, ...semIds);
     }
   }
 
@@ -297,13 +295,11 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
     allResults.push(...procResults);
 
     if (procIds.length > 0) {
-      const updateStmt = db.prepare(
-        'UPDATE procedures SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id = ?'
-      );
       const nowISO = now.toISOString();
-      for (const id of procIds) {
-        updateStmt.run(nowISO, id);
-      }
+      const placeholders = procIds.map(() => '?').join(',');
+      db.prepare(
+        `UPDATE procedures SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
+      ).run(nowISO, ...procIds);
     }
   }
 
