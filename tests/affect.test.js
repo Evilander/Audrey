@@ -186,7 +186,7 @@ describe('detectResonance', () => {
     expect(resonances[0].priorEpisodeId).toBeDefined();
     expect(resonances[0].priorContent).toBe('debugging a frustrating auth bug');
     expect(resonances[0].semanticSimilarity).toBeGreaterThan(0.5);
-    expect(resonances[0].timeDelta).toBeGreaterThanOrEqual(0);
+    expect(resonances[0].timeDeltaDays).toBeGreaterThanOrEqual(0);
   });
 
   it('does not resonate with emotionally dissimilar episodes', async () => {

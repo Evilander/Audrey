@@ -55,7 +55,7 @@ export async function detectResonance(db, embeddingProvider, episodeId, { conten
       priorAffect,
       semanticSimilarity: match.similarity,
       emotionalSimilarity,
-      timeDelta: Date.now() - new Date(match.created_at).getTime(),
+      timeDeltaDays: Math.floor((Date.now() - new Date(match.created_at).getTime()) / 86400000),
       priorCreatedAt: match.created_at,
     });
   }

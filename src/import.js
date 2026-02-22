@@ -5,9 +5,9 @@ export async function importMemories(db, embeddingProvider, snapshot) {
   }
 
   const insertEpisode = db.prepare(`
-    INSERT INTO episodes (id, content, source, source_reliability, salience, tags,
+    INSERT INTO episodes (id, content, source, source_reliability, salience, context, affect, tags,
       causal_trigger, causal_consequence, created_at, supersedes, superseded_by, consolidated)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertVecEpisode = db.prepare(
@@ -17,8 +17,9 @@ export async function importMemories(db, embeddingProvider, snapshot) {
   const insertSemantic = db.prepare(`
     INSERT INTO semantics (id, content, state, conditions, evidence_episode_ids,
       evidence_count, supporting_count, contradicting_count, source_type_diversity,
-      consolidation_checkpoint, created_at, last_reinforced_at, retrieval_count, challenge_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      consolidation_checkpoint, created_at, last_reinforced_at, retrieval_count, challenge_count,
+      interference_count, salience)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertVecSemantic = db.prepare(
@@ -27,8 +28,9 @@ export async function importMemories(db, embeddingProvider, snapshot) {
 
   const insertProcedure = db.prepare(`
     INSERT INTO procedures (id, content, state, trigger_conditions, evidence_episode_ids,
-      success_count, failure_count, created_at, last_reinforced_at, retrieval_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      success_count, failure_count, created_at, last_reinforced_at, retrieval_count,
+      interference_count, salience)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertVecProcedure = db.prepare(
@@ -53,9 +55,11 @@ export async function importMemories(db, embeddingProvider, snapshot) {
 
   for (const ep of snapshot.episodes) {
     const tags = ep.tags ? JSON.stringify(ep.tags) : null;
+    const context = ep.context ? JSON.stringify(ep.context) : '{}';
+    const affect = ep.affect ? JSON.stringify(ep.affect) : '{}';
     insertEpisode.run(
       ep.id, ep.content, ep.source, ep.source_reliability, ep.salience ?? 0.5,
-      tags, ep.causal_trigger ?? null, ep.causal_consequence ?? null,
+      context, affect, tags, ep.causal_trigger ?? null, ep.causal_consequence ?? null,
       ep.created_at, ep.supersedes ?? null, ep.superseded_by ?? null, ep.consolidated ?? 0,
     );
 
@@ -71,6 +75,7 @@ export async function importMemories(db, embeddingProvider, snapshot) {
       sem.evidence_count ?? 0, sem.supporting_count ?? 0, sem.contradicting_count ?? 0,
       sem.source_type_diversity ?? 0, sem.consolidation_checkpoint ?? null,
       sem.created_at, sem.last_reinforced_at ?? null, sem.retrieval_count ?? 0, sem.challenge_count ?? 0,
+      sem.interference_count ?? 0, sem.salience ?? 0.5,
     );
 
     const vector = await embeddingProvider.embed(sem.content);
@@ -84,6 +89,7 @@ export async function importMemories(db, embeddingProvider, snapshot) {
       JSON.stringify(proc.evidence_episode_ids || []),
       proc.success_count ?? 0, proc.failure_count ?? 0,
       proc.created_at, proc.last_reinforced_at ?? null, proc.retrieval_count ?? 0,
+      proc.interference_count ?? 0, proc.salience ?? 0.5,
     );
 
     const vector = await embeddingProvider.embed(proc.content);

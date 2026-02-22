@@ -29,6 +29,8 @@ import { detectResonance } from './affect.js';
  * @property {{ trigger?: string, consequence?: string }} [causal]
  * @property {string[]} [tags]
  * @property {string} [supersedes]
+ * @property {Record<string, string>} [context]
+ * @property {{ valence?: number, arousal?: number, label?: string }} [affect]
  *
  * @typedef {Object} RecallOptions
  * @property {number} [minConfidence]
@@ -40,6 +42,8 @@ import { detectResonance } from './affect.js';
  * @property {string[]} [sources]
  * @property {string} [after]
  * @property {string} [before]
+ * @property {Record<string, string>} [context]
+ * @property {{ valence?: number, arousal?: number }} [mood]
  *
  * @typedef {Object} RecallResult
  * @property {string} id
