@@ -62,4 +62,23 @@ describe('export', () => {
     const parsed = JSON.parse(json);
     expect(parsed.episodes.length).toBe(2);
   });
+
+  it('exports context and affect columns', async () => {
+    const audrey2 = new Audrey({
+      dataDir: './test-export-ctx',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await audrey2.encode({
+      content: 'Context and affect test',
+      source: 'direct-observation',
+      context: { task: 'debugging', domain: 'auth' },
+      affect: { valence: -0.5, arousal: 0.8, label: 'frustration' },
+    });
+    const snapshot = audrey2.export();
+    const ep = snapshot.episodes[0];
+    expect(ep.context).toEqual({ task: 'debugging', domain: 'auth' });
+    expect(ep.affect).toEqual({ valence: -0.5, arousal: 0.8, label: 'frustration' });
+    audrey2.close();
+    rmSync('./test-export-ctx', { recursive: true });
+  });
 });

@@ -8,21 +8,23 @@ const pkg = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8')
 
 export function exportMemories(db) {
   const episodes = db.prepare(
-    'SELECT id, content, source, source_reliability, salience, tags, causal_trigger, causal_consequence, created_at, supersedes, superseded_by, consolidated FROM episodes'
+    'SELECT id, content, source, source_reliability, salience, context, affect, tags, causal_trigger, causal_consequence, created_at, supersedes, superseded_by, consolidated FROM episodes'
   ).all().map(ep => ({
     ...ep,
     tags: safeJsonParse(ep.tags, null),
+    context: safeJsonParse(ep.context, null),
+    affect: safeJsonParse(ep.affect, null),
   }));
 
   const semantics = db.prepare(
-    'SELECT id, content, state, conditions, evidence_episode_ids, evidence_count, supporting_count, contradicting_count, source_type_diversity, consolidation_checkpoint, created_at, last_reinforced_at, retrieval_count, challenge_count FROM semantics'
+    'SELECT id, content, state, conditions, evidence_episode_ids, evidence_count, supporting_count, contradicting_count, source_type_diversity, consolidation_checkpoint, created_at, last_reinforced_at, retrieval_count, challenge_count, interference_count, salience FROM semantics'
   ).all().map(sem => ({
     ...sem,
     evidence_episode_ids: safeJsonParse(sem.evidence_episode_ids, []),
   }));
 
   const procedures = db.prepare(
-    'SELECT id, content, state, trigger_conditions, evidence_episode_ids, success_count, failure_count, created_at, last_reinforced_at, retrieval_count FROM procedures'
+    'SELECT id, content, state, trigger_conditions, evidence_episode_ids, success_count, failure_count, created_at, last_reinforced_at, retrieval_count, interference_count, salience FROM procedures'
   ).all().map(proc => ({
     ...proc,
     evidence_episode_ids: safeJsonParse(proc.evidence_episode_ids, []),
