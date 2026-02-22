@@ -134,6 +134,12 @@ function buildProceduralEntry(proc, confidence, score, includeProvenance) {
   return entry;
 }
 
+function stateClause(includeDormant) {
+  return includeDormant
+    ? "AND (v.state = 'active' OR v.state = 'context_dependent' OR v.state = 'dormant')"
+    : "AND (v.state = 'active' OR v.state = 'context_dependent')";
+}
+
 function matchesDateFilters(createdAt, filters) {
   if (filters.after && createdAt <= filters.after) return false;
   if (filters.before && createdAt >= filters.before) return false;
@@ -176,20 +182,13 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
 }
 
 function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}) {
-  let stateFilter;
-  if (includeDormant) {
-    stateFilter = "AND (v.state = 'active' OR v.state = 'context_dependent' OR v.state = 'dormant')";
-  } else {
-    stateFilter = "AND (v.state = 'active' OR v.state = 'context_dependent')";
-  }
-
   const rows = db.prepare(`
     SELECT s.*, (1.0 - v.distance) AS similarity
     FROM vec_semantics v
     JOIN semantics s ON s.id = v.id
     WHERE v.embedding MATCH ?
       AND k = ?
-      ${stateFilter}
+      ${stateClause(includeDormant)}
   `).all(queryBuffer, candidateK);
 
   const results = [];
@@ -206,20 +205,13 @@ function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includePro
 }
 
 function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}) {
-  let stateFilter;
-  if (includeDormant) {
-    stateFilter = "AND (v.state = 'active' OR v.state = 'context_dependent' OR v.state = 'dormant')";
-  } else {
-    stateFilter = "AND (v.state = 'active' OR v.state = 'context_dependent')";
-  }
-
   const rows = db.prepare(`
     SELECT p.*, (1.0 - v.distance) AS similarity
     FROM vec_procedures v
     JOIN procedures p ON p.id = v.id
     WHERE v.embedding MATCH ?
       AND k = ?
-      ${stateFilter}
+      ${stateClause(includeDormant)}
   `).all(queryBuffer, candidateK);
 
   const results = [];
