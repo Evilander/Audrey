@@ -5,7 +5,7 @@ import { arousalSalienceBoost } from './affect.js';
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
- * @param {{ content: string, source: string, salience?: number, causal?: { trigger?: string, consequence?: string }, tags?: string[], supersedes?: string }} params
+ * @param {{ content: string, source: string, salience?: number, causal?: { trigger?: string, consequence?: string }, tags?: string[], supersedes?: string, context?: object, affect?: object, arousalWeight?: number, private?: boolean }} params
  * @returns {Promise<string>}
  */
 export async function encodeEpisode(db, embeddingProvider, {
@@ -18,6 +18,7 @@ export async function encodeEpisode(db, embeddingProvider, {
   context = {},
   affect = {},
   arousalWeight = 0.3,
+  private: isPrivate = false,
 }) {
   if (!content || typeof content !== 'string') throw new Error('content must be a non-empty string');
   if (salience < 0 || salience > 1) throw new Error('salience must be between 0 and 1');
@@ -37,8 +38,8 @@ export async function encodeEpisode(db, embeddingProvider, {
       INSERT INTO episodes (
         id, content, embedding, source, source_reliability, salience, context, affect,
         tags, causal_trigger, causal_consequence, created_at,
-        embedding_model, embedding_version, supersedes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        embedding_model, embedding_version, supersedes, "private"
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, content, embeddingBuffer, source, reliability, effectiveSalience,
       JSON.stringify(context),
@@ -47,6 +48,7 @@ export async function encodeEpisode(db, embeddingProvider, {
       causal?.trigger || null, causal?.consequence || null,
       now, embeddingProvider.modelName, embeddingProvider.modelVersion,
       supersedes || null,
+      isPrivate ? 1 : 0,
     );
     db.prepare(
       'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
