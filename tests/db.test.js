@@ -166,6 +166,29 @@ describe('dimension migration', () => {
     closeDatabase(db2);
   });
 
+  it('skips legacy BLOBs with mismatched dimensions during migration', () => {
+    const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 8 });
+    const bigEmbedding = Buffer.from(new Float32Array(16).fill(0.5).buffer);
+    db1.prepare(
+      `INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('ep-big', 'big embedding', bigEmbedding, 'direct-observation', 0.9, new Date().toISOString());
+    const goodEmbedding = Buffer.from(new Float32Array(8).fill(0.1).buffer);
+    db1.prepare(
+      `INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run('ep-good', 'good embedding', goodEmbedding, 'direct-observation', 0.9, new Date().toISOString());
+    db1.exec('DELETE FROM vec_episodes');
+    closeDatabase(db1);
+
+    const { db: db2 } = createDatabase(TEST_DIR, { dimensions: 8 });
+    const vecCount = db2.prepare('SELECT COUNT(*) as c FROM vec_episodes').get().c;
+    expect(vecCount).toBe(1);
+    const vecRow = db2.prepare('SELECT id FROM vec_episodes').get();
+    expect(vecRow.id).toBe('ep-good');
+    closeDatabase(db2);
+  });
+
   it('clears vec tables after migration', () => {
     const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 8 });
     const embedding = new Float32Array(8).fill(0.1);
