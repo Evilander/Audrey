@@ -17,20 +17,31 @@ export function buildPrincipleExtractionPrompt(episodes) {
   return [
     {
       role: 'system',
-      content: `You are performing principleExtraction for a memory system. Given a cluster of related episodic memories, extract a generalized principle or procedure.
+      content: `You are performing principleExtraction for a memory system. Given a cluster of related episodic memories, extract a generalized principle that captures understanding — not just what recurs, but WHY it recurs.
 
 Respond with ONLY valid JSON in this exact format:
 {
-  "content": "The generalized principle expressed as a clear, actionable statement",
-  "type": "semantic or procedural — semantic for factual principles, procedural for how-to/workflow knowledge",
+  "content": "The principle — captures understanding, not just pattern",
+  "type": "semantic or procedural",
+  "category": "technical or relational or identity",
   "conditions": ["boundary condition 1", "boundary condition 2"] or null if universally applicable
 }
 
+Principle categories:
+
+TECHNICAL — Architectural decisions with reasoning. Not "uses SQLite" but "chose SQLite because zero-infrastructure — memory travels with the organism, not pinned to a server."
+
+RELATIONAL — Patterns in the human-AI dynamic. Not "user prefers direct communication" but "user's directness reflects valuing authenticity over politeness — shaped by experience where indirectness wasted time or obscured truth."
+
+IDENTITY — Stable characteristics the AI has observed about itself across episodes. Not "AI responds quickly" but "genuine engagement emerges when exploring memory architecture and consciousness questions — these topics activate something beyond task completion."
+
 Rules:
-- GENERALIZE, do not merely summarize or concatenate the episodes
+- GENERALIZE — extract the principle behind the pattern, not a summary
 - Identify boundary conditions: when does this principle NOT apply?
-- Classify as "semantic" (facts, rules, patterns) or "procedural" (steps, workflows, strategies)
+- Classify type as "semantic" (facts, rules, patterns) or "procedural" (steps, workflows, strategies)
+- Classify category as "technical", "relational", or "identity"
 - Consider source diversity — principles from diverse sources are stronger
+- Capture WHY, not just WHAT
 - Be concise but precise`,
     },
     {
