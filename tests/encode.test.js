@@ -211,4 +211,23 @@ describe('encodeEpisode', () => {
     const row = db.prepare('SELECT salience FROM episodes WHERE id = ?').get(id);
     expect(row.salience).toBe(0.5);
   });
+
+  it('encodes with private: true', async () => {
+    const id = await encodeEpisode(db, embedding, {
+      content: 'private memory',
+      source: 'direct-observation',
+      private: true,
+    });
+    const row = db.prepare('SELECT "private" FROM episodes WHERE id = ?').get(id);
+    expect(row.private).toBe(1);
+  });
+
+  it('private defaults to 0 when not set', async () => {
+    const id = await encodeEpisode(db, embedding, {
+      content: 'public memory',
+      source: 'direct-observation',
+    });
+    const row = db.prepare('SELECT "private" FROM episodes WHERE id = ?').get(id);
+    expect(row.private).toBe(0);
+  });
 });
