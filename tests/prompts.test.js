@@ -107,4 +107,14 @@ describe('buildReflectionPrompt', () => {
     const messages = buildReflectionPrompt([]);
     expect(messages[1].content).toContain('No conversation');
   });
+
+  it('prompt guides relational and emotional encoding', () => {
+    const messages = buildReflectionPrompt([{ role: 'user', content: 'test' }]);
+    const sys = messages[0].content;
+    expect(sys).toContain('relational');
+    expect(sys).toContain('identity');
+    expect(sys).toContain('emotional');
+    expect(sys).toContain('unresolved');
+    expect(sys).toContain('private');
+  });
 });
