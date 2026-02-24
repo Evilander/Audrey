@@ -12,7 +12,7 @@ describe("resolveEmbeddingProvider", () => {
     const result = resolveEmbeddingProvider({ GOOGLE_API_KEY: "test-key" });
     expect(result.provider).toBe("gemini");
     expect(result.apiKey).toBe("test-key");
-    expect(result.dimensions).toBe(768);
+    expect(result.dimensions).toBe(3072);
   });
 
   it("never auto-selects openai even if OPENAI_API_KEY present", () => {

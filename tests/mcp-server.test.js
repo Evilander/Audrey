@@ -11,7 +11,8 @@ describe('MCP CLI: buildAudreyConfig', () => {
   const envKeys = [
     'AUDREY_DATA_DIR', 'AUDREY_AGENT', 'AUDREY_EMBEDDING_PROVIDER',
     'AUDREY_EMBEDDING_DIMENSIONS', 'AUDREY_LLM_PROVIDER',
-    'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
+    'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'AUDREY_DEVICE',
+    'GOOGLE_API_KEY', 'GEMINI_API_KEY',
   ];
 
   beforeEach(() => {
@@ -72,6 +73,24 @@ describe('MCP CLI: buildAudreyConfig', () => {
   it('does not set LLM when provider is not specified', () => {
     const config = buildAudreyConfig();
     expect(config.llm).toBeUndefined();
+  });
+
+  it('reads AUDREY_DEVICE env var', () => {
+    process.env.AUDREY_DEVICE = 'cpu';
+    const config = buildAudreyConfig();
+    expect(config.embedding.device).toBe('cpu');
+  });
+
+  it('defaults device to gpu when not set', () => {
+    const config = buildAudreyConfig();
+    expect(config.embedding.device).toBe('gpu');
+  });
+
+  it('passes device only for local provider', () => {
+    process.env.AUDREY_EMBEDDING_PROVIDER = 'openai';
+    process.env.OPENAI_API_KEY = 'test-key';
+    const config = buildAudreyConfig();
+    expect(config.embedding.device).toBeUndefined();
   });
 });
 
