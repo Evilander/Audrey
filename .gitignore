@@ -5,5 +5,4 @@ audrey-data/
 *.db-shm
 .env
 CLAUDE.md
-docs/plans/
 .worktrees/
