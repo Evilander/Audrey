@@ -32,8 +32,8 @@ describe('MCP CLI: buildAudreyConfig', () => {
     const config = buildAudreyConfig();
     expect(config.dataDir).toBe(DEFAULT_DATA_DIR);
     expect(config.agent).toBe('claude-code');
-    expect(config.embedding.provider).toBe('mock');
-    expect(config.embedding.dimensions).toBe(8);
+    expect(config.embedding.provider).toBe('local');
+    expect(config.embedding.dimensions).toBe(384);
     expect(config.llm).toBeUndefined();
   });
 
@@ -82,17 +82,16 @@ describe('MCP CLI: buildInstallArgs', () => {
     expect(args).toContain('npx');
     expect(args).toContain('audrey');
     const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
-    expect(envPairsStr).toContain('AUDREY_EMBEDDING_PROVIDER=mock');
-    expect(envPairsStr).toContain('AUDREY_EMBEDDING_DIMENSIONS=8');
+    // local is the default — no provider env var emitted, no API keys
+    expect(envPairsStr).not.toContain('AUDREY_EMBEDDING_PROVIDER=mock');
     expect(envPairsStr).not.toContain('OPENAI_API_KEY');
   });
 
-  it('detects OPENAI_API_KEY and configures openai embeddings', () => {
+  it('does not auto-select openai even when OPENAI_API_KEY is present', () => {
+    // OpenAI must be explicitly configured via AUDREY_EMBEDDING_PROVIDER=openai
     const args = buildInstallArgs({ OPENAI_API_KEY: 'sk-test' });
     const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
-    expect(envPairsStr).toContain('AUDREY_EMBEDDING_PROVIDER=openai');
-    expect(envPairsStr).toContain('AUDREY_EMBEDDING_DIMENSIONS=1536');
-    expect(envPairsStr).toContain('OPENAI_API_KEY=sk-test');
+    expect(envPairsStr).not.toContain('AUDREY_EMBEDDING_PROVIDER=openai');
   });
 
   it('detects ANTHROPIC_API_KEY and enables LLM provider', () => {
