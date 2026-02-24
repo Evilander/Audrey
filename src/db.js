@@ -132,7 +132,7 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_consolidation_status ON consolidation_runs(status);
 `;
 
-function createVec0Tables(db, dimensions) {
+export function createVec0Tables(db, dimensions) {
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(
       id text primary key,
@@ -157,7 +157,7 @@ function createVec0Tables(db, dimensions) {
   `);
 }
 
-function dropVec0Tables(db) {
+export function dropVec0Tables(db) {
   db.exec('DROP TABLE IF EXISTS vec_episodes');
   db.exec('DROP TABLE IF EXISTS vec_semantics');
   db.exec('DROP TABLE IF EXISTS vec_procedures');
