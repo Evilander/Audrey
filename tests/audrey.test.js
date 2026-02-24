@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Audrey } from '../src/audrey.js';
 import { MockLLMProvider } from '../src/llm.js';
 import { existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const TEST_DIR = './test-audrey-main';
 
@@ -982,5 +984,50 @@ describe('v0.9.0 emotional memory', () => {
     });
     const row = brain.db.prepare('SELECT salience FROM episodes WHERE id = ?').get(id);
     expect(row.salience).toBeGreaterThan(0.5);
+  });
+});
+
+describe('reflect()', () => {
+  it('encodes memories returned by LLM, respecting private flag', async () => {
+    const tmpDir = join(tmpdir(), `audrey-reflect-test-${Date.now()}`);
+    const audrey = new Audrey({
+      dataDir: tmpDir,
+      agent: 'test',
+      embedding: { provider: 'mock', dimensions: 8 },
+      llm: { provider: 'mock' },
+    });
+    audrey.llmProvider = {
+      chat: async () => JSON.stringify({
+        memories: [
+          { content: 'user likes TypeScript', source: 'told-by-user', salience: 0.7, tags: ['prefs'], private: false, affect: null },
+          { content: 'I felt energized', source: 'direct-observation', salience: 0.6, tags: ['self'], private: true, affect: { valence: 0.7, arousal: 0.5, label: 'energy' } },
+        ]
+      })
+    };
+
+    const result = await audrey.reflect([{ role: 'user', content: 'I prefer TypeScript' }]);
+    expect(result.encoded).toBe(2);
+    expect(result.memories).toHaveLength(2);
+
+    const publicResults = await audrey.recall('TypeScript preferences', { limit: 10 });
+    expect(publicResults.some(r => r.content.includes('TypeScript'))).toBe(true);
+
+    const defaultResults = await audrey.recall('energized', { limit: 10 });
+    expect(defaultResults.some(r => r.content.includes('energized'))).toBe(false);
+
+    audrey.close();
+  });
+
+  it('returns skipped when no llmProvider configured', async () => {
+    const tmpDir = join(tmpdir(), `audrey-reflect-nollm-${Date.now()}`);
+    const audrey = new Audrey({
+      dataDir: tmpDir,
+      agent: 'test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    const result = await audrey.reflect([{ role: 'user', content: 'hi' }]);
+    expect(result.encoded).toBe(0);
+    expect(result.skipped).toBe('no llm provider');
+    audrey.close();
   });
 });
