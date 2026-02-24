@@ -32,6 +32,17 @@ describe('buildPrincipleExtractionPrompt', () => {
     expect(messages[1].content).toContain('Episode A');
     expect(messages[1].content).toContain('Episode B');
   });
+
+  it('prompt guides three principle types: technical, relational, identity', () => {
+    const episodes = [
+      { content: 'test', source: 'direct-observation', created_at: '2026-01-01T00:00:00Z', tags: null },
+    ];
+    const messages = buildPrincipleExtractionPrompt(episodes);
+    const sys = messages[0].content;
+    expect(sys).toContain('technical');
+    expect(sys).toContain('relational');
+    expect(sys).toContain('identity');
+  });
 });
 
 describe('buildContradictionDetectionPrompt', () => {
