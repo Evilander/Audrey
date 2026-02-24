@@ -10,7 +10,7 @@ import { applyDecay } from './decay.js';
 import { rollbackConsolidation, getConsolidationHistory } from './rollback.js';
 import { forgetMemory, forgetByQuery as forgetByQueryFn, purgeMemories } from './forget.js';
 import { introspect as introspectFn } from './introspect.js';
-import { buildContextResolutionPrompt } from './prompts.js';
+import { buildContextResolutionPrompt, buildReflectionPrompt } from './prompts.js';
 import { exportMemories } from './export.js';
 import { importMemories } from './import.js';
 import { suggestConsolidationParams as suggestParamsFn } from './adaptive.js';
@@ -98,6 +98,7 @@ export class Audrey extends EventEmitter {
     interference = {},
     context = {},
     affect = {},
+    autoReflect = false,
   } = {}) {
     super();
 
@@ -152,6 +153,7 @@ export class Audrey extends EventEmitter {
         affectThreshold: affect.resonance?.affectThreshold ?? 0.6,
       },
     };
+    this.autoReflect = autoReflect;
   }
 
   async _ensureMigrated() {
@@ -214,6 +216,48 @@ export class Audrey extends EventEmitter {
     }
     this._emitValidation(id, params);
     return id;
+  }
+
+
+  async reflect(turns) {
+    if (!this.llmProvider) return { encoded: 0, memories: [], skipped: 'no llm provider' };
+
+    const prompt = buildReflectionPrompt(turns);
+    let raw;
+    try {
+      raw = await this.llmProvider.chat(prompt);
+    } catch (err) {
+      this.emit('error', err);
+      return { encoded: 0, memories: [], skipped: 'llm error' };
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { encoded: 0, memories: [], skipped: 'invalid llm response' };
+    }
+
+    const memories = parsed.memories ?? [];
+    let encoded = 0;
+    for (const mem of memories) {
+      if (!mem.content || !mem.source) continue;
+      try {
+        await this.encode({
+          content: mem.content,
+          source: mem.source,
+          salience: mem.salience,
+          tags: mem.tags,
+          private: mem.private ?? false,
+          affect: mem.affect ?? undefined,
+        });
+        encoded++;
+      } catch (err) {
+        this.emit('error', err);
+      }
+    }
+
+    return { encoded, memories };
   }
 
   /**
