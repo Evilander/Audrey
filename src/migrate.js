@@ -10,23 +10,15 @@ export async function reembedAll(db, embeddingProvider, { dropAndRecreate = fals
   const semantics = db.prepare('SELECT id, content, state FROM semantics').all();
   const procedures = db.prepare('SELECT id, content, state FROM procedures').all();
 
-  const episodeEmbeddings = [];
-  for (const ep of episodes) {
-    const vector = await embeddingProvider.embed(ep.content);
-    episodeEmbeddings.push({ id: ep.id, source: ep.source, buffer: embeddingProvider.vectorToBuffer(vector) });
-  }
-
-  const semanticEmbeddings = [];
-  for (const sem of semantics) {
-    const vector = await embeddingProvider.embed(sem.content);
-    semanticEmbeddings.push({ id: sem.id, state: sem.state, buffer: embeddingProvider.vectorToBuffer(vector) });
-  }
-
-  const procedureEmbeddings = [];
-  for (const proc of procedures) {
-    const vector = await embeddingProvider.embed(proc.content);
-    procedureEmbeddings.push({ id: proc.id, state: proc.state, buffer: embeddingProvider.vectorToBuffer(vector) });
-  }
+  const episodeVectors = episodes.length > 0
+    ? await embeddingProvider.embedBatch(episodes.map(ep => ep.content))
+    : [];
+  const semanticVectors = semantics.length > 0
+    ? await embeddingProvider.embedBatch(semantics.map(s => s.content))
+    : [];
+  const procedureVectors = procedures.length > 0
+    ? await embeddingProvider.embedBatch(procedures.map(p => p.content))
+    : [];
 
   const updateEpLegacy = db.prepare('UPDATE episodes SET embedding = ? WHERE id = ?');
   const deleteVecEp = db.prepare('DELETE FROM vec_episodes WHERE id = ?');
@@ -41,20 +33,23 @@ export async function reembedAll(db, embeddingProvider, { dropAndRecreate = fals
   const insertVecProc = db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)');
 
   const writeTx = db.transaction(() => {
-    for (const ep of episodeEmbeddings) {
-      updateEpLegacy.run(ep.buffer, ep.id);
-      deleteVecEp.run(ep.id);
-      insertVecEp.run(ep.id, ep.buffer, ep.source, BigInt(0));
+    for (let i = 0; i < episodes.length; i++) {
+      const buf = embeddingProvider.vectorToBuffer(episodeVectors[i]);
+      updateEpLegacy.run(buf, episodes[i].id);
+      deleteVecEp.run(episodes[i].id);
+      insertVecEp.run(episodes[i].id, buf, episodes[i].source, BigInt(0));
     }
-    for (const sem of semanticEmbeddings) {
-      updateSemLegacy.run(sem.buffer, sem.id);
-      deleteVecSem.run(sem.id);
-      insertVecSem.run(sem.id, sem.buffer, sem.state);
+    for (let i = 0; i < semantics.length; i++) {
+      const buf = embeddingProvider.vectorToBuffer(semanticVectors[i]);
+      updateSemLegacy.run(buf, semantics[i].id);
+      deleteVecSem.run(semantics[i].id);
+      insertVecSem.run(semantics[i].id, buf, semantics[i].state);
     }
-    for (const proc of procedureEmbeddings) {
-      updateProcLegacy.run(proc.buffer, proc.id);
-      deleteVecProc.run(proc.id);
-      insertVecProc.run(proc.id, proc.buffer, proc.state);
+    for (let i = 0; i < procedures.length; i++) {
+      const buf = embeddingProvider.vectorToBuffer(procedureVectors[i]);
+      updateProcLegacy.run(buf, procedures[i].id);
+      deleteVecProc.run(procedures[i].id);
+      insertVecProc.run(procedures[i].id, buf, procedures[i].state);
     }
   });
   writeTx();
