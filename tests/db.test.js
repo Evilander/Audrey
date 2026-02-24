@@ -235,3 +235,44 @@ describe('schema migrations', () => {
     closeDatabase(db);
   });
 });
+
+describe('null-dimension guard', () => {
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('skips vec0 setup when no dimensions provided and no stored config', () => {
+    const { db } = createDatabase(TEST_DIR);
+    const tables = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'vec_%'"
+    ).all().map(t => t.name);
+    expect(tables).toEqual([]);
+    closeDatabase(db);
+  });
+
+  it('uses stored dimensions when no dimensions provided but config exists', () => {
+    const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 8 });
+    closeDatabase(db1);
+
+    const { db: db2 } = createDatabase(TEST_DIR);
+    const tables = db2.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'vec_%'"
+    ).all().map(t => t.name);
+    expect(tables).toContain('vec_episodes');
+
+    // vec0 queries must actually work (sqlite-vec must be loaded)
+    const embedding = new Float32Array(8).fill(0.1);
+    expect(() => {
+      db2.prepare(
+        'INSERT INTO vec_episodes (id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+      ).run('test-vec', Buffer.from(embedding.buffer), 'direct-observation', BigInt(0));
+    }).not.toThrow();
+
+    closeDatabase(db2);
+  });
+});

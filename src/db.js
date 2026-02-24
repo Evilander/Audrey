@@ -256,7 +256,7 @@ function runMigrations(db) {
  * @returns {{ db: import('better-sqlite3').Database, migrated: boolean }}
  */
 export function createDatabase(dataDir, options = {}) {
-  const { dimensions } = options;
+  let { dimensions } = options;
   let migrated = false;
 
   mkdirSync(dataDir, { recursive: true });
@@ -267,6 +267,13 @@ export function createDatabase(dataDir, options = {}) {
   db.pragma('busy_timeout = 5000');
   db.exec(SCHEMA);
   runMigrations(db);
+
+  if (dimensions == null) {
+    const stored = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get();
+    if (stored) {
+      dimensions = parseInt(stored.value, 10);
+    }
+  }
 
   if (dimensions != null) {
     if (!Number.isInteger(dimensions) || dimensions <= 0) {
