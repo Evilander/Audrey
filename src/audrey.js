@@ -443,6 +443,10 @@ export class Audrey extends EventEmitter {
     const versionRow = this.db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get();
     const schemaVersion = versionRow ? parseInt(versionRow.value, 10) : 0;
 
+    const device = this.embeddingProvider._actualDevice
+      ?? this.embeddingProvider.device
+      ?? null;
+
     const healthy = episodes === vecEpisodes
       && semantics === vecSemantics
       && procedures === vecProcedures;
@@ -456,6 +460,7 @@ export class Audrey extends EventEmitter {
       vec_procedures: vecProcedures,
       dimensions,
       schema_version: schemaVersion,
+      device,
       healthy,
     };
   }

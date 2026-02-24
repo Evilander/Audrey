@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const VERSION = '0.12.0';
+export const VERSION = '0.13.0';
 export const SERVER_NAME = 'audrey-memory';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
 
@@ -12,18 +12,20 @@ export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
  */
 export function resolveEmbeddingProvider(env, explicit) {
   if (explicit && explicit !== 'auto') {
-    const dims = explicit === 'openai' ? 1536 : explicit === 'gemini' ? 768 : 384;
+    const dims = explicit === 'openai' ? 1536 : explicit === 'gemini' ? 3072 : 384;
     const apiKey = explicit === 'gemini'
       ? (env.GOOGLE_API_KEY || env.GEMINI_API_KEY)
       : explicit === 'openai'
         ? env.OPENAI_API_KEY
         : undefined;
-    return { provider: explicit, apiKey, dimensions: dims };
+    const result = { provider: explicit, apiKey, dimensions: dims };
+    if (explicit === 'local') result.device = env.AUDREY_DEVICE || 'gpu';
+    return result;
   }
   if (env.GOOGLE_API_KEY || env.GEMINI_API_KEY) {
-    return { provider: 'gemini', apiKey: env.GOOGLE_API_KEY || env.GEMINI_API_KEY, dimensions: 768 };
+    return { provider: 'gemini', apiKey: env.GOOGLE_API_KEY || env.GEMINI_API_KEY, dimensions: 3072 };
   }
-  return { provider: 'local', dimensions: 384 };
+  return { provider: 'local', dimensions: 384, device: env.AUDREY_DEVICE || 'gpu' };
 }
 
 export function buildAudreyConfig() {

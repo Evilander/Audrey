@@ -78,6 +78,11 @@ describe('createEmbeddingProvider', () => {
   it('throws for unknown provider', () => {
     expect(() => createEmbeddingProvider({ provider: 'unknown' })).toThrow();
   });
+
+  it('passes device to LocalEmbeddingProvider', () => {
+    const provider = createEmbeddingProvider({ provider: 'local', device: 'cpu' });
+    expect(provider.device).toBe('cpu');
+  });
 });
 
 describe('OpenAIEmbeddingProvider timeout', () => {
