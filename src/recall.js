@@ -150,7 +150,8 @@ function matchesDateFilters(createdAt, filters) {
   return true;
 }
 
-function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters = {}) {
+function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters = {}, includePrivate = false) {
+  const privateClause = includePrivate ? '' : 'AND e."private" = 0';
   const rows = db.prepare(`
     SELECT e.*, (1.0 - v.distance) AS similarity
     FROM vec_episodes v
@@ -158,6 +159,7 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
     WHERE v.embedding MATCH ?
       AND k = ?
       AND e.superseded_by IS NULL
+      ${privateClause}
   `).all(queryBuffer, candidateK);
 
   const results = [];
@@ -258,6 +260,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
     sources,
     after,
     before,
+    includePrivate = false,
   } = options;
 
   const queryVector = await embeddingProvider.embed(query);
@@ -271,7 +274,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   const allResults = [];
 
   if (searchTypes.includes('episodic')) {
-    const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters);
+    const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters, includePrivate);
     allResults.push(...episodic);
   }
 
