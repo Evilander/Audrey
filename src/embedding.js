@@ -145,7 +145,15 @@ export class LocalEmbeddingProvider {
   }
 
   async embedBatch(texts) {
-    return Promise.all(texts.map(t => this.embed(t)));
+    if (texts.length === 0) return [];
+    await this.ready();
+    const results = [];
+    for (let i = 0; i < texts.length; i += this.batchSize) {
+      const chunk = texts.slice(i, i + this.batchSize);
+      const output = await this._pipeline(chunk, { pooling: 'mean', normalize: true });
+      results.push(...output.tolist());
+    }
+    return results;
   }
 
   vectorToBuffer(vector) {
