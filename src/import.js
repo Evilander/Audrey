@@ -6,8 +6,8 @@ export async function importMemories(db, embeddingProvider, snapshot) {
 
   const insertEpisode = db.prepare(`
     INSERT INTO episodes (id, content, source, source_reliability, salience, context, affect, tags,
-      causal_trigger, causal_consequence, created_at, supersedes, superseded_by, consolidated)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      causal_trigger, causal_consequence, created_at, supersedes, superseded_by, consolidated, "private")
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertVecEpisode = db.prepare(
@@ -61,6 +61,7 @@ export async function importMemories(db, embeddingProvider, snapshot) {
       ep.id, ep.content, ep.source, ep.source_reliability, ep.salience ?? 0.5,
       context, affect, tags, ep.causal_trigger ?? null, ep.causal_consequence ?? null,
       ep.created_at, ep.supersedes ?? null, ep.superseded_by ?? null, ep.consolidated ?? 0,
+      ep.private ?? 0,
     );
 
     const vector = await embeddingProvider.embed(ep.content);
