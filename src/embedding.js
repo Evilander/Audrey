@@ -106,20 +106,34 @@ export class OpenAIEmbeddingProvider {
 
 /** @implements {EmbeddingProvider} */
 export class LocalEmbeddingProvider {
-  constructor({ model = 'Xenova/all-MiniLM-L6-v2' } = {}) {
+  constructor({ model = 'Xenova/all-MiniLM-L6-v2', device = 'gpu', batchSize = 64 } = {}) {
     this.model = model;
     this.dimensions = 384;
     this.modelName = model;
     this.modelVersion = '1.0.0';
+    this.device = device;
+    this.batchSize = batchSize;
     this._pipeline = null;
     this._readyPromise = null;
+    this._actualDevice = null;
   }
 
   ready() {
     if (!this._readyPromise) {
-      this._readyPromise = import('@huggingface/transformers').then(({ pipeline }) =>
-        pipeline('feature-extraction', this.model, { dtype: 'fp32' })
-      ).then(pipe => { this._pipeline = pipe; });
+      this._readyPromise = (async () => {
+        const { pipeline } = await import('@huggingface/transformers');
+        try {
+          this._pipeline = await pipeline('feature-extraction', this.model, {
+            dtype: 'fp32', device: this.device,
+          });
+          this._actualDevice = this.device;
+        } catch {
+          this._pipeline = await pipeline('feature-extraction', this.model, {
+            dtype: 'fp32', device: 'cpu',
+          });
+          this._actualDevice = 'cpu';
+        }
+      })();
     }
     return this._readyPromise;
   }
@@ -145,10 +159,10 @@ export class LocalEmbeddingProvider {
 
 /** @implements {EmbeddingProvider} */
 export class GeminiEmbeddingProvider {
-  constructor({ apiKey, model = 'text-embedding-004', timeout = 30000 } = {}) {
+  constructor({ apiKey, model = 'gemini-embedding-001', timeout = 30000 } = {}) {
     this.apiKey = apiKey || process.env.GOOGLE_API_KEY;
     this.model = model;
-    this.dimensions = 768;
+    this.dimensions = 3072;
     this.timeout = timeout;
     this.modelName = model;
     this.modelVersion = 'latest';
