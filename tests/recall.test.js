@@ -643,4 +643,24 @@ describe('recall', () => {
       expect(match.confidence).toBeLessThanOrEqual(1);
     });
   });
+
+  describe('private memory filtering', () => {
+    it('excludes private memories from recall by default', async () => {
+      await encodeEpisode(db, embedding, { content: 'secret memory', source: 'direct-observation', private: true });
+      await encodeEpisode(db, embedding, { content: 'public memory xyz', source: 'direct-observation' });
+
+      const results = await recall(db, embedding, 'secret memory public memory xyz', { limit: 20 });
+      const contents = results.map(r => r.content);
+      expect(contents).not.toContain('secret memory');
+      expect(contents).toContain('public memory xyz');
+    });
+
+    it('includes private memories when includePrivate: true', async () => {
+      await encodeEpisode(db, embedding, { content: 'secret memory', source: 'direct-observation', private: true });
+
+      const results = await recall(db, embedding, 'secret memory', { limit: 20, includePrivate: true });
+      const contents = results.map(r => r.content);
+      expect(contents).toContain('secret memory');
+    });
+  });
 });
