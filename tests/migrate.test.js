@@ -3,6 +3,10 @@ import { createDatabase, closeDatabase } from '../src/db.js';
 import { createEmbeddingProvider } from '../src/embedding.js';
 import { reembedAll } from '../src/migrate.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { MockEmbeddingProvider } from '../src/embedding.js';
+import { encodeEpisode } from '../src/encode.js';
 
 const TEST_DIR = './test-migrate-data';
 
@@ -117,5 +121,23 @@ describe('reembedAll', () => {
       semantics: 0,
       procedures: 0,
     });
+  });
+
+  it('reembedAll with dropAndRecreate repopulates vec0 tables', async () => {
+    const tmpDir = join(tmpdir(), `audrey-reembed-test-${Date.now()}`);
+    const provider8 = new MockEmbeddingProvider({ dimensions: 8 });
+    const { db: testDb } = createDatabase(tmpDir, { dimensions: 8 });
+
+    await encodeEpisode(testDb, provider8, { content: 'test memory', source: 'direct-observation' });
+
+    const provider16 = new MockEmbeddingProvider({ dimensions: 16 });
+    const counts = await reembedAll(testDb, provider16, { dropAndRecreate: true });
+
+    expect(counts.episodes).toBe(1);
+
+    const vecRow = testDb.prepare('SELECT id FROM vec_episodes').get();
+    expect(vecRow).not.toBeNull();
+
+    testDb.close();
   });
 });
