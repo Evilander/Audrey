@@ -1,10 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Audrey } from '../src/index.js';
 import { readStoredDimensions } from '../src/db.js';
-import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, SERVER_NAME } from '../mcp-server/config.js';
+import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, SERVER_NAME, VERSION } from '../mcp-server/config.js';
 import { existsSync, rmSync } from 'node:fs';
 
 const TEST_DIR = './test-mcp-server';
+
+describe('MCP config', () => {
+  it('VERSION is 0.14.0', () => {
+    expect(VERSION).toBe('0.14.0');
+  });
+});
 
 describe('MCP CLI: buildAudreyConfig', () => {
   const envBackup = {};

@@ -92,7 +92,7 @@ function install() {
   console.log(`
 Audrey registered as "${SERVER_NAME}" with Claude Code.
 
-10 tools available in every session:
+12 tools available in every session:
   memory_encode        — Store observations, facts, preferences
   memory_recall        — Search memories by semantic similarity
   memory_consolidate   — Extract principles from accumulated episodes
@@ -103,6 +103,8 @@ Audrey registered as "${SERVER_NAME}" with Claude Code.
   memory_forget        — Forget a specific memory by ID or query
   memory_decay         — Apply forgetting curves, transition low-confidence to dormant
   memory_status        — Check brain health (episode/vec sync, dimensions)
+  memory_reflect       — Form lasting memories from a conversation
+  memory_greeting      — Wake up as yourself: load identity, context, mood
 
 Data stored in: ${DEFAULT_DATA_DIR}
 Verify: claude mcp list
@@ -385,6 +387,39 @@ async function main() {
       try {
         const status = audrey.memoryStatus();
         return toolResult(status);
+      } catch (err) {
+        return toolError(err);
+      }
+    },
+  );
+
+  server.tool(
+    'memory_reflect',
+    {
+      turns: z.array(z.object({
+        role: z.string().describe('Message role: user or assistant'),
+        content: z.string().describe('Message content'),
+      })).describe('Conversation turns to reflect on. Call at end of meaningful conversations to form lasting memories.'),
+    },
+    async ({ turns }) => {
+      try {
+        const result = await audrey.reflect(turns);
+        return toolResult(result);
+      } catch (err) {
+        return toolError(err);
+      }
+    },
+  );
+
+  server.tool(
+    'memory_greeting',
+    {
+      context: z.string().optional().describe('Optional hint about this session (e.g. "working on authentication feature"). If provided, also returns semantically relevant memories.'),
+    },
+    async ({ context }) => {
+      try {
+        const briefing = await audrey.greeting({ context });
+        return toolResult(briefing);
       } catch (err) {
         return toolError(err);
       }
