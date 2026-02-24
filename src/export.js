@@ -8,7 +8,7 @@ const pkg = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8')
 
 export function exportMemories(db) {
   const episodes = db.prepare(
-    'SELECT id, content, source, source_reliability, salience, context, affect, tags, causal_trigger, causal_consequence, created_at, supersedes, superseded_by, consolidated FROM episodes'
+    'SELECT id, content, source, source_reliability, salience, context, affect, tags, causal_trigger, causal_consequence, created_at, supersedes, superseded_by, consolidated, "private" FROM episodes'
   ).all().map(ep => ({
     ...ep,
     tags: safeJsonParse(ep.tags, null),

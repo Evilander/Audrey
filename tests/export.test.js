@@ -81,4 +81,12 @@ describe('export', () => {
     audrey2.close();
     rmSync('./test-export-ctx', { recursive: true });
   });
+
+  it('export preserves private flag', async () => {
+    await audrey.encode({ content: 'private export test', source: 'direct-observation', private: true });
+    const snapshot = audrey.export();
+    const ep = snapshot.episodes.find(e => e.content === 'private export test');
+    expect(ep).toBeDefined();
+    expect(ep.private).toBe(1);
+  });
 });
