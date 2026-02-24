@@ -112,6 +112,39 @@ describe('reembedAll', () => {
     });
   });
 
+  it('rolls back all changes if embedding fails mid-way', async () => {
+    ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
+    const emb = provider8.vectorToBuffer(await provider8.embed('ep one'));
+    db.prepare(
+      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('ep-1', 'ep one', emb, 'direct-observation', 0.9, new Date().toISOString());
+    db.prepare(
+      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('ep-2', 'ep two', emb, 'direct-observation', 0.9, new Date().toISOString());
+    db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run('ep-1', emb, 'direct-observation', BigInt(0));
+    db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run('ep-2', emb, 'direct-observation', BigInt(0));
+
+    let callCount = 0;
+    const failingProvider = {
+      dimensions: 8,
+      async embed() {
+        callCount++;
+        if (callCount > 1) throw new Error('embedding service down');
+        return new Float32Array(8).fill(0.1);
+      },
+      vectorToBuffer(v) { return Buffer.from(v.buffer); },
+    };
+
+    await expect(reembedAll(db, failingProvider)).rejects.toThrow('embedding service down');
+
+    // Legacy embedding column should be unchanged for BOTH episodes
+    // (transaction rolled back, so even ep-1's update should be reverted)
+    const ep1 = db.prepare('SELECT embedding FROM episodes WHERE id = ?').get('ep-1');
+    const ep2 = db.prepare('SELECT embedding FROM episodes WHERE id = ?').get('ep-2');
+    expect(Buffer.compare(ep1.embedding, emb)).toBe(0);
+    expect(Buffer.compare(ep2.embedding, emb)).toBe(0);
+  });
+
   it('handles empty database', async () => {
     ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
     const counts = await reembedAll(db, provider16);
