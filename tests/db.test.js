@@ -186,3 +186,29 @@ describe('dimension migration', () => {
     closeDatabase(db2);
   });
 });
+
+describe('schema migrations', () => {
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('migration 7: adds private column to episodes', () => {
+    const { db } = createDatabase(TEST_DIR);
+    const cols = db.pragma('table_info(episodes)').map(c => c.name);
+    expect(cols).toContain('private');
+    closeDatabase(db);
+  });
+
+  it('private column defaults to 0', () => {
+    const { db } = createDatabase(TEST_DIR);
+    const cols = db.pragma('table_info(episodes)');
+    const col = cols.find(c => c.name === 'private');
+    expect(col.dflt_value).toBe('0');
+    closeDatabase(db);
+  });
+});
