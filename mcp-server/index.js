@@ -169,11 +169,12 @@ async function main() {
         arousal: z.number().min(0).max(1).optional().describe('Emotional arousal: 0 (calm) to 1 (highly activated)'),
         label: z.string().optional().describe('Human-readable emotion label (e.g., "curiosity", "frustration", "relief")'),
       }).optional().describe('Emotional affect â€” how this memory feels'),
+      private: z.boolean().optional().describe('If true, memory is only visible to the AI — excluded from public recall results'),
     },
-    async ({ content, source, tags, salience, context, affect }) => {
+    async ({ content, source, tags, salience, private: isPrivate, context, affect }) => {
       try {
-        const id = await audrey.encode({ content, source, tags, salience, context, affect });
-        return toolResult({ id, content, source });
+        const id = await audrey.encode({ content, source, tags, salience, private: isPrivate, context, affect });
+        return toolResult({ id, content, source, private: isPrivate ?? false });
       } catch (err) {
         return toolError(err);
       }
