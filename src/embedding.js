@@ -199,7 +199,36 @@ export class GeminiEmbeddingProvider {
   }
 
   async embedBatch(texts) {
-    return Promise.all(texts.map(t => this.embed(t)));
+    if (texts.length === 0) return [];
+    if (!this.apiKey) throw new Error('Gemini embedding requires GOOGLE_API_KEY');
+    const results = [];
+    for (let i = 0; i < texts.length; i += 100) {
+      const chunk = texts.slice(i, i + 100);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeout);
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:batchEmbedContents?key=${this.apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              requests: chunk.map(text => ({
+                model: `models/${this.model}`,
+                content: { parts: [{ text }] },
+              })),
+            }),
+            signal: controller.signal,
+          }
+        );
+        if (!response.ok) throw new Error(`Gemini batch embedding failed: ${response.status}`);
+        const data = await response.json();
+        results.push(...data.embeddings.map(e => e.values));
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return results;
   }
 
   vectorToBuffer(vector) {

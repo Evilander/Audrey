@@ -242,4 +242,67 @@ describe('GeminiEmbeddingProvider', () => {
     const provider = new GeminiEmbeddingProvider({ apiKey: '' });
     await expect(provider.embed('test')).rejects.toThrow('Gemini');
   });
+
+  describe('embedBatch', () => {
+    it('calls batchEmbedContents endpoint', async () => {
+      const mockValues = [[0.1, 0.2], [0.3, 0.4]];
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          embeddings: mockValues.map(values => ({ values })),
+        }),
+      });
+
+      const provider = new GeminiEmbeddingProvider({ apiKey: 'test-key' });
+      const results = await provider.embedBatch(['hello', 'world']);
+
+      expect(results).toEqual(mockValues);
+      expect(global.fetch).toHaveBeenCalledOnce();
+      const callArgs = global.fetch.mock.calls[0];
+      expect(callArgs[0]).toContain('batchEmbedContents');
+      const body = JSON.parse(callArgs[1].body);
+      expect(body.requests).toHaveLength(2);
+
+      global.fetch = originalFetch;
+    });
+
+    it('chunks at 100 texts per request', async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          embeddings: Array(100).fill({ values: [0.1] }),
+        }),
+      });
+
+      const provider = new GeminiEmbeddingProvider({ apiKey: 'test-key' });
+      const texts = Array(150).fill('text');
+      await provider.embedBatch(texts);
+
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      const body1 = JSON.parse(global.fetch.mock.calls[0][1].body);
+      const body2 = JSON.parse(global.fetch.mock.calls[1][1].body);
+      expect(body1.requests).toHaveLength(100);
+      expect(body2.requests).toHaveLength(50);
+
+      global.fetch = originalFetch;
+    });
+
+    it('throws on non-ok response', async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 429 });
+
+      const provider = new GeminiEmbeddingProvider({ apiKey: 'test-key' });
+      await expect(provider.embedBatch(['hello'])).rejects.toThrow('Gemini');
+
+      global.fetch = originalFetch;
+    });
+
+    it('handles empty array', async () => {
+      const provider = new GeminiEmbeddingProvider({ apiKey: 'test-key' });
+      const results = await provider.embedBatch([]);
+      expect(results).toEqual([]);
+    });
+  });
 });
