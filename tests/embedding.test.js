@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { createEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider } from '../src/embedding.js';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { createEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider, LocalEmbeddingProvider, GeminiEmbeddingProvider } from '../src/embedding.js';
 
 describe('MockEmbeddingProvider', () => {
   it('returns a fixed-dimension vector', async () => {
@@ -132,5 +132,52 @@ describe('OpenAIEmbeddingProvider.embedBatch', () => {
     await expect(provider.embedBatch(['hello'])).rejects.toThrow('OpenAI embedding failed: 429');
 
     global.fetch = originalFetch;
+  });
+});
+
+describe('LocalEmbeddingProvider', () => {
+  let provider;
+
+  beforeAll(async () => {
+    provider = new LocalEmbeddingProvider();
+    await provider.ready();
+  }, 120_000);
+
+  it('produces 384-dimensional vectors', async () => {
+    const vec = await provider.embed('hello world');
+    expect(vec).toHaveLength(384);
+  });
+
+  it('produces semantically similar vectors for similar text', async () => {
+    const v1 = await provider.embed('the cat sat on the mat');
+    const v2 = await provider.embed('a cat was sitting on a rug');
+    const v3 = await provider.embed('the stock market crashed today');
+    const dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0);
+    expect(dot(v1, v2)).toBeGreaterThan(dot(v1, v3));
+  });
+
+  it('vectorToBuffer / bufferToVector roundtrips', async () => {
+    const vec = await provider.embed('test');
+    const buf = provider.vectorToBuffer(vec);
+    const back = provider.bufferToVector(buf);
+    expect(back).toHaveLength(384);
+    expect(Math.abs(back[0] - vec[0])).toBeLessThan(0.0001);
+  });
+});
+
+describe('GeminiEmbeddingProvider', () => {
+  it('produces 768-dimensional vectors', async () => {
+    if (!process.env.GOOGLE_API_KEY) {
+      console.log('Skipping — no GOOGLE_API_KEY');
+      return;
+    }
+    const provider = new GeminiEmbeddingProvider({ apiKey: process.env.GOOGLE_API_KEY });
+    const vec = await provider.embed('hello world');
+    expect(vec).toHaveLength(768);
+  });
+
+  it('throws clearly when no API key', async () => {
+    const provider = new GeminiEmbeddingProvider({ apiKey: '' });
+    await expect(provider.embed('test')).rejects.toThrow('Gemini');
   });
 });
