@@ -165,6 +165,32 @@ describe('LocalEmbeddingProvider', () => {
   });
 });
 
+describe('LocalEmbeddingProvider device config', () => {
+  it('accepts device option in constructor', () => {
+    const provider = new LocalEmbeddingProvider({ device: 'cpu' });
+    expect(provider.device).toBe('cpu');
+  });
+
+  it('defaults device to gpu', () => {
+    const provider = new LocalEmbeddingProvider();
+    expect(provider.device).toBe('gpu');
+  });
+
+  it('exposes _actualDevice after ready()', async () => {
+    const provider = new LocalEmbeddingProvider({ device: 'cpu' });
+    await provider.ready();
+    expect(provider._actualDevice).toBe('cpu');
+  }, 120_000);
+
+  it('falls back to cpu when requested device fails', async () => {
+    const provider = new LocalEmbeddingProvider({ device: 'cuda' });
+    await provider.ready();
+    expect(provider._actualDevice).toBe('cpu');
+    const vec = await provider.embed('test');
+    expect(vec).toHaveLength(384);
+  }, 120_000);
+});
+
 describe('GeminiEmbeddingProvider', () => {
   it('produces 768-dimensional vectors', async () => {
     if (!process.env.GOOGLE_API_KEY) {
