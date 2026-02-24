@@ -22,6 +22,7 @@ const SCHEMA = `
     supersedes TEXT,
     superseded_by TEXT,
     consolidated INTEGER DEFAULT 0,
+    private INTEGER DEFAULT 0,
     FOREIGN KEY (supersedes) REFERENCES episodes(id)
   );
 
@@ -215,7 +216,7 @@ function addColumnIfMissing(db, table, column, definition) {
   }
 }
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 const MIGRATIONS = [
   { version: 1, up(db) { addColumnIfMissing(db, 'episodes', 'context', "TEXT DEFAULT '{}'"); } },
@@ -224,6 +225,7 @@ const MIGRATIONS = [
   { version: 4, up(db) { addColumnIfMissing(db, 'semantics', 'salience', 'REAL DEFAULT 0.5'); } },
   { version: 5, up(db) { addColumnIfMissing(db, 'procedures', 'interference_count', 'INTEGER DEFAULT 0'); } },
   { version: 6, up(db) { addColumnIfMissing(db, 'procedures', 'salience', 'REAL DEFAULT 0.5'); } },
+  { version: 7, up(db) { addColumnIfMissing(db, 'episodes', 'private', 'INTEGER DEFAULT 0'); } },
 ];
 
 function runMigrations(db) {
