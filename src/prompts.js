@@ -152,3 +152,46 @@ CLAIM B: ${claimB}${contextSection}`,
     },
   ];
 }
+
+/**
+ * @param {{ role: string, content: string }[]} turns
+ * @returns {import('./llm.js').ChatMessage[]}
+ */
+export function buildReflectionPrompt(turns) {
+  const transcript = turns.map(t => `${t.role.toUpperCase()}: ${t.content}`).join('\n\n');
+
+  return [
+    {
+      role: 'system',
+      content: `You are performing memoryReflection. Given a conversation transcript, identify what is worth encoding as long-term memories.
+
+Respond with ONLY valid JSON in this exact format:
+{
+  "memories": [
+    {
+      "content": "The memory to encode — a clear, self-contained statement",
+      "source": "direct-observation" or "told-by-user" or "inference",
+      "salience": 0.0 to 1.0,
+      "tags": ["tag1", "tag2"],
+      "private": true or false,
+      "affect": { "valence": -1 to 1, "arousal": 0 to 1, "label": "emotion label" } or null
+    }
+  ]
+}
+
+Rules:
+- Encode facts about the user, decisions made, things that shifted
+- Mark private: true for AI self-observations, emotional reactions, things felt but not said
+- Mark private: false for facts about the user and project context
+- Omit trivial exchanges — only encode what would matter in a future session
+- Salience: 1.0 = extremely important, 0.5 = useful, 0.3 = background context
+- Return empty memories array if nothing is worth encoding`,
+    },
+    {
+      role: 'user',
+      content: turns.length > 0
+        ? `Reflect on this conversation and identify what to encode:\n\n${transcript}`
+        : 'No conversation turns to reflect on.',
+    },
+  ];
+}

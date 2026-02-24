@@ -81,3 +81,30 @@ describe('buildContextResolutionPrompt', () => {
     expect(messages[1].content).toContain('Claim A');
   });
 });
+
+import { buildReflectionPrompt } from '../src/prompts.js';
+
+describe('buildReflectionPrompt', () => {
+  it('returns array of 2 messages: system and user', () => {
+    const turns = [
+      { role: 'user', content: 'how does memory work?' },
+      { role: 'assistant', content: 'Memory involves encoding and retrieval...' },
+    ];
+    const messages = buildReflectionPrompt(turns);
+    expect(messages).toHaveLength(2);
+    expect(messages[0].role).toBe('system');
+    expect(messages[1].role).toBe('user');
+    expect(messages[1].content).toContain('how does memory work');
+  });
+
+  it('system prompt documents JSON response format with memories key', () => {
+    const messages = buildReflectionPrompt([]);
+    expect(messages[0].content).toContain('memories');
+    expect(messages[0].content).toContain('JSON');
+  });
+
+  it('handles empty turns gracefully', () => {
+    const messages = buildReflectionPrompt([]);
+    expect(messages[1].content).toContain('No conversation');
+  });
+});
