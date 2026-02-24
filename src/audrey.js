@@ -465,6 +465,53 @@ export class Audrey extends EventEmitter {
     };
   }
 
+  async greeting({ context, recentLimit = 10, principleLimit = 5, identityLimit = 5 } = {}) {
+    const recent = this.db.prepare(
+      'SELECT id, content, source, tags, salience, created_at FROM episodes WHERE "private" = 0 ORDER BY created_at DESC LIMIT ?'
+    ).all(recentLimit);
+
+    const principles = this.db.prepare(
+      'SELECT id, content, salience, created_at FROM semantics WHERE state = ? ORDER BY salience DESC LIMIT ?'
+    ).all('active', principleLimit);
+
+    const identity = this.db.prepare(
+      'SELECT id, content, tags, salience, created_at FROM episodes WHERE "private" = 1 ORDER BY created_at DESC LIMIT ?'
+    ).all(identityLimit);
+
+    const unresolved = this.db.prepare(
+      "SELECT id, content, tags, salience, created_at FROM episodes WHERE tags LIKE '%unresolved%' AND salience > 0.3 ORDER BY created_at DESC LIMIT 10"
+    ).all();
+
+    const rawAffectRows = this.db.prepare(
+      "SELECT affect FROM episodes WHERE affect IS NOT NULL AND affect != '{}' ORDER BY created_at DESC LIMIT 20"
+    ).all();
+
+    const affectParsed = rawAffectRows
+      .map(r => { try { return JSON.parse(r.affect); } catch { return null; } })
+      .filter(a => a && a.valence !== undefined);
+
+    let mood;
+    if (affectParsed.length === 0) {
+      mood = { valence: 0, arousal: 0, samples: 0 };
+    } else {
+      const sumV = affectParsed.reduce((s, a) => s + a.valence, 0);
+      const sumA = affectParsed.reduce((s, a) => s + (a.arousal ?? 0), 0);
+      mood = {
+        valence: sumV / affectParsed.length,
+        arousal: sumA / affectParsed.length,
+        samples: affectParsed.length,
+      };
+    }
+
+    const result = { recent, principles, mood, unresolved, identity };
+
+    if (context) {
+      result.contextual = await this.recall(context, { limit: 5, includePrivate: true });
+    }
+
+    return result;
+  }
+
   export() {
     return exportMemories(this.db);
   }

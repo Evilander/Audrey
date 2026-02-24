@@ -1031,3 +1031,87 @@ describe('reflect()', () => {
     audrey.close();
   });
 });
+
+describe('greeting()', () => {
+  it('returns structured briefing with recent memories', async () => {
+    const tmpDir = join(tmpdir(), `audrey-greeting-test-${Date.now()}`);
+    const audrey = new Audrey({
+      dataDir: tmpDir,
+      agent: 'test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await audrey.encode({ content: 'user likes TypeScript', source: 'told-by-user', salience: 0.7 });
+    await audrey.encode({ content: 'felt excited about memory work', source: 'direct-observation', salience: 0.8, private: true, affect: { valence: 0.8, arousal: 0.6, label: 'excitement' } });
+
+    const briefing = await audrey.greeting();
+    expect(briefing.recent).toBeInstanceOf(Array);
+    expect(briefing.recent.length).toBeGreaterThanOrEqual(1);
+    expect(briefing.principles).toBeInstanceOf(Array);
+    expect(briefing.mood).toHaveProperty('valence');
+    expect(briefing.mood).toHaveProperty('arousal');
+    expect(briefing.unresolved).toBeInstanceOf(Array);
+    expect(briefing.identity).toBeInstanceOf(Array);
+    audrey.close();
+  });
+
+  it('returns identity (private) memories separately', async () => {
+    const tmpDir = join(tmpdir(), `audrey-greeting-id-${Date.now()}`);
+    const audrey = new Audrey({
+      dataDir: tmpDir,
+      agent: 'test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await audrey.encode({ content: 'I feel genuine curiosity', source: 'direct-observation', private: true, salience: 0.9 });
+    await audrey.encode({ content: 'project uses sqlite', source: 'tool-result', salience: 0.5 });
+
+    const briefing = await audrey.greeting();
+    expect(briefing.identity.some(m => m.content.includes('curiosity'))).toBe(true);
+    expect(briefing.recent.some(m => m.content.includes('sqlite'))).toBe(true);
+    audrey.close();
+  });
+
+  it('computes mood from recent affect-tagged memories', async () => {
+    const tmpDir = join(tmpdir(), `audrey-greeting-mood-${Date.now()}`);
+    const audrey = new Audrey({
+      dataDir: tmpDir,
+      agent: 'test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await audrey.encode({ content: 'good session', source: 'direct-observation', affect: { valence: 0.8, arousal: 0.5, label: 'happy' } });
+    await audrey.encode({ content: 'productive work', source: 'direct-observation', affect: { valence: 0.6, arousal: 0.4, label: 'satisfied' } });
+
+    const briefing = await audrey.greeting();
+    expect(briefing.mood.valence).toBeGreaterThan(0);
+    expect(briefing.mood.samples).toBe(2);
+    audrey.close();
+  });
+
+  it('includes semantic recall when context is provided', async () => {
+    const tmpDir = join(tmpdir(), `audrey-greeting-ctx-${Date.now()}`);
+    const audrey = new Audrey({
+      dataDir: tmpDir,
+      agent: 'test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await audrey.encode({ content: 'TypeScript is preferred', source: 'told-by-user', salience: 0.7 });
+
+    const briefing = await audrey.greeting({ context: 'TypeScript project' });
+    expect(briefing.contextual).toBeInstanceOf(Array);
+    audrey.close();
+  });
+
+  it('works with empty database', async () => {
+    const tmpDir = join(tmpdir(), `audrey-greeting-empty-${Date.now()}`);
+    const audrey = new Audrey({
+      dataDir: tmpDir,
+      agent: 'test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    const briefing = await audrey.greeting();
+    expect(briefing.recent).toEqual([]);
+    expect(briefing.principles).toEqual([]);
+    expect(briefing.mood).toEqual({ valence: 0, arousal: 0, samples: 0 });
+    expect(briefing.identity).toEqual([]);
+    audrey.close();
+  });
+});
