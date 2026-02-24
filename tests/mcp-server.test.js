@@ -82,7 +82,7 @@ describe('MCP CLI: buildInstallArgs', () => {
     expect(args).toContain('npx');
     expect(args).toContain('audrey');
     const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
-    // local is the default — no provider env var emitted, no API keys
+    // local is the default ï¿½ no provider env var emitted, no API keys
     expect(envPairsStr).not.toContain('AUDREY_EMBEDDING_PROVIDER=mock');
     expect(envPairsStr).not.toContain('OPENAI_API_KEY');
   });
@@ -556,5 +556,45 @@ describe('MCP tool: memory_forget + memory_decay', () => {
 
     const ep = audrey.db.prepare('SELECT * FROM episodes WHERE id = ?').get(id);
     expect(ep).toBeUndefined();
+  });
+});
+
+describe('MCP tool: memory_status', () => {
+  let audrey;
+
+  beforeEach(async () => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    audrey = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'mcp-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await audrey.encode({ content: 'status test memory', source: 'direct-observation' });
+  });
+
+  afterEach(() => {
+    audrey.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('returns health status with matching counts', () => {
+    const status = audrey.memoryStatus();
+    expect(status.episodes).toBe(1);
+    expect(status.vec_episodes).toBe(1);
+    expect(status.semantics).toBe(0);
+    expect(status.vec_semantics).toBe(0);
+    expect(status.procedures).toBe(0);
+    expect(status.vec_procedures).toBe(0);
+    expect(status.dimensions).toBe(8);
+    expect(status.schema_version).toBe(7);
+    expect(status.healthy).toBe(true);
+  });
+
+  it('reports unhealthy when vec counts diverge', () => {
+    audrey.db.exec('DELETE FROM vec_episodes');
+    const status = audrey.memoryStatus();
+    expect(status.episodes).toBe(1);
+    expect(status.vec_episodes).toBe(0);
+    expect(status.healthy).toBe(false);
   });
 });
