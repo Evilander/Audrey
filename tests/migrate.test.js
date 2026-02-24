@@ -132,6 +132,9 @@ describe('reembedAll', () => {
         if (callCount > 1) throw new Error('embedding service down');
         return new Float32Array(8).fill(0.1);
       },
+      async embedBatch(texts) {
+        return Promise.all(texts.map(t => this.embed(t)));
+      },
       vectorToBuffer(v) { return Buffer.from(v.buffer); },
     };
 
@@ -154,6 +157,34 @@ describe('reembedAll', () => {
       semantics: 0,
       procedures: 0,
     });
+  });
+
+  it('uses embedBatch instead of per-row embed', async () => {
+    ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
+    const emb = provider8.vectorToBuffer(await provider8.embed('ep one'));
+    db.prepare(
+      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('ep-1', 'ep one', emb, 'direct-observation', 0.9, new Date().toISOString());
+    db.prepare(
+      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('ep-2', 'ep two', emb, 'direct-observation', 0.9, new Date().toISOString());
+    db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run('ep-1', emb, 'direct-observation', BigInt(0));
+    db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run('ep-2', emb, 'direct-observation', BigInt(0));
+
+    let embedBatchCalled = false;
+    const spyProvider = {
+      dimensions: 16,
+      async embed(text) { return provider16.embed(text); },
+      async embedBatch(texts) {
+        embedBatchCalled = true;
+        return Promise.all(texts.map(t => this.embed(t)));
+      },
+      vectorToBuffer(v) { return provider16.vectorToBuffer(v); },
+      bufferToVector(b) { return provider16.bufferToVector(b); },
+    };
+
+    await reembedAll(db, spyProvider, { dropAndRecreate: true });
+    expect(embedBatchCalled).toBe(true);
   });
 
   it('reembedAll with dropAndRecreate repopulates vec0 tables', async () => {
