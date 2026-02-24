@@ -92,7 +92,7 @@ function install() {
   console.log(`
 Audrey registered as "${SERVER_NAME}" with Claude Code.
 
-9 tools available in every session:
+10 tools available in every session:
   memory_encode        — Store observations, facts, preferences
   memory_recall        — Search memories by semantic similarity
   memory_consolidate   — Extract principles from accumulated episodes
@@ -102,6 +102,7 @@ Audrey registered as "${SERVER_NAME}" with Claude Code.
   memory_import        — Import a snapshot into a fresh database
   memory_forget        — Forget a specific memory by ID or query
   memory_decay         — Apply forgetting curves, transition low-confidence to dormant
+  memory_status        — Check brain health (episode/vec sync, dimensions)
 
 Data stored in: ${DEFAULT_DATA_DIR}
 Verify: claude mcp list
@@ -196,7 +197,7 @@ async function main() {
         arousal: z.number().min(0).max(1).optional().describe('Emotional arousal: 0 (calm) to 1 (highly activated)'),
         label: z.string().optional().describe('Human-readable emotion label (e.g., "curiosity", "frustration", "relief")'),
       }).optional().describe('Emotional affect — how this memory feels'),
-      private: z.boolean().optional().describe('If true, memory is only visible to the AI � excluded from public recall results'),
+      private: z.boolean().optional().describe('If true, memory is only visible to the AI � excluded from public recall results'),
     },
     async ({ content, source, tags, salience, private: isPrivate, context, affect }) => {
       try {
@@ -371,6 +372,19 @@ async function main() {
       try {
         const result = audrey.decay({ dormantThreshold: dormant_threshold });
         return toolResult(result);
+      } catch (err) {
+        return toolError(err);
+      }
+    },
+  );
+
+  server.tool(
+    'memory_status',
+    {},
+    async () => {
+      try {
+        const status = audrey.memoryStatus();
+        return toolResult(status);
       } catch (err) {
         return toolError(err);
       }

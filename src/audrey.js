@@ -424,6 +424,42 @@ export class Audrey extends EventEmitter {
     return introspectFn(this.db);
   }
 
+  memoryStatus() {
+    const episodes = this.db.prepare('SELECT COUNT(*) as c FROM episodes').get().c;
+    const semantics = this.db.prepare('SELECT COUNT(*) as c FROM semantics').get().c;
+    const procedures = this.db.prepare('SELECT COUNT(*) as c FROM procedures').get().c;
+
+    let vecEpisodes = 0, vecSemantics = 0, vecProcedures = 0;
+    try {
+      vecEpisodes = this.db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get().c;
+      vecSemantics = this.db.prepare('SELECT COUNT(*) as c FROM vec_semantics').get().c;
+      vecProcedures = this.db.prepare('SELECT COUNT(*) as c FROM vec_procedures').get().c;
+    } catch {
+      // vec tables may not exist if no dimensions configured
+    }
+
+    const dimsRow = this.db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get();
+    const dimensions = dimsRow ? parseInt(dimsRow.value, 10) : null;
+    const versionRow = this.db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get();
+    const schemaVersion = versionRow ? parseInt(versionRow.value, 10) : 0;
+
+    const healthy = episodes === vecEpisodes
+      && semantics === vecSemantics
+      && procedures === vecProcedures;
+
+    return {
+      episodes,
+      vec_episodes: vecEpisodes,
+      semantics,
+      vec_semantics: vecSemantics,
+      procedures,
+      vec_procedures: vecProcedures,
+      dimensions,
+      schema_version: schemaVersion,
+      healthy,
+    };
+  }
+
   export() {
     return exportMemories(this.db);
   }

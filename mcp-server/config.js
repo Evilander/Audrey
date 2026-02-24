@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const VERSION = '0.11.0';
+export const VERSION = '0.12.0';
 export const SERVER_NAME = 'audrey-memory';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
 
