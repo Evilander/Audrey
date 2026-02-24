@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { Audrey } from '../src/index.js';
 import { readStoredDimensions } from '../src/db.js';
-import { VERSION, SERVER_NAME, DEFAULT_DATA_DIR, buildAudreyConfig, buildInstallArgs } from './config.js';
+import { VERSION, SERVER_NAME, DEFAULT_DATA_DIR, buildAudreyConfig, buildInstallArgs, resolveEmbeddingProvider } from './config.js';
 
 const VALID_SOURCES = ['direct-observation', 'told-by-user', 'tool-result', 'inference', 'model-generated'];
 const VALID_TYPES = ['episodic', 'semantic', 'procedural'];
@@ -19,6 +19,11 @@ if (subcommand === 'install') {
   install();
 } else if (subcommand === 'uninstall') {
   uninstall();
+} else if (subcommand === 'reembed') {
+  reembed().catch(err => {
+    console.error('[audrey] reembed failed:', err);
+    process.exit(1);
+  });
 } else if (subcommand === 'status') {
   status();
 } else {
@@ -26,6 +31,28 @@ if (subcommand === 'install') {
     console.error('[audrey-mcp] fatal:', err);
     process.exit(1);
   });
+}
+
+
+async function reembed() {
+  const dataDir = process.env.AUDREY_DATA_DIR || DEFAULT_DATA_DIR;
+  const explicit = process.env.AUDREY_EMBEDDING_PROVIDER;
+  const embedding = resolveEmbeddingProvider(process.env, explicit);
+
+  const storedDims = readStoredDimensions(dataDir);
+  const dimensionsChanged = storedDims !== null && storedDims !== embedding.dimensions;
+
+  console.log(`Re-embedding with ${embedding.provider} (${embedding.dimensions}d)...`);
+  if (dimensionsChanged) {
+    console.log(`Dimension change: ${storedDims}d -> ${embedding.dimensions}d (will drop and recreate vec tables)`);
+  }
+
+  const audrey = new Audrey({ dataDir, agent: 'reembed', embedding });
+  const { reembedAll } = await import('../src/migrate.js');
+  const counts = await reembedAll(audrey.db, audrey.embeddingProvider, { dropAndRecreate: dimensionsChanged });
+  audrey.close();
+
+  console.log(`Done. Re-embedded: ${counts.episodes} episodes, ${counts.semantics} semantics, ${counts.procedures} procedures`);
 }
 
 function install() {
