@@ -163,23 +163,25 @@ export function dropVec0Tables(db) {
   db.exec('DROP TABLE IF EXISTS vec_procedures');
 }
 
-function migrateTable(db, { source, target, selectCols, insertCols, placeholders, transform }) {
+function migrateTable(db, { source, target, selectCols, insertCols, placeholders, transform, dimensions }) {
   const count = db.prepare(`SELECT COUNT(*) as c FROM ${target}`).get().c;
   if (count > 0) return;
 
   const rows = db.prepare(`SELECT ${selectCols} FROM ${source} WHERE embedding IS NOT NULL`).all();
   if (rows.length === 0) return;
 
+  const expectedBytes = dimensions ? dimensions * 4 : null;
   const insert = db.prepare(`INSERT INTO ${target}(${insertCols}) VALUES (${placeholders})`);
   const tx = db.transaction(() => {
     for (const row of rows) {
+      if (expectedBytes && row.embedding.byteLength !== expectedBytes) continue;
       insert.run(...transform(row));
     }
   });
   tx();
 }
 
-function migrateEmbeddingsToVec0(db) {
+function migrateEmbeddingsToVec0(db, dimensions) {
   migrateTable(db, {
     source: 'episodes',
     target: 'vec_episodes',
@@ -187,6 +189,7 @@ function migrateEmbeddingsToVec0(db) {
     insertCols: 'id, embedding, source, consolidated',
     placeholders: '?, ?, ?, ?',
     transform: (row) => [row.id, row.embedding, row.source, BigInt(row.consolidated ?? 0)],
+    dimensions,
   });
 
   migrateTable(db, {
@@ -196,6 +199,7 @@ function migrateEmbeddingsToVec0(db) {
     insertCols: 'id, embedding, state',
     placeholders: '?, ?, ?',
     transform: (row) => [row.id, row.embedding, row.state],
+    dimensions,
   });
 
   migrateTable(db, {
@@ -205,6 +209,7 @@ function migrateEmbeddingsToVec0(db) {
     insertCols: 'id, embedding, state',
     placeholders: '?, ?, ?',
     transform: (row) => [row.id, row.embedding, row.state],
+    dimensions,
   });
 }
 
@@ -292,7 +297,7 @@ export function createDatabase(dataDir, options = {}) {
     createVec0Tables(db, dimensions);
 
     if (!migrated) {
-      migrateEmbeddingsToVec0(db);
+      migrateEmbeddingsToVec0(db, dimensions);
     }
   }
 
