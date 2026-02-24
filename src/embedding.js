@@ -11,33 +11,14 @@ import { createHash } from 'node:crypto';
  * @property {(buffer: Buffer) => number[]} bufferToVector
  */
 
-/**
- * @typedef {Object} MockEmbeddingConfig
- * @property {'mock'} provider
- * @property {number} [dimensions=64]
- */
-
-/**
- * @typedef {Object} OpenAIEmbeddingConfig
- * @property {'openai'} provider
- * @property {string} [apiKey]
- * @property {string} [model='text-embedding-3-small']
- * @property {number} [dimensions=1536]
- */
-
 /** @implements {EmbeddingProvider} */
 export class MockEmbeddingProvider {
-  /** @param {Partial<MockEmbeddingConfig>} [config={}] */
   constructor({ dimensions = 64 } = {}) {
     this.dimensions = dimensions;
     this.modelName = 'mock-embedding';
     this.modelVersion = '1.0.0';
   }
 
-  /**
-   * @param {string} text
-   * @returns {Promise<number[]>}
-   */
   async embed(text) {
     const hash = createHash('sha256').update(text).digest();
     const vector = new Array(this.dimensions);
@@ -48,26 +29,14 @@ export class MockEmbeddingProvider {
     return vector.map(v => v / magnitude);
   }
 
-  /**
-   * @param {string[]} texts
-   * @returns {Promise<number[][]>}
-   */
   async embedBatch(texts) {
     return Promise.all(texts.map(t => this.embed(t)));
   }
 
-  /**
-   * @param {number[]} vector
-   * @returns {Buffer}
-   */
   vectorToBuffer(vector) {
     return Buffer.from(new Float32Array(vector).buffer);
   }
 
-  /**
-   * @param {Buffer} buffer
-   * @returns {number[]}
-   */
   bufferToVector(buffer) {
     return Array.from(new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4));
   }
@@ -75,7 +44,6 @@ export class MockEmbeddingProvider {
 
 /** @implements {EmbeddingProvider} */
 export class OpenAIEmbeddingProvider {
-  /** @param {Partial<OpenAIEmbeddingConfig>} [config={}] */
   constructor({ apiKey, model = 'text-embedding-3-small', dimensions = 1536, timeout = 30000 } = {}) {
     this.apiKey = apiKey || process.env.OPENAI_API_KEY;
     this.model = model;
@@ -85,10 +53,6 @@ export class OpenAIEmbeddingProvider {
     this.modelVersion = 'latest';
   }
 
-  /**
-   * @param {string} text
-   * @returns {Promise<number[]>}
-   */
   async embed(text) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
@@ -110,10 +74,6 @@ export class OpenAIEmbeddingProvider {
     }
   }
 
-  /**
-   * @param {string[]} texts
-   * @returns {Promise<number[][]>}
-   */
   async embedBatch(texts) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
@@ -135,34 +95,111 @@ export class OpenAIEmbeddingProvider {
     }
   }
 
-  /**
-   * @param {number[]} vector
-   * @returns {Buffer}
-   */
   vectorToBuffer(vector) {
     return Buffer.from(new Float32Array(vector).buffer);
   }
 
-  /**
-   * @param {Buffer} buffer
-   * @returns {number[]}
-   */
   bufferToVector(buffer) {
     return Array.from(new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4));
   }
 }
 
-/**
- * @param {MockEmbeddingConfig | OpenAIEmbeddingConfig} config
- * @returns {MockEmbeddingProvider | OpenAIEmbeddingProvider}
- */
+/** @implements {EmbeddingProvider} */
+export class LocalEmbeddingProvider {
+  constructor({ model = 'Xenova/all-MiniLM-L6-v2' } = {}) {
+    this.model = model;
+    this.dimensions = 384;
+    this.modelName = model;
+    this.modelVersion = '1.0.0';
+    this._pipeline = null;
+    this._readyPromise = null;
+  }
+
+  ready() {
+    if (!this._readyPromise) {
+      this._readyPromise = import('@huggingface/transformers').then(({ pipeline }) =>
+        pipeline('feature-extraction', this.model, { dtype: 'fp32' })
+      ).then(pipe => { this._pipeline = pipe; });
+    }
+    return this._readyPromise;
+  }
+
+  async embed(text) {
+    await this.ready();
+    const output = await this._pipeline(text, { pooling: 'mean', normalize: true });
+    return Array.from(output.data);
+  }
+
+  async embedBatch(texts) {
+    return Promise.all(texts.map(t => this.embed(t)));
+  }
+
+  vectorToBuffer(vector) {
+    return Buffer.from(new Float32Array(vector).buffer);
+  }
+
+  bufferToVector(buffer) {
+    return Array.from(new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4));
+  }
+}
+
+/** @implements {EmbeddingProvider} */
+export class GeminiEmbeddingProvider {
+  constructor({ apiKey, model = 'text-embedding-004', timeout = 30000 } = {}) {
+    this.apiKey = apiKey || process.env.GOOGLE_API_KEY;
+    this.model = model;
+    this.dimensions = 768;
+    this.timeout = timeout;
+    this.modelName = model;
+    this.modelVersion = 'latest';
+  }
+
+  async embed(text) {
+    if (!this.apiKey) throw new Error('Gemini embedding requires GOOGLE_API_KEY');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:embedContent?key=${this.apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: `models/${this.model}`, content: { parts: [{ text }] } }),
+          signal: controller.signal,
+        }
+      );
+      if (!response.ok) throw new Error(`Gemini embedding failed: ${response.status}`);
+      const data = await response.json();
+      return data.embedding.values;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async embedBatch(texts) {
+    return Promise.all(texts.map(t => this.embed(t)));
+  }
+
+  vectorToBuffer(vector) {
+    return Buffer.from(new Float32Array(vector).buffer);
+  }
+
+  bufferToVector(buffer) {
+    return Array.from(new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4));
+  }
+}
+
 export function createEmbeddingProvider(config) {
   switch (config.provider) {
     case 'mock':
       return new MockEmbeddingProvider(config);
     case 'openai':
       return new OpenAIEmbeddingProvider(config);
+    case 'local':
+      return new LocalEmbeddingProvider(config);
+    case 'gemini':
+      return new GeminiEmbeddingProvider(config);
     default:
-      throw new Error(`Unknown embedding provider: ${config.provider}. Valid: mock, openai`);
+      throw new Error(`Unknown embedding provider: ${config.provider}. Valid: mock, openai, local, gemini`);
   }
 }
