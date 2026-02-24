@@ -163,6 +163,32 @@ describe('LocalEmbeddingProvider', () => {
     expect(back).toHaveLength(384);
     expect(Math.abs(back[0] - vec[0])).toBeLessThan(0.0001);
   });
+
+  describe('embedBatch', () => {
+    it('returns correct number of vectors', async () => {
+      const results = await provider.embedBatch(['hello', 'world', 'test']);
+      expect(results).toHaveLength(3);
+      for (const vec of results) {
+        expect(vec).toHaveLength(384);
+      }
+    });
+
+    it('returns same results as individual embed calls', async () => {
+      const texts = ['the cat sat', 'on the mat'];
+      const batch = await provider.embedBatch(texts);
+      const individual = [await provider.embed(texts[0]), await provider.embed(texts[1])];
+      for (let i = 0; i < texts.length; i++) {
+        for (let j = 0; j < 384; j++) {
+          expect(batch[i][j]).toBeCloseTo(individual[i][j], 4);
+        }
+      }
+    });
+
+    it('handles empty array', async () => {
+      const results = await provider.embedBatch([]);
+      expect(results).toEqual([]);
+    });
+  });
 });
 
 describe('LocalEmbeddingProvider device config', () => {
@@ -189,6 +215,16 @@ describe('LocalEmbeddingProvider device config', () => {
     const vec = await provider.embed('test');
     expect(vec).toHaveLength(384);
   }, 120_000);
+
+  it('accepts batchSize option', () => {
+    const provider = new LocalEmbeddingProvider({ batchSize: 32 });
+    expect(provider.batchSize).toBe(32);
+  });
+
+  it('defaults batchSize to 64', () => {
+    const provider = new LocalEmbeddingProvider();
+    expect(provider.batchSize).toBe(64);
+  });
 });
 
 describe('GeminiEmbeddingProvider', () => {
