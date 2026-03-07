@@ -17,7 +17,8 @@ Audrey fixes all of this by modeling memory the way the brain does:
 |---|---|---|
 | Hippocampus | Episodic Memory | Fast capture of raw events and observations |
 | Neocortex | Semantic Memory | Consolidated principles and patterns |
-| Sleep Replay | Consolidation Engine | Extracts patterns from episodes, promotes to principles |
+| Cerebellum | Procedural Memory | Learned workflows and conditional behaviors |
+| Sleep Replay | Dream Cycle | Consolidates episodes into principles, applies decay |
 | Prefrontal Cortex | Validation Engine | Truth-checking, contradiction detection |
 | Amygdala | Affect System | Emotional encoding, arousal-salience coupling, mood-congruent recall |
 
@@ -32,10 +33,9 @@ npx audrey install
 That's it. Audrey auto-detects API keys from your environment:
 
 - `GOOGLE_API_KEY` or `GEMINI_API_KEY` set? Uses Gemini embeddings (3072d).
-- `ANTHROPIC_API_KEY` set? Enables LLM-powered consolidation and contradiction detection.
-- Neither? Runs with local embeddings (384d) for semantic search.
-
-To switch providers later, set the relevant env vars and re-run `npx audrey install`, or set `AUDREY_EMBEDDING_PROVIDER=openai` for explicit OpenAI embeddings.
+- Neither? Runs with local embeddings (384d, MiniLM via @huggingface/transformers — zero API key, works offline).
+- `AUDREY_EMBEDDING_PROVIDER=openai` for explicit OpenAI embeddings (1536d).
+- `ANTHROPIC_API_KEY` set? Enables LLM-powered consolidation, contradiction detection, and reflection.
 
 ```bash
 # Check status
@@ -45,7 +45,22 @@ npx audrey status
 npx audrey uninstall
 ```
 
-Every Claude Code session now has 9 memory tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`, `memory_export`, `memory_import`, `memory_forget`, `memory_decay`.
+Every Claude Code session now has 13 memory tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_dream`, `memory_introspect`, `memory_resolve_truth`, `memory_export`, `memory_import`, `memory_forget`, `memory_decay`, `memory_status`, `memory_reflect`, `memory_greeting`.
+
+### CLI Subcommands
+
+```bash
+npx audrey install          # Register MCP server with Claude Code
+npx audrey uninstall        # Remove MCP server registration
+npx audrey status           # Show memory store health and stats
+npx audrey greeting         # Output session briefing (mood, principles, recent memories)
+npx audrey greeting "auth"  # Briefing + context-relevant memories for "auth"
+npx audrey reflect          # Reflect on conversation + dream cycle (reads turns from stdin)
+npx audrey dream            # Run consolidation + decay cycle
+npx audrey reembed          # Re-embed all memories with current provider
+```
+
+`greeting` and `reflect` are designed for Claude Code hooks — wire them into SessionStart and Stop events for automatic memory lifecycle.
 
 ### SDK in Your Code
 
@@ -64,7 +79,7 @@ import { Audrey } from 'audrey';
 const brain = new Audrey({
   dataDir: './agent-memory',
   agent: 'my-agent',
-  embedding: { provider: 'mock', dimensions: 8 },  // or 'openai' for production
+  embedding: { provider: 'local', dimensions: 384 },  // or 'gemini', 'openai'
 });
 
 // 2. Encode observations — with optional emotional context
@@ -89,19 +104,31 @@ const recent = await brain.recall('stripe', {
   context: { task: 'debugging', domain: 'payments' },  // context-dependent retrieval
 });
 
-// 5. Consolidate episodes into principles (the "sleep" cycle)
-await brain.consolidate();
+// 5. Dream — the biological sleep cycle
+const dream = await brain.dream();
+// Consolidates episodes into principles, applies forgetting curves, reports health
 
-// 6. Forget something
+// 6. Reflect on a conversation — form lasting memories
+const result = await brain.reflect([
+  { role: 'user', content: 'How do I handle rate limits?' },
+  { role: 'assistant', content: 'Use exponential backoff with jitter...' },
+]);
+// LLM extracts what matters, encodes it as lasting memories
+
+// 7. Session greeting — wake up with context
+const briefing = await brain.greeting({ context: 'debugging stripe' });
+// Returns mood, principles, recent memories, identity, unresolved threads
+
+// 8. Forget something
 brain.forget(memoryId);                                 // soft-delete
 brain.forget(memoryId, { purge: true });                // hard-delete
 await brain.forgetByQuery('old API endpoint', { minSimilarity: 0.9 });
 
-// 7. Check brain health
+// 9. Check brain health
 const stats = brain.introspect();
 // { episodic: 47, semantic: 12, procedural: 3, dormant: 8, ... }
 
-// 8. Clean up
+// 10. Clean up
 brain.close();
 ```
 
@@ -114,12 +141,13 @@ const brain = new Audrey({
 
   // Embedding provider (required)
   embedding: {
-    provider: 'mock',          // 'mock' for testing, 'openai' for production
-    dimensions: 8,             // 8 for mock, 1536 for openai text-embedding-3-small
-    apiKey: '...',             // Required for openai
+    provider: 'local',         // 'mock' (test), 'local' (384d MiniLM), 'gemini' (3072d), 'openai' (1536d)
+    dimensions: 384,           // Must match provider
+    apiKey: '...',             // Required for gemini/openai
+    device: 'gpu',             // 'gpu' or 'cpu' — for local provider only
   },
 
-  // LLM provider (optional — enables smart consolidation + contradiction detection)
+  // LLM provider (optional — enables smart consolidation + contradiction detection + reflection)
   llm: {
     provider: 'anthropic',     // 'mock', 'anthropic', or 'openai'
     apiKey: '...',             // Required for anthropic/openai
@@ -131,13 +159,13 @@ const brain = new Audrey({
     minEpisodes: 3,            // Minimum cluster size for principle extraction
   },
 
-  // Context-dependent retrieval (v0.8.0)
+  // Context-dependent retrieval
   context: {
     enabled: true,             // Enable encoding-specificity principle
     weight: 0.3,               // Max 30% confidence boost on full context match
   },
 
-  // Emotional memory (v0.9.0)
+  // Emotional memory
   affect: {
     enabled: true,             // Enable affect system
     weight: 0.2,               // Max 20% mood-congruence boost
@@ -150,7 +178,7 @@ const brain = new Audrey({
     },
   },
 
-  // Interference-based forgetting (v0.7.0)
+  // Interference-based forgetting
   interference: {
     enabled: true,             // New episodes suppress similar existing memories
     weight: 0.15,              // Suppression strength
@@ -163,7 +191,7 @@ const brain = new Audrey({
 });
 ```
 
-**Without an LLM provider**, consolidation uses a default text-based extractor and contradiction detection is similarity-only. **With an LLM provider**, Audrey extracts real generalized principles, detects semantic contradictions, and resolves context-dependent truths.
+**Without an LLM provider**, consolidation uses a default text-based extractor and contradiction detection is similarity-only. **With an LLM provider**, Audrey extracts real generalized principles (semantic and procedural), detects semantic contradictions, resolves context-dependent truths, and reflects on conversations to form lasting memories.
 
 ### Environment Variables (MCP Server)
 
@@ -171,11 +199,12 @@ const brain = new Audrey({
 |---|---|---|
 | `AUDREY_DATA_DIR` | `~/.audrey/data` | SQLite database directory |
 | `AUDREY_AGENT` | `claude-code` | Agent identifier |
-| `AUDREY_EMBEDDING_PROVIDER` | `mock` | `mock` or `openai` |
-| `AUDREY_EMBEDDING_DIMENSIONS` | `8` | Vector dimensions (1536 for openai) |
-| `OPENAI_API_KEY` | — | Required when embedding/LLM provider is openai |
-| `AUDREY_LLM_PROVIDER` | — | `mock`, `anthropic`, or `openai` |
-| `ANTHROPIC_API_KEY` | — | Required when LLM provider is anthropic |
+| `AUDREY_EMBEDDING_PROVIDER` | auto-detect | `local`, `gemini`, `openai`, or `mock` |
+| `AUDREY_LLM_PROVIDER` | auto-detect | `anthropic`, `openai`, or `mock` |
+| `AUDREY_DEVICE` | `gpu` | Device for local embedding provider |
+| `GOOGLE_API_KEY` | — | Gemini embeddings (auto-selected when present) |
+| `ANTHROPIC_API_KEY` | — | Anthropic LLM (consolidation, reflection, contradiction detection) |
+| `OPENAI_API_KEY` | — | OpenAI embeddings/LLM (must be explicitly selected for embeddings) |
 
 ## Core Concepts
 
@@ -185,7 +214,7 @@ const brain = new Audrey({
 
 **Semantic** (warm, slow decay) — Consolidated principles. "Stripe enforces 100 req/s rate limit." Extracted automatically from clusters of episodic memories.
 
-**Procedural** (cold, slowest decay) — Learned workflows. "When Stripe rate-limits, implement exponential backoff." Skills the agent has acquired.
+**Procedural** (cold, slowest decay) — Learned workflows. "When Stripe rate-limits, implement exponential backoff." Skills the agent has acquired. Routed automatically when the LLM identifies a principle as procedural.
 
 **Causal** — Why things happened. Not just "A then B" but "A caused B because of mechanism C." Prevents correlation-as-causation.
 
@@ -228,25 +257,29 @@ Unreinforced memories lose confidence over time following Ebbinghaus exponential
 
 Retrieval resets the decay clock. Frequently accessed memories persist. Memories below the dormant threshold (0.1) become dormant — still searchable with `includeDormant: true`, but excluded from default recall.
 
-### Consolidation (The "Sleep" Cycle)
+### Dream Cycle (The "Sleep" Cycle)
 
-Audrey's consolidation engine periodically clusters similar episodic memories and extracts general principles:
+`brain.dream()` runs the full biological sleep analog:
 
-```
-3 episodes about Stripe 429 errors
-  → 1 semantic principle: "Stripe enforces ~100 req/s rate limit"
-```
+1. **Consolidate** — Cluster similar episodic memories via KNN, extract principles via LLM, route to semantic or procedural tables
+2. **Decay** — Apply forgetting curves, transition low-confidence memories to dormant
+3. **Introspect** — Report memory system health
 
-The pipeline: **Cluster** (embedding similarity) → **Extract** (LLM or callback) → **Validate** (check for contradictions) → **Promote** (write semantic memory) → **Audit** (log everything).
+The pipeline is fully transactional — if any cluster fails mid-run, all writes roll back. Consolidation is idempotent. Re-running on the same data produces no duplicates.
 
-Consolidation is idempotent. Re-running on the same data produces no duplicates. Every run creates an audit record with input/output IDs for full traceability.
+### Consolidation Routing
+
+When the LLM extracts a principle, it classifies it:
+
+- `type: 'semantic'` → goes to the `semantics` table (general knowledge)
+- `type: 'procedural'` → goes to the `procedures` table with `trigger_conditions` (actionable skills)
 
 ### Contradiction Handling
 
 When memories conflict, Audrey doesn't force a winner. Contradictions have a lifecycle:
 
 ```
-open → resolved | context_dependent | reopened
+open -> resolved | context_dependent | reopened
 ```
 
 Context-dependent truths are modeled explicitly:
@@ -276,8 +309,8 @@ Bad consolidation? Undo it:
 ```js
 const history = brain.consolidationHistory();
 brain.rollback(history[0].id);
-// Semantic memories → rolled_back state
-// Source episodes → un-consolidated
+// Semantic memories -> rolled_back state
+// Source episodes -> un-consolidated
 // Full audit trail preserved
 ```
 
@@ -298,13 +331,13 @@ Audrey's defenses:
 
 See [Configuration](#configuration) above for all options.
 
-### `brain.encode(params)` → `Promise<string>`
+### `brain.encode(params)` -> `Promise<string>`
 
 Encode an episodic memory. Returns the memory ID.
 
 ```js
 const id = await brain.encode({
-  content: 'What happened',          // Required. Non-empty string.
+  content: 'What happened',          // Required. Non-empty string, max 50000 chars.
   source: 'direct-observation',      // Required. See source types above.
   salience: 0.8,                     // Optional. 0-1. Default: 0.5
   causal: {                          // Optional. What caused this / what it caused.
@@ -319,12 +352,13 @@ const id = await brain.encode({
     arousal: 0.7,                    //   0 (calm) to 1 (activated)
     label: 'frustration',            //   Human-readable emotion label
   },
+  private: true,                     // Optional. If true, excluded from public recall.
 });
 ```
 
 Episodes are **immutable**. Corrections create new records with `supersedes` links. The original is preserved.
 
-### `brain.encodeBatch(paramsList)` → `Promise<string[]>`
+### `brain.encodeBatch(paramsList)` -> `Promise<string[]>`
 
 Encode multiple episodes in one call. Same params as `encode()`, but as an array.
 
@@ -336,13 +370,13 @@ const ids = await brain.encodeBatch([
 ]);
 ```
 
-### `brain.recall(query, options)` → `Promise<Memory[]>`
+### `brain.recall(query, options)` -> `Promise<Memory[]>`
 
 Retrieve memories ranked by `similarity * confidence`.
 
 ```js
 const memories = await brain.recall('stripe rate limits', {
-  limit: 5,                       // Max results (default 10)
+  limit: 5,                       // Max results (default 10, max 50)
   minConfidence: 0.5,             // Filter below this confidence
   types: ['semantic'],            // Filter by memory type
   includeProvenance: true,        // Include evidence chains
@@ -356,7 +390,7 @@ const memories = await brain.recall('stripe rate limits', {
 });
 ```
 
-Tag and source filters only apply to episodic memories (semantic and procedural memories don't have tags or sources). Date filters apply to all memory types.
+Tag and source filters only apply to episodic memories (semantic and procedural memories don't have tags or sources). Date filters apply to all memory types. Recall gracefully degrades — if one memory type's vector search fails, the others still return results.
 
 Each result:
 
@@ -382,7 +416,7 @@ Each result:
 
 Retrieval automatically reinforces matched memories (boosts confidence, resets decay clock).
 
-### `brain.recallStream(query, options)` → `AsyncGenerator<Memory>`
+### `brain.recallStream(query, options)` -> `AsyncGenerator<Memory>`
 
 Streaming version of `recall()`. Yields results one at a time. Supports early `break`. Same options as `recall()`.
 
@@ -393,7 +427,50 @@ for await (const memory of brain.recallStream('stripe issues', { limit: 10 })) {
 }
 ```
 
-### `brain.forget(id, options)` → `ForgetResult`
+### `brain.dream(options)` -> `Promise<DreamResult>`
+
+Run the full biological sleep cycle: consolidate + decay + introspect.
+
+```js
+const result = await brain.dream({
+  minClusterSize: 3,           // Min episodes per cluster
+  similarityThreshold: 0.85,   // KNN clustering threshold
+  dormantThreshold: 0.1,       // Below this = dormant
+});
+// {
+//   consolidation: { episodesEvaluated, clustersFound, principlesExtracted, semanticsCreated, proceduresCreated },
+//   decay: { totalEvaluated, transitionedToDormant },
+//   stats: { episodic, semantic, procedural, ... },
+// }
+```
+
+### `brain.reflect(turns)` -> `Promise<ReflectResult>`
+
+Feed a conversation to the LLM and extract lasting memories. Requires an LLM provider.
+
+```js
+const result = await brain.reflect([
+  { role: 'user', content: 'How do I handle rate limits?' },
+  { role: 'assistant', content: 'Use exponential backoff...' },
+]);
+// { encoded: 2, memories: [...] }
+```
+
+### `brain.greeting(options)` -> `Promise<GreetingResult>`
+
+Session-start briefing. Returns mood, principles, identity, recent memories, and unresolved threads.
+
+```js
+const briefing = await brain.greeting({
+  context: 'debugging stripe',  // Optional — also returns relevant memories
+  recentLimit: 10,
+  principleLimit: 5,
+  identityLimit: 5,
+});
+// { recent, principles, mood, unresolved, identity, contextual }
+```
+
+### `brain.forget(id, options)` -> `ForgetResult`
 
 Forget a memory by ID. Works on any memory type (episodic, semantic, procedural).
 
@@ -403,7 +480,7 @@ brain.forget(memoryId, { purge: true });      // hard-delete (permanent)
 // { id, type: 'episodic', purged: false }
 ```
 
-### `brain.forgetByQuery(query, options)` → `Promise<ForgetResult | null>`
+### `brain.forgetByQuery(query, options)` -> `Promise<ForgetResult | null>`
 
 Find the closest matching memory by semantic search and forget it. Searches all three memory types, picks the best match.
 
@@ -415,7 +492,7 @@ const result = await brain.forgetByQuery('old API endpoint', {
 // null if no match above threshold
 ```
 
-### `brain.purge()` → `PurgeCounts`
+### `brain.purge()` -> `PurgeCounts`
 
 Bulk hard-delete all dead memories: forgotten episodes, dormant/superseded/rolled-back semantics and procedures.
 
@@ -424,9 +501,9 @@ const counts = brain.purge();
 // { episodes: 12, semantics: 3, procedures: 0 }
 ```
 
-### `brain.consolidate(options)` → `Promise<ConsolidationResult>`
+### `brain.consolidate(options)` -> `Promise<ConsolidationResult>`
 
-Run the consolidation engine manually.
+Run the consolidation engine manually. Fully transactional — if any cluster fails, all writes roll back.
 
 ```js
 const result = await brain.consolidate({
@@ -434,13 +511,14 @@ const result = await brain.consolidate({
   similarityThreshold: 0.80,
   extractPrinciple: (episodes) => ({    // Optional LLM callback
     content: 'Extracted principle text',
-    type: 'semantic',
+    type: 'semantic',                   // or 'procedural'
+    conditions: ['trigger conditions'], // for procedural only
   }),
 });
-// { runId, status, episodesEvaluated, clustersFound, principlesExtracted }
+// { runId, status, episodesEvaluated, clustersFound, principlesExtracted, semanticsCreated, proceduresCreated }
 ```
 
-### `brain.decay(options)` → `DecayResult`
+### `brain.decay(options)` -> `DecayResult`
 
 Apply forgetting curves. Transitions low-confidence memories to dormant.
 
@@ -449,7 +527,16 @@ const result = brain.decay({ dormantThreshold: 0.1 });
 // { totalEvaluated, transitionedToDormant, timestamp }
 ```
 
-### `brain.rollback(runId)` → `RollbackResult`
+### `brain.memoryStatus()` -> `HealthStatus`
+
+Check brain health: vector index sync, dimension consistency, re-embed recommendations.
+
+```js
+brain.memoryStatus();
+// { healthy, vec_episodes, searchable_episodes, vec_semantics, ..., reembed_recommended }
+```
+
+### `brain.rollback(runId)` -> `RollbackResult`
 
 Undo a consolidation run.
 
@@ -458,7 +545,7 @@ brain.rollback('01ABC...');
 // { rolledBackMemories: 3, restoredEpisodes: 9 }
 ```
 
-### `brain.resolveTruth(contradictionId)` → `Promise<Resolution>`
+### `brain.resolveTruth(contradictionId)` -> `Promise<Resolution>`
 
 Resolve an open contradiction using LLM reasoning. Requires an LLM provider configured.
 
@@ -467,7 +554,7 @@ const resolution = await brain.resolveTruth('contradiction-id');
 // { resolution: 'context_dependent', conditions: { a: 'live keys', b: 'test keys' }, explanation: '...' }
 ```
 
-### `brain.introspect()` → `Stats`
+### `brain.introspect()` -> `Stats`
 
 Get memory system health stats.
 
@@ -482,16 +569,16 @@ brain.introspect();
 // }
 ```
 
-### `brain.consolidationHistory()` → `ConsolidationRun[]`
+### `brain.consolidationHistory()` -> `ConsolidationRun[]`
 
 Full audit trail of all consolidation runs.
 
 ### `brain.export()` / `brain.import(snapshot)`
 
-Export all memories as a JSON snapshot, or import from one.
+Export all memories as a JSON snapshot, or import from one. Full-fidelity: preserves consolidation metrics, run metadata, and config. Import re-embeds everything with the current provider in a single atomic transaction.
 
 ```js
-const snapshot = brain.export();   // { version, episodes, semantics, procedures, ... }
+const snapshot = brain.export();   // { version, episodes, semantics, procedures, consolidationMetrics, ... }
 await brain.import(snapshot);      // Re-embeds everything with current provider
 ```
 
@@ -503,6 +590,7 @@ brain.on('reinforcement', ({ episodeId, targetId, similarity }) => { ... });
 brain.on('contradiction', ({ episodeId, contradictionId, semanticId, resolution }) => { ... });
 brain.on('consolidation', ({ runId, principlesExtracted }) => { ... });
 brain.on('decay', ({ totalEvaluated, transitionedToDormant }) => { ... });
+brain.on('dream', ({ consolidation, decay, stats }) => { ... });
 brain.on('rollback', ({ runId, rolledBackMemories }) => { ... });
 brain.on('forget', ({ id, type, purged }) => { ... });
 brain.on('purge', ({ episodes, semantics, procedures }) => { ... });
@@ -531,7 +619,7 @@ src/
   consolidate.js     "Sleep" cycle. KNN clustering -> LLM extraction -> promote.
   db.js              SQLite + sqlite-vec. Schema, vec0 tables, migrations.
   decay.js           Ebbinghaus forgetting curves.
-  embedding.js       Pluggable providers (Mock, OpenAI). Batch embedding.
+  embedding.js       Pluggable providers (Mock, Local/MiniLM, Gemini, OpenAI). Batch embedding.
   encode.js          Immutable episodic memory creation + vec0 writes.
   affect.js          Emotional memory: arousal-salience coupling, mood-congruent recall, resonance.
   context.js         Context-dependent retrieval modifier (encoding specificity).
@@ -546,36 +634,37 @@ src/
   validate.js        KNN validation + LLM contradiction detection.
   migrate.js         Dimension migration re-embedding.
   adaptive.js        Adaptive consolidation parameter suggestions.
-  export.js          Memory export (JSON snapshots).
-  import.js          Memory import with re-embedding.
-  index.js           Barrel export.
+  export.js          Memory export (JSON snapshots with consolidation metrics).
+  import.js          Memory import with batch re-embedding in atomic transactions.
+  index.js           SDK barrel export (all providers, database utilities).
 
 mcp-server/
-  index.js           MCP tool server (9 tools, stdio transport) + CLI subcommands.
-  config.js          Shared config (env var parsing, install arg builder).
+  index.js           MCP tool server (13 tools, stdio transport) + CLI subcommands.
+  config.js          Shared config (env var parsing, provider resolution, install arg builder).
 ```
 
 ### Database Schema
 
 | Table | Purpose |
 |---|---|
-| `episodes` | Immutable raw events (content, source, salience, causal context) |
+| `episodes` | Immutable raw events (content, source, salience, causal context, affect, private flag) |
 | `semantics` | Consolidated principles (content, state, evidence chain) |
 | `procedures` | Learned workflows (trigger conditions, success/failure counts) |
 | `causal_links` | Causal relationships (cause, effect, mechanism, link type) |
 | `contradictions` | Dispute tracking (claims, state, resolution) |
-| `consolidation_runs` | Audit trail (inputs, outputs, status) |
+| `consolidation_runs` | Audit trail (inputs, outputs, status, checkpoint cursor) |
+| `consolidation_metrics` | Per-run metrics and confidence deltas |
 | `vec_episodes` | sqlite-vec KNN index for episode embeddings |
 | `vec_semantics` | sqlite-vec KNN index for semantic embeddings |
 | `vec_procedures` | sqlite-vec KNN index for procedural embeddings |
-| `audrey_config` | Dimension configuration and metadata |
+| `audrey_config` | Dimension configuration, embedding model info, metadata |
 
 All mutations use SQLite transactions. CHECK constraints enforce valid states and source types. Vector search uses sqlite-vec with cosine distance.
 
 ## Running Tests
 
 ```bash
-npm test          # 379 tests across 28 files
+npm test          # 463 tests across 29 files
 npm run test:watch
 ```
 
@@ -591,36 +680,80 @@ Demonstrates the full pipeline: encode 3 rate-limit observations, consolidate in
 
 ## Changelog
 
-### v0.9.0 — Emotional Memory (current)
+### v0.16.0 (current)
+
+- Version bump for npm publish with all v0.15.0 features included
+- 463 tests across 29 test files
+
+### v0.15.0 — Production Hardening + Dream Cycle
+
+- `dream()` method: consolidation + decay + introspect (biological sleep analog)
+- `memory_dream` MCP tool with configurable thresholds
+- `greeting` and `reflect` CLI subcommands for hook integration
+- Consolidation routes procedural principles to `procedures` table (previously all went to semantics)
+- Fully transactional consolidation — mid-run failures roll back all writes
+- Recall gracefully degrades per memory type (independent try/catch per KNN search)
+- sqlite-vec crash guard for empty vector tables
+- LLM JSON parsing strips markdown code fences from any provider
+- Input validation: empty content rejected, 50K char limit, forget requires exactly one target
+- Full-fidelity export/import: preserves consolidation metrics, run metadata, config
+- Import uses batch embedding in a single atomic transaction
+- Expanded SDK exports: all embedding/LLM providers, database utilities
+- Shared `resolveLLMConfig()` for CLI commands
+- 463 tests across 29 test files
+
+### v0.14.0 — Memory Intelligence
+
+- `memory_reflect` MCP tool — form lasting memories from conversation turns
+- `memory_greeting` MCP tool — session-start context briefing
+- `greeting()` method: mood, principles, identity, recent memories, unresolved threads
+- `reflect()` method: LLM-powered conversation analysis and memory formation
+- Rewritten consolidation prompt for deeper principle extraction
+- Rewritten reflection prompt for relational and emotional depth
+- `npx audrey status` shows last consolidation time
+
+### v0.13.0 — GPU-Accelerated Embeddings
+
+- GPU device configuration for LocalEmbeddingProvider
+- True single-forward-pass batch embedding for LocalEmbeddingProvider
+- Gemini `batchEmbedContents` API for batch embedding
+- `reembedAll` uses `embedBatch` for performance
+- `AUDREY_DEVICE` env var, `memoryStatus` reports device
+
+### v0.11.0 — Multi-Provider Embeddings + Privacy
+
+- `LocalEmbeddingProvider` — 384d MiniLM via @huggingface/transformers (zero API key, works offline)
+- `GeminiEmbeddingProvider` — 3072d via Google text-embedding-004
+- `private: true` memory flag — memories visible to AI only, excluded from public recall
+- Auto-select embedding provider: local -> gemini (if API key present) -> explicit openai
+- `npx audrey reembed` CLI subcommand for provider migration
+- `reflect()` method for post-conversation memory formation
+- 409 tests across 29 test files
+
+### v0.9.0 — Emotional Memory
 
 - Valence-arousal affect model (Russell's circumplex) on every episode
 - Arousal-salience coupling via Yerkes-Dodson inverted-U curve
 - Mood-congruent recall — matching emotional state boosts retrieval confidence
 - Emotional resonance detection — new experiences that echo past emotional patterns emit events
 - MCP server: `memory_encode` accepts `affect`, `memory_recall` accepts `mood`
-- 379 tests across 28 test files
 
 ### v0.8.0 — Context-Dependent Retrieval
 
 - Encoding specificity principle: context stored with memory, matching context boosts recall
 - MCP server: `memory_encode` and `memory_recall` accept `context`
-- 340 tests across 27 test files
 
 ### v0.7.0 — Interference + Salience
 
 - Interference-based forgetting: new memories competitively suppress similar existing ones
 - Salience-weighted confidence: high-salience memories resist decay
 - Spaced-repetition reconsolidation: retrieval intervals affect reinforcement strength
-- 310 tests across 25 test files
 
 ### v0.6.0 — Filtered Recall + Forget
 
 - Filtered recall: tag, source, and date-range filters on `recall()` and `recallStream()`
-- `forget()` — soft-delete any memory by ID
-- `forgetByQuery()` — find closest match by semantic search and forget it
-- `purge()` — bulk hard-delete all forgotten/dormant/superseded memories
-- `memory_forget` and `memory_decay` MCP tools (9 tools total)
-- 278 tests across 23 files
+- `forget()`, `forgetByQuery()`, `purge()`
+- `memory_forget` and `memory_decay` MCP tools
 
 ### v0.5.0 — Feature Depth
 
@@ -629,38 +762,30 @@ Demonstrates the full pipeline: encode 3 rate-limit observations, consolidate in
 - `memory_export` and `memory_import` MCP tools
 - Auto-consolidation scheduling
 - Adaptive consolidation parameter suggestions
-- 243 tests across 22 files
 
 ### v0.3.1 — MCP Server
 
 - MCP tool server via `@modelcontextprotocol/sdk` with stdio transport
 - One-command install: `npx audrey install` (auto-detects API keys)
 - CLI subcommands: `install`, `uninstall`, `status`
-- JSDoc type annotations on all public exports
-- Published to npm
-- 194 tests across 17 files
 
 ### v0.3.0 — Vector Performance
 
 - sqlite-vec native vector indexing (vec0 virtual tables with cosine distance)
 - KNN queries for recall, validation, and consolidation clustering
 - Batch encoding API and streaming recall with async generators
-- Dimension configuration and automatic migration from v0.2.0
-- 168 tests across 16 files
 
 ### v0.2.0 — LLM Integration
 
 - LLM-powered principle extraction, contradiction detection, causal articulation
 - Context-dependent truth resolution
 - Configurable LLM providers (Mock, Anthropic, OpenAI)
-- 142 tests across 15 files
 
 ### v0.1.0 — Foundation
 
 - Immutable episodic memory, compositional confidence, Ebbinghaus forgetting curves
 - Consolidation engine, contradiction lifecycle, rollback
 - Circular self-confirmation defense, causal context, introspection
-- 104 tests across 12 files
 
 ## Design Decisions
 
@@ -675,6 +800,8 @@ Demonstrates the full pipeline: encode 3 rate-limit observations, consolidate in
 **Why soft-delete by default?** Hard-deletes are irreversible. Soft-delete preserves data integrity and audit trails while excluding the memory from recall. Use `purge: true` or `brain.purge()` when you need permanent removal (GDPR, storage cleanup).
 
 **Why emotional memory?** Every memory system stores facts. Biological memory stores facts with emotional context — and that context changes how memories are retrieved. Emotional arousal modulates encoding strength (amygdala-hippocampal interaction). Current mood biases which memories surface (Bower, 1981). This isn't a novelty feature — it's the foundation for AI that remembers like it cares.
+
+**Why a dream cycle?** Biological sleep isn't downtime — it's when the brain consolidates episodic memories into long-term semantic knowledge, prunes weak connections, and strengthens important ones. Audrey's `dream()` does the same: cluster episodes, extract principles, apply decay, report health. Wire it into session hooks and your agent gets smarter every time it sleeps.
 
 ## License
 
