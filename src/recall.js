@@ -150,7 +150,14 @@ function matchesDateFilters(createdAt, filters) {
   return true;
 }
 
+function safeKForTable(db, table, candidateK) {
+  const rowCount = db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get().c;
+  return rowCount > 0 ? Math.min(candidateK, rowCount) : 0;
+}
+
 function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters = {}, includePrivate = false) {
+  const safeK = safeKForTable(db, 'vec_episodes', candidateK);
+  if (safeK === 0) return [];
   const privateClause = includePrivate ? '' : 'AND e."private" = 0';
   const rows = db.prepare(`
     SELECT e.*, (1.0 - v.distance) AS similarity
@@ -160,7 +167,7 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
       AND k = ?
       AND e.superseded_by IS NULL
       ${privateClause}
-  `).all(queryBuffer, candidateK);
+  `).all(queryBuffer, safeK);
 
   const results = [];
   for (const row of rows) {
@@ -196,6 +203,8 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
 }
 
 function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}) {
+  const safeK = safeKForTable(db, 'vec_semantics', candidateK);
+  if (safeK === 0) return { results: [], matchedIds: [] };
   const rows = db.prepare(`
     SELECT s.*, (1.0 - v.distance) AS similarity
     FROM vec_semantics v
@@ -203,7 +212,7 @@ function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includePro
     WHERE v.embedding MATCH ?
       AND k = ?
       ${stateClause(includeDormant)}
-  `).all(queryBuffer, candidateK);
+  `).all(queryBuffer, safeK);
 
   const results = [];
   const matchedIds = [];
@@ -219,6 +228,8 @@ function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includePro
 }
 
 function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}) {
+  const safeK = safeKForTable(db, 'vec_procedures', candidateK);
+  if (safeK === 0) return { results: [], matchedIds: [] };
   const rows = db.prepare(`
     SELECT p.*, (1.0 - v.distance) AS similarity
     FROM vec_procedures v
@@ -226,7 +237,7 @@ function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeP
     WHERE v.embedding MATCH ?
       AND k = ?
       ${stateClause(includeDormant)}
-  `).all(queryBuffer, candidateK);
+  `).all(queryBuffer, safeK);
 
   const results = [];
   const matchedIds = [];
@@ -274,35 +285,47 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   const allResults = [];
 
   if (searchTypes.includes('episodic')) {
-    const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters, includePrivate);
-    allResults.push(...episodic);
+    try {
+      const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters, includePrivate);
+      allResults.push(...episodic);
+    } catch {
+      // A broken episodic index should not block semantic/procedural recall.
+    }
   }
 
   if (searchTypes.includes('semantic')) {
-    const { results: semResults, matchedIds: semIds } =
-      knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters);
-    allResults.push(...semResults);
+    try {
+      const { results: semResults, matchedIds: semIds } =
+        knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters);
+      allResults.push(...semResults);
 
-    if (semIds.length > 0) {
-      const nowISO = now.toISOString();
-      const placeholders = semIds.map(() => '?').join(',');
-      db.prepare(
-        `UPDATE semantics SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
-      ).run(nowISO, ...semIds);
+      if (semIds.length > 0) {
+        const nowISO = now.toISOString();
+        const placeholders = semIds.map(() => '?').join(',');
+        db.prepare(
+          `UPDATE semantics SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
+        ).run(nowISO, ...semIds);
+      }
+    } catch {
+      // A broken semantic index should not block other memory types.
     }
   }
 
   if (searchTypes.includes('procedural')) {
-    const { results: procResults, matchedIds: procIds } =
-      knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters);
-    allResults.push(...procResults);
+    try {
+      const { results: procResults, matchedIds: procIds } =
+        knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters);
+      allResults.push(...procResults);
 
-    if (procIds.length > 0) {
-      const nowISO = now.toISOString();
-      const placeholders = procIds.map(() => '?').join(',');
-      db.prepare(
-        `UPDATE procedures SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
-      ).run(nowISO, ...procIds);
+      if (procIds.length > 0) {
+        const nowISO = now.toISOString();
+        const placeholders = procIds.map(() => '?').join(',');
+        db.prepare(
+          `UPDATE procedures SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
+        ).run(nowISO, ...procIds);
+      }
+    } catch {
+      // A broken procedural index should not block other memory types.
     }
   }
 

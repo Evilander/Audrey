@@ -4,6 +4,11 @@
  * @property {string} content
  */
 
+function extractJSON(text) {
+  const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  return fenced ? fenced[1].trim() : text.trim();
+}
+
 /**
  * @typedef {Object} LLMCompletionResult
  * @property {string} content
@@ -132,7 +137,8 @@ export class AnthropicLLMProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`Anthropic API error: ${response.status}`);
+        const errorBody = await response.text().catch(() => '');
+        throw new Error(`Anthropic API error: ${response.status} ${errorBody}`);
       }
 
       const data = await response.json();
@@ -151,7 +157,7 @@ export class AnthropicLLMProvider {
   async json(messages, options = {}) {
     const result = await this.complete(messages, options);
     try {
-      return JSON.parse(result.content);
+      return JSON.parse(extractJSON(result.content));
     } catch {
       throw new Error(`Failed to parse LLM response as JSON: ${result.content.slice(0, 200)}`);
     }
@@ -215,7 +221,7 @@ export class OpenAILLMProvider {
   async json(messages, options = {}) {
     const result = await this.complete(messages, options);
     try {
-      return JSON.parse(result.content);
+      return JSON.parse(extractJSON(result.content));
     } catch {
       throw new Error(`Failed to parse LLM response as JSON: ${result.content.slice(0, 200)}`);
     }

@@ -31,11 +31,11 @@ npx audrey install
 
 That's it. Audrey auto-detects API keys from your environment:
 
-- `OPENAI_API_KEY` set? Uses real OpenAI embeddings (1536d) for semantic search.
+- `GOOGLE_API_KEY` or `GEMINI_API_KEY` set? Uses Gemini embeddings (3072d).
 - `ANTHROPIC_API_KEY` set? Enables LLM-powered consolidation and contradiction detection.
-- Neither? Runs with mock embeddings — fully functional, upgrade anytime.
+- Neither? Runs with local embeddings (384d) for semantic search.
 
-To upgrade later, set the keys and re-run `npx audrey install`.
+To switch providers later, set the relevant env vars and re-run `npx audrey install`, or set `AUDREY_EMBEDDING_PROVIDER=openai` for explicit OpenAI embeddings.
 
 ```bash
 # Check status

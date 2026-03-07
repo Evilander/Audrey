@@ -428,6 +428,9 @@ export class Audrey extends EventEmitter {
     const episodes = this.db.prepare('SELECT COUNT(*) as c FROM episodes').get().c;
     const semantics = this.db.prepare('SELECT COUNT(*) as c FROM semantics').get().c;
     const procedures = this.db.prepare('SELECT COUNT(*) as c FROM procedures').get().c;
+    const searchableEpisodes = this.db.prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL').get().c;
+    const searchableSemantics = this.db.prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL').get().c;
+    const searchableProcedures = this.db.prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL').get().c;
 
     let vecEpisodes = 0, vecSemantics = 0, vecProcedures = 0;
     try {
@@ -450,6 +453,9 @@ export class Audrey extends EventEmitter {
     const healthy = episodes === vecEpisodes
       && semantics === vecSemantics
       && procedures === vecProcedures;
+    const reembedRecommended = searchableEpisodes !== vecEpisodes
+      || searchableSemantics !== vecSemantics
+      || searchableProcedures !== vecProcedures;
 
     return {
       episodes,
@@ -458,10 +464,14 @@ export class Audrey extends EventEmitter {
       vec_semantics: vecSemantics,
       procedures,
       vec_procedures: vecProcedures,
+      searchable_episodes: searchableEpisodes,
+      searchable_semantics: searchableSemantics,
+      searchable_procedures: searchableProcedures,
       dimensions,
       schema_version: schemaVersion,
       device,
       healthy,
+      reembed_recommended: reembedRecommended,
     };
   }
 
@@ -509,6 +519,30 @@ export class Audrey extends EventEmitter {
       result.contextual = await this.recall(context, { limit: 5, includePrivate: true });
     }
 
+    return result;
+  }
+
+  async dream(options = {}) {
+    await this._ensureMigrated();
+
+    const consolidation = await this.consolidate({
+      minClusterSize: options.minClusterSize,
+      similarityThreshold: options.similarityThreshold,
+    });
+
+    const decay = this.decay({
+      dormantThreshold: options.dormantThreshold,
+    });
+
+    const stats = this.introspect();
+
+    const result = {
+      consolidation,
+      decay,
+      stats,
+    };
+
+    this.emit('dream', result);
     return result;
   }
 

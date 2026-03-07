@@ -213,6 +213,33 @@ function migrateEmbeddingsToVec0(db, dimensions) {
   });
 }
 
+function getEmbeddingSyncCounts(db) {
+  let vecEpisodes = 0;
+  let vecSemantics = 0;
+  let vecProcedures = 0;
+
+  try {
+    vecEpisodes = db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get().c;
+    vecSemantics = db.prepare('SELECT COUNT(*) as c FROM vec_semantics').get().c;
+    vecProcedures = db.prepare('SELECT COUNT(*) as c FROM vec_procedures').get().c;
+  } catch {
+    // vec tables may not exist yet
+  }
+
+  const episodes = db.prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL').get().c;
+  const semantics = db.prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL').get().c;
+  const procedures = db.prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL').get().c;
+
+  return {
+    episodes,
+    vecEpisodes,
+    semantics,
+    vecSemantics,
+    procedures,
+    vecProcedures,
+  };
+}
+
 function addColumnIfMissing(db, table, column, definition) {
   const columns = db.pragma(`table_info(${table})`);
   const exists = columns.some(col => col.name === column);
@@ -305,6 +332,16 @@ export function createDatabase(dataDir, options = {}) {
 
     if (!migrated) {
       migrateEmbeddingsToVec0(db, dimensions);
+      const sync = getEmbeddingSyncCounts(db);
+      if (
+        sync.episodes !== sync.vecEpisodes
+        || sync.semantics !== sync.vecSemantics
+        || sync.procedures !== sync.vecProcedures
+      ) {
+        // Legacy blobs exist but could not be copied cleanly into vec0.
+        // Mark the store for lazy re-embedding so the next encode/recall repairs it.
+        migrated = true;
+      }
     }
   }
 

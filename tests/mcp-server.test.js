@@ -1,14 +1,25 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { z } from 'zod';
 import { Audrey } from '../src/index.js';
 import { readStoredDimensions } from '../src/db.js';
 import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, SERVER_NAME, VERSION } from '../mcp-server/config.js';
+import {
+  MAX_MEMORY_CONTENT_LENGTH,
+  initializeEmbeddingProvider,
+  memoryEncodeToolSchema,
+  memoryForgetToolSchema,
+  memoryImportToolSchema,
+  memoryRecallToolSchema,
+  registerDreamTool,
+  validateForgetSelection,
+} from '../mcp-server/index.js';
 import { existsSync, rmSync } from 'node:fs';
 
 const TEST_DIR = './test-mcp-server';
 
 describe('MCP config', () => {
-  it('VERSION is 0.14.0', () => {
-    expect(VERSION).toBe('0.14.0');
+  it('VERSION is 0.15.0', () => {
+    expect(VERSION).toBe('0.15.0');
   });
 });
 
@@ -131,6 +142,70 @@ describe('MCP CLI: buildInstallArgs', () => {
     const nameIdx = args.indexOf(SERVER_NAME);
     const firstEnvIdx = args.indexOf('-e');
     expect(nameIdx).toBeLessThan(firstEnvIdx);
+  });
+});
+
+describe('MCP validation hardening', () => {
+  it('memory_encode rejects empty or whitespace-only content', () => {
+    const schema = z.object(memoryEncodeToolSchema);
+    expect(schema.safeParse({
+      content: '',
+      source: 'direct-observation',
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      content: '   ',
+      source: 'direct-observation',
+    }).success).toBe(false);
+  });
+
+  it('memory_encode rejects content above the maximum length', () => {
+    const schema = z.object(memoryEncodeToolSchema);
+    const content = 'x'.repeat(MAX_MEMORY_CONTENT_LENGTH + 1);
+    expect(schema.safeParse({
+      content,
+      source: 'direct-observation',
+    }).success).toBe(false);
+  });
+
+  it('memory_recall enforces limit bounds', () => {
+    const schema = z.object(memoryRecallToolSchema);
+    expect(schema.safeParse({ query: 'test', limit: 0 }).success).toBe(false);
+    expect(schema.safeParse({ query: 'test', limit: 51 }).success).toBe(false);
+    expect(schema.safeParse({ query: 'test', limit: 50 }).success).toBe(true);
+  });
+
+  it('memory_import accepts consolidationMetrics snapshots', () => {
+    const schema = z.object(memoryImportToolSchema);
+    expect(schema.safeParse({
+      snapshot: {
+        version: '0.15.0',
+        episodes: [],
+        consolidationMetrics: [{ id: 'metric-1' }],
+      },
+    }).success).toBe(true);
+  });
+
+  it('memory_forget rejects both id and query together', () => {
+    expect(() => validateForgetSelection('ep-1', 'query')).toThrow('Provide exactly one of id or query');
+  });
+
+  it('initializes async embedding providers for the dream CLI path', async () => {
+    const provider = { ready: vi.fn().mockResolvedValue(undefined) };
+    await initializeEmbeddingProvider(provider);
+    expect(provider.ready).toHaveBeenCalledOnce();
+  });
+
+  it('does nothing for providers without async initialization', async () => {
+    await expect(initializeEmbeddingProvider({})).resolves.toBeUndefined();
+  });
+
+  it('exports memory_forget schema fields', () => {
+    expect(Object.keys(memoryForgetToolSchema)).toEqual([
+      'id',
+      'query',
+      'min_similarity',
+      'purge',
+    ]);
   });
 });
 
@@ -283,6 +358,70 @@ describe('MCP tool: memory_consolidate', () => {
     const result = await audrey.consolidate();
     expect(result.principlesExtracted).toBe(0);
     expect(result.clustersFound).toBe(0);
+  });
+});
+
+describe('MCP tool: memory_dream', () => {
+  it('exists and calls audrey.dream with translated options', async () => {
+    const registeredTools = new Map();
+    const server = {
+      tool(name, schema, handler) {
+        registeredTools.set(name, { schema, handler });
+      },
+    };
+    const dreamResult = {
+      consolidation: {
+        runId: 'run-1',
+        episodesEvaluated: 3,
+        clustersFound: 1,
+        principlesExtracted: 1,
+        semanticsCreated: 1,
+        proceduresCreated: 0,
+        status: 'completed',
+      },
+      decay: {
+        totalEvaluated: 4,
+        transitionedToDormant: 1,
+        timestamp: '2026-03-07T00:00:00.000Z',
+      },
+      stats: {
+        episodic: 3,
+        semantic: 1,
+        procedural: 0,
+        causalLinks: 0,
+        dormant: 1,
+        contradictions: { open: 0, resolved: 0, context_dependent: 0, reopened: 0 },
+        lastConsolidation: null,
+        totalConsolidationRuns: 1,
+      },
+    };
+    const audrey = {
+      dream: vi.fn().mockResolvedValue(dreamResult),
+    };
+
+    registerDreamTool(server, audrey);
+
+    const dreamTool = registeredTools.get('memory_dream');
+    expect(dreamTool).toBeDefined();
+    expect(Object.keys(dreamTool.schema)).toEqual([
+      'min_cluster_size',
+      'similarity_threshold',
+      'dormant_threshold',
+    ]);
+
+    const rawResult = await dreamTool.handler({
+      min_cluster_size: 3,
+      similarity_threshold: 0.99,
+      dormant_threshold: 0.1,
+    });
+
+    expect(audrey.dream).toHaveBeenCalledWith({
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      dormantThreshold: 0.1,
+    });
+    expect(rawResult.isError).not.toBe(true);
+    expect(JSON.parse(rawResult.content[0].text)).toEqual(dreamResult);
   });
 });
 
