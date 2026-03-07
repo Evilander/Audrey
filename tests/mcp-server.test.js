@@ -137,6 +137,21 @@ describe('MCP CLI: buildInstallArgs', () => {
     expect(envPairsStr).toContain('ANTHROPIC_API_KEY=sk-ant-test');
   });
 
+  it('wraps command in cmd /c on Windows', () => {
+    const args = buildInstallArgs({});
+    if (process.platform === 'win32') {
+      const dashDashIdx = args.indexOf('--');
+      expect(args[dashDashIdx + 1]).toBe('cmd');
+      expect(args[dashDashIdx + 2]).toBe('/c');
+      expect(args[dashDashIdx + 3]).toBe('npx');
+      expect(args[dashDashIdx + 4]).toBe('audrey');
+    } else {
+      const dashDashIdx = args.indexOf('--');
+      expect(args[dashDashIdx + 1]).toBe('npx');
+      expect(args[dashDashIdx + 2]).toBe('audrey');
+    }
+  });
+
   it('places server name before -e flags to avoid variadic parsing bug', () => {
     const args = buildInstallArgs({ OPENAI_API_KEY: 'sk-test' });
     const nameIdx = args.indexOf(SERVER_NAME);

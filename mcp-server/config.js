@@ -70,7 +70,11 @@ export function buildInstallArgs(env = process.env) {
   for (const pair of envPairs) {
     args.push('-e', pair);
   }
-  args.push('--', 'npx', 'audrey');
+  if (process.platform === 'win32') {
+    args.push('--', 'cmd', '/c', 'npx', 'audrey');
+  } else {
+    args.push('--', 'npx', 'audrey');
+  }
 
   return args;
 }
