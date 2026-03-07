@@ -115,9 +115,11 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
   const now = new Date().toISOString();
 
   db.prepare(`
-    INSERT INTO consolidation_runs (id, started_at, status, input_episode_ids, output_memory_ids, consolidation_model)
-    VALUES (?, ?, 'running', '[]', '[]', ?)
-  `).run(runId, now, llmProvider?.modelName || null);
+    INSERT INTO consolidation_runs (
+      id, started_at, status, input_episode_ids, output_memory_ids, consolidation_model, checkpoint_cursor
+    )
+    VALUES (?, ?, 'running', '[]', '[]', ?, ?)
+  `).run(runId, now, llmProvider?.modelName || null, now);
 
   try {
     const clusters = clusterEpisodes(db, embeddingProvider, { similarityThreshold, minClusterSize });
@@ -126,109 +128,130 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
       'SELECT COUNT(*) as count FROM episodes WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL'
     ).get().count;
 
-    const clusterData = [];
-    for (const cluster of clusters) {
-      let principle;
-      if (extractPrinciple) {
-        principle = extractPrinciple(cluster);
-      } else if (llmProvider) {
-        principle = await llmExtractPrinciple(llmProvider, cluster);
-      } else {
-        principle = defaultExtractPrinciple(cluster);
-      }
-
-      if (!principle || !principle.content) continue;
-
-      const clusterIds = cluster.map(ep => ep.id);
-      const sourceTypes = new Set(cluster.map(ep => ep.source));
-      const vector = await embeddingProvider.embed(principle.content);
-      const embeddingBuffer = embeddingProvider.vectorToBuffer(vector);
-
-      clusterData.push({
-        cluster,
-        principle,
-        clusterIds,
-        sourceTypeDiversity: sourceTypes.size,
-        embeddingBuffer,
-        semanticId: generateId(),
-        semanticNow: new Date().toISOString(),
-        maxSalience: Math.max(...cluster.map(ep => ep.salience ?? 0.5)),
-      });
-    }
-
     const allInputIds = [];
     const allOutputIds = [];
     let principlesExtracted = 0;
+    let proceduresExtracted = 0;
+    const insertProcedure = db.prepare(`
+      INSERT INTO procedures (
+        id, content, embedding, state, trigger_conditions,
+        evidence_episode_ids, success_count, failure_count,
+        embedding_model, embedding_version, created_at, salience
+      ) VALUES (?, ?, ?, 'active', ?, ?, 0, 0, ?, ?, ?, ?)
+    `);
+    const insertVecProcedure = db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)');
+    const insertSemantic = db.prepare(`
+      INSERT INTO semantics (
+        id, content, embedding, state, evidence_episode_ids,
+        evidence_count, supporting_count, source_type_diversity,
+        consolidation_checkpoint, embedding_model, embedding_version,
+        consolidation_model, created_at, salience
+      ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const insertVecSemantic = db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)');
+    const markEpisode = db.prepare('UPDATE episodes SET consolidated = 1 WHERE id = ?');
+    const markVecEpisode = db.prepare('UPDATE vec_episodes SET consolidated = ? WHERE id = ?');
+    const updateRunCompleted = db.prepare(`
+      UPDATE consolidation_runs
+      SET status = 'completed',
+          completed_at = ?,
+          input_episode_ids = ?,
+          output_memory_ids = ?
+      WHERE id = ?
+    `);
+    const insertMetrics = db.prepare(`
+      INSERT INTO consolidation_metrics (id, run_id, min_cluster_size, similarity_threshold,
+        episodes_evaluated, clusters_found, principles_extracted, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
 
-    const promoteAll = db.transaction(() => {
-      for (const entry of clusterData) {
-        allInputIds.push(...entry.clusterIds);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const cluster of clusters) {
+        let principle;
+        if (extractPrinciple) {
+          principle = extractPrinciple(cluster);
+        } else if (llmProvider) {
+          principle = await llmExtractPrinciple(llmProvider, cluster);
+        } else {
+          principle = defaultExtractPrinciple(cluster);
+        }
 
-        db.prepare(`
-          INSERT INTO semantics (
-            id, content, embedding, state, evidence_episode_ids,
-            evidence_count, supporting_count, source_type_diversity,
-            consolidation_checkpoint, embedding_model, embedding_version,
-            consolidation_model, created_at, salience
-          ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          entry.semanticId,
-          entry.principle.content,
-          entry.embeddingBuffer,
-          JSON.stringify(entry.clusterIds),
-          entry.cluster.length,
-          entry.cluster.length,
-          entry.sourceTypeDiversity,
-          runId,
-          embeddingProvider.modelName,
-          embeddingProvider.modelVersion,
-          llmProvider?.modelName || null,
-          entry.semanticNow,
-          entry.maxSalience,
-        );
+        if (!principle || !principle.content) continue;
 
-        db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
-          entry.semanticId, entry.embeddingBuffer, 'active'
-        );
+        const clusterIds = cluster.map(ep => ep.id);
+        const sourceTypeDiversity = new Set(cluster.map(ep => ep.source)).size;
+        const vector = await embeddingProvider.embed(principle.content);
+        const embeddingBuffer = embeddingProvider.vectorToBuffer(vector);
+        const memoryId = generateId();
+        const createdAt = new Date().toISOString();
+        const maxSalience = Math.max(...cluster.map(ep => ep.salience ?? 0.5));
 
-        allOutputIds.push(entry.semanticId);
+        allInputIds.push(...clusterIds);
+
+        if (principle.type === 'procedural') {
+          insertProcedure.run(
+            memoryId,
+            principle.content,
+            embeddingBuffer,
+            principle.conditions ? JSON.stringify(principle.conditions) : null,
+            JSON.stringify(clusterIds),
+            embeddingProvider.modelName,
+            embeddingProvider.modelVersion,
+            createdAt,
+            maxSalience,
+          );
+          insertVecProcedure.run(memoryId, embeddingBuffer, 'active');
+          proceduresExtracted++;
+        } else {
+          insertSemantic.run(
+            memoryId,
+            principle.content,
+            embeddingBuffer,
+            JSON.stringify(clusterIds),
+            cluster.length,
+            cluster.length,
+            sourceTypeDiversity,
+            runId,
+            embeddingProvider.modelName,
+            embeddingProvider.modelVersion,
+            llmProvider?.modelName || null,
+            createdAt,
+            maxSalience,
+          );
+          insertVecSemantic.run(memoryId, embeddingBuffer, 'active');
+        }
+
+        allOutputIds.push(memoryId);
         principlesExtracted++;
 
-        const markStmt = db.prepare('UPDATE episodes SET consolidated = 1 WHERE id = ?');
-        const markVecStmt = db.prepare('UPDATE vec_episodes SET consolidated = ? WHERE id = ?');
-        for (const ep of entry.cluster) {
-          markStmt.run(ep.id);
-          markVecStmt.run(BigInt(1), ep.id);
+        for (const ep of cluster) {
+          markEpisode.run(ep.id);
+          markVecEpisode.run(BigInt(1), ep.id);
         }
       }
 
       const completedAt = new Date().toISOString();
-      db.prepare(`
-        UPDATE consolidation_runs
-        SET status = 'completed',
-            completed_at = ?,
-            input_episode_ids = ?,
-            output_memory_ids = ?
-        WHERE id = ?
-      `).run(completedAt, JSON.stringify(allInputIds), JSON.stringify(allOutputIds), runId);
-    });
-
-    promoteAll();
-
-    db.prepare(`
-      INSERT INTO consolidation_metrics (id, run_id, min_cluster_size, similarity_threshold,
-        episodes_evaluated, clusters_found, principles_extracted, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      generateId(), runId, minClusterSize, similarityThreshold,
-      episodesEvaluated, clusters.length, principlesExtracted, new Date().toISOString(),
-    );
+      updateRunCompleted.run(completedAt, JSON.stringify(allInputIds), JSON.stringify(allOutputIds), runId);
+      insertMetrics.run(
+        generateId(), runId, minClusterSize, similarityThreshold,
+        episodesEvaluated, clusters.length, principlesExtracted, completedAt,
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      if (db.inTransaction) {
+        db.exec('ROLLBACK');
+      }
+      throw err;
+    }
 
     return {
       runId,
       episodesEvaluated,
       clustersFound: clusters.length,
       principlesExtracted,
+      semanticsCreated: principlesExtracted - proceduresExtracted,
+      proceduresCreated: proceduresExtracted,
     };
   } catch (err) {
     const failedAt = new Date().toISOString();

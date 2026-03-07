@@ -1,11 +1,45 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Audrey } from '../src/audrey.js';
 import { MockLLMProvider } from '../src/llm.js';
+import * as AudreySDK from '../src/index.js';
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const TEST_DIR = './test-audrey-main';
+
+async function seedConsolidationCluster(brain, content) {
+  await brain.encode({ content, source: 'direct-observation' });
+  await brain.encode({ content, source: 'tool-result' });
+  await brain.encode({ content, source: 'told-by-user' });
+}
+
+function normalizeSnapshot(snapshot) {
+  const clone = JSON.parse(JSON.stringify(snapshot));
+  delete clone.exportedAt;
+
+  for (const key of [
+    'episodes',
+    'semantics',
+    'procedures',
+    'causalLinks',
+    'contradictions',
+    'consolidationRuns',
+    'consolidationMetrics',
+  ]) {
+    if (Array.isArray(clone[key])) {
+      clone[key].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    }
+  }
+
+  if (clone.config) {
+    clone.config = Object.fromEntries(
+      Object.entries(clone.config).sort(([a], [b]) => a.localeCompare(b))
+    );
+  }
+
+  return clone;
+}
 
 describe('Audrey', () => {
   let brain;
@@ -42,6 +76,30 @@ describe('Audrey', () => {
     expect(Array.isArray(results)).toBe(true);
   });
 
+  it('does not leave partial state when embedding fails during encode', async () => {
+    brain.embeddingProvider = {
+      ...brain.embeddingProvider,
+      embed: vi.fn().mockRejectedValue(new Error('embedding failed')),
+    };
+
+    await expect(
+      brain.encode({ content: 'broken encode', source: 'direct-observation' })
+    ).rejects.toThrow('embedding failed');
+
+    expect(brain.db.prepare('SELECT COUNT(*) AS c FROM episodes').get().c).toBe(0);
+    expect(brain.db.prepare('SELECT COUNT(*) AS c FROM vec_episodes').get().c).toBe(0);
+  });
+
+  it('recall degrades gracefully when some vec tables are empty or unavailable', async () => {
+    await brain.encode({ content: 'resilient recall test', source: 'direct-observation' });
+
+    brain.db.exec('DELETE FROM vec_semantics');
+    brain.db.exec('DROP TABLE vec_procedures');
+
+    const results = await brain.recall('resilient recall test');
+    expect(results.some(r => r.content === 'resilient recall test')).toBe(true);
+  });
+
   it('emits encode event', async () => {
     let emitted = false;
     brain.on('encode', () => { emitted = true; });
@@ -53,6 +111,35 @@ describe('Audrey', () => {
     const result = await brain.consolidate();
     expect(result).toHaveProperty('runId');
     expect(result).toHaveProperty('status');
+  });
+
+  it('rolls back all consolidation writes when a later cluster fails', async () => {
+    await seedConsolidationCluster(brain, 'cluster alpha');
+    await seedConsolidationCluster(brain, 'cluster beta');
+
+    let callCount = 0;
+    await expect(brain.consolidate({
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: (cluster) => {
+        callCount++;
+        if (callCount === 2) {
+          throw new Error('principle extraction failed');
+        }
+        return { content: `principle for ${cluster[0].content}`, type: 'semantic' };
+      },
+    })).rejects.toThrow('principle extraction failed');
+
+    expect(brain.db.prepare('SELECT COUNT(*) AS c FROM semantics').get().c).toBe(0);
+    expect(brain.db.prepare('SELECT COUNT(*) AS c FROM procedures').get().c).toBe(0);
+    expect(brain.db.prepare('SELECT COUNT(*) AS c FROM episodes WHERE consolidated = 1').get().c).toBe(0);
+
+    const run = brain.db.prepare(`
+      SELECT status FROM consolidation_runs
+      ORDER BY started_at DESC
+      LIMIT 1
+    `).get();
+    expect(run.status).toBe('failed');
   });
 
   it('emits consolidation event', async () => {
@@ -222,6 +309,255 @@ describe('Audrey with LLM', () => {
     expect(row.state).toBe('context_dependent');
   });
 });
+
+describe('procedural consolidation routing', () => {
+  let brain;
+  const ROUTING_DIR = './test-audrey-routing';
+
+  async function seedCluster(content = 'same routing observation') {
+    await brain.encode({ content, source: 'direct-observation' });
+    await brain.encode({ content, source: 'tool-result' });
+    await brain.encode({ content, source: 'told-by-user' });
+  }
+
+  beforeEach(() => {
+    if (existsSync(ROUTING_DIR)) rmSync(ROUTING_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: ROUTING_DIR,
+      agent: 'test-agent',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(ROUTING_DIR)) rmSync(ROUTING_DIR, { recursive: true });
+  });
+
+  it('routes procedural principles to procedures and makes them recallable', async () => {
+    const conditions = { trigger: 'stripe_429', strategy: 'exponential_backoff' };
+    const principleContent = 'When Stripe returns 429, retry with exponential backoff';
+
+    await seedCluster();
+
+    const result = await brain.consolidate({
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: () => ({
+        content: principleContent,
+        type: 'procedural',
+        conditions,
+      }),
+    });
+
+    expect(result.principlesExtracted).toBe(1);
+    expect(result.semanticsCreated).toBe(0);
+    expect(result.proceduresCreated).toBe(1);
+    expect(brain.db.prepare('SELECT COUNT(*) as c FROM semantics').get().c).toBe(0);
+
+    const procedure = brain.db.prepare(
+      "SELECT id, content, trigger_conditions FROM procedures WHERE state = 'active'"
+    ).get();
+    expect(procedure.content).toBe(principleContent);
+    expect(JSON.parse(procedure.trigger_conditions)).toEqual(conditions);
+
+    const vecRow = brain.db.prepare('SELECT id FROM vec_procedures WHERE id = ?').get(procedure.id);
+    expect(vecRow).toEqual({ id: procedure.id });
+
+    const results = await brain.recall(principleContent, { types: ['procedural'] });
+    const recalled = results.find(r => r.id === procedure.id);
+    expect(recalled).toBeDefined();
+    expect(recalled.type).toBe('procedural');
+    expect(recalled.content).toBe(principleContent);
+  });
+
+  it('routes semantic principles to semantics and reports counts', async () => {
+    const principleContent = 'Stripe rate limits require backoff';
+
+    await seedCluster();
+
+    const result = await brain.consolidate({
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: () => ({
+        content: principleContent,
+        type: 'semantic',
+      }),
+    });
+
+    expect(result.principlesExtracted).toBe(1);
+    expect(result.semanticsCreated).toBe(1);
+    expect(result.proceduresCreated).toBe(0);
+    expect(brain.db.prepare('SELECT COUNT(*) as c FROM procedures').get().c).toBe(0);
+
+    const semantic = brain.db.prepare(
+      "SELECT id, content FROM semantics WHERE state = 'active'"
+    ).get();
+    expect(semantic.content).toBe(principleContent);
+
+    const vecRow = brain.db.prepare('SELECT id FROM vec_semantics WHERE id = ?').get(semantic.id);
+    expect(vecRow).toEqual({ id: semantic.id });
+  });
+
+  it('routes mixed clusters across semantic and procedural memories', async () => {
+    await seedCluster('retry workflow cluster');
+    await seedCluster('rate limit pattern cluster');
+
+    const result = await brain.consolidate({
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: (episodes) => {
+        if (episodes[0].content === 'retry workflow cluster') {
+          return {
+            content: 'When retries fail, add jitter before the next retry',
+            type: 'procedural',
+            conditions: { trigger: 'repeated retry failures' },
+          };
+        }
+
+        return {
+          content: 'Repeated 429s usually indicate a burst limit has been reached',
+          type: 'semantic',
+        };
+      },
+    });
+
+    expect(result.clustersFound).toBe(2);
+    expect(result.principlesExtracted).toBe(2);
+    expect(result.semanticsCreated).toBe(1);
+    expect(result.proceduresCreated).toBe(1);
+    expect(brain.db.prepare('SELECT COUNT(*) as c FROM semantics').get().c).toBe(1);
+    expect(brain.db.prepare('SELECT COUNT(*) as c FROM procedures').get().c).toBe(1);
+
+    const procedure = brain.db.prepare(
+      "SELECT id, trigger_conditions FROM procedures WHERE content = ?"
+    ).get('When retries fail, add jitter before the next retry');
+    expect(JSON.parse(procedure.trigger_conditions)).toEqual({
+      trigger: 'repeated retry failures',
+    });
+
+    const results = await brain.recall('add jitter before the next retry', {
+      types: ['procedural'],
+      includeProvenance: true,
+    });
+    const recalled = results.find(r => r.id === procedure.id);
+    expect(recalled).toBeDefined();
+    expect(recalled.type).toBe('procedural');
+  });
+});
+
+describe('dream()', () => {
+  let brain;
+  const DREAM_DIR = './test-audrey-dream';
+
+  async function seedCluster(content = 'same dream observation') {
+    await brain.encode({ content, source: 'direct-observation' });
+    await brain.encode({ content, source: 'tool-result' });
+    await brain.encode({ content, source: 'told-by-user' });
+  }
+
+  beforeEach(() => {
+    if (existsSync(DREAM_DIR)) rmSync(DREAM_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: DREAM_DIR,
+      agent: 'test-agent',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(DREAM_DIR)) rmSync(DREAM_DIR, { recursive: true });
+  });
+
+  it('runs consolidation and decay and returns combined results', async () => {
+    await seedCluster();
+
+    const result = await brain.dream({
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      dormantThreshold: 0.2,
+    });
+
+    expect(result).toHaveProperty('consolidation');
+    expect(result).toHaveProperty('decay');
+    expect(result).toHaveProperty('stats');
+    expect(result.consolidation.status).toBe('completed');
+    expect(result.consolidation.principlesExtracted).toBe(1);
+    expect(result.decay).toHaveProperty('totalEvaluated');
+    expect(result.decay).toHaveProperty('transitionedToDormant');
+    expect(result.stats.semantic).toBe(1);
+    expect(result.stats.totalConsolidationRuns).toBe(1);
+  });
+
+  it('emits dream event', async () => {
+    await seedCluster('same dream event observation');
+
+    let emitted;
+    brain.on('dream', (result) => { emitted = result; });
+
+    const result = await brain.dream({
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+    });
+
+    expect(emitted).toEqual(result);
+    expect(emitted.consolidation.principlesExtracted).toBe(1);
+  });
+
+  it('works with defaults', async () => {
+    await seedCluster('same default dream observation');
+
+    const result = await brain.dream();
+
+    expect(result.consolidation.status).toBe('completed');
+    expect(result.consolidation.principlesExtracted).toBe(1);
+    expect(result.decay.timestamp).toBeDefined();
+    expect(result.stats.totalConsolidationRuns).toBe(1);
+  });
+
+  it('passes through custom options', async () => {
+    const consolidateSpy = vi.spyOn(brain, 'consolidate').mockResolvedValue({
+      runId: 'run-1',
+      episodesEvaluated: 0,
+      clustersFound: 0,
+      principlesExtracted: 0,
+      semanticsCreated: 0,
+      proceduresCreated: 0,
+      status: 'completed',
+    });
+    const decaySpy = vi.spyOn(brain, 'decay').mockReturnValue({
+      totalEvaluated: 0,
+      transitionedToDormant: 0,
+      timestamp: '2026-03-07T00:00:00.000Z',
+    });
+    vi.spyOn(brain, 'introspect').mockReturnValue({
+      episodic: 0,
+      semantic: 0,
+      procedural: 0,
+      causalLinks: 0,
+      dormant: 0,
+      contradictions: { open: 0, resolved: 0, context_dependent: 0, reopened: 0 },
+      lastConsolidation: null,
+      totalConsolidationRuns: 0,
+    });
+
+    await brain.dream({
+      minClusterSize: 4,
+      similarityThreshold: 0.91,
+      dormantThreshold: 0.27,
+    });
+
+    expect(consolidateSpy).toHaveBeenCalledWith({
+      minClusterSize: 4,
+      similarityThreshold: 0.91,
+    });
+    expect(decaySpy).toHaveBeenCalledWith({
+      dormantThreshold: 0.27,
+    });
+  });
+});
+
 
 describe('confidence config', () => {
   let audrey;
@@ -442,6 +778,40 @@ describe('lazy migration', () => {
 
     expect(migrationCount).toBe(1);
     brain2.close();
+  });
+
+  it('re-embeds when vec tables are empty but stored embeddings still exist', async () => {
+    const brain1 = new Audrey({
+      dataDir: MIGRATE_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await brain1.encode({ content: 'orphaned embedding', source: 'direct-observation' });
+    brain1.close();
+
+    const brain2 = new Audrey({
+      dataDir: MIGRATE_DIR,
+      embedding: { provider: 'mock', dimensions: 16 },
+    });
+    brain2.close();
+
+    const brain3 = new Audrey({
+      dataDir: MIGRATE_DIR,
+      embedding: { provider: 'mock', dimensions: 16 },
+    });
+
+    expect(brain3._migrationPending).toBe(true);
+
+    let migrated = false;
+    brain3.on('migration', () => { migrated = true; });
+
+    const results = await brain3.recall('orphaned');
+    const vecCount = brain3.db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get().c;
+
+    expect(migrated).toBe(true);
+    expect(vecCount).toBe(1);
+    expect(results.length).toBeGreaterThan(0);
+
+    brain3.close();
   });
 
   it('skips migration when dimensions unchanged', async () => {
@@ -1113,5 +1483,97 @@ describe('greeting()', () => {
     expect(briefing.mood).toEqual({ valence: 0, arousal: 0, samples: 0 });
     expect(briefing.identity).toEqual([]);
     audrey.close();
+  });
+});
+
+describe('SDK surface', () => {
+  it('exports the production SDK entry points from src/index.js', () => {
+    expect(AudreySDK.Audrey).toBe(Audrey);
+    expect(typeof AudreySDK.createEmbeddingProvider).toBe('function');
+    expect(typeof AudreySDK.MockEmbeddingProvider).toBe('function');
+    expect(typeof AudreySDK.LocalEmbeddingProvider).toBe('function');
+    expect(typeof AudreySDK.OpenAIEmbeddingProvider).toBe('function');
+    expect(typeof AudreySDK.GeminiEmbeddingProvider).toBe('function');
+    expect(typeof AudreySDK.createLLMProvider).toBe('function');
+    expect(typeof AudreySDK.createDatabase).toBe('function');
+    expect(typeof AudreySDK.closeDatabase).toBe('function');
+    expect(typeof AudreySDK.readStoredDimensions).toBe('function');
+    expect(typeof AudreySDK.reembedAll).toBe('function');
+  });
+});
+
+describe('export/import roundtrip', () => {
+  it('preserves a populated memory store across export and import', async () => {
+    const sourceDir = join(tmpdir(), `audrey-export-src-${Date.now()}`);
+    const destDir = join(tmpdir(), `audrey-export-dest-${Date.now()}`);
+    const source = new Audrey({
+      dataDir: sourceDir,
+      agent: 'source',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    const dest = new Audrey({
+      dataDir: destDir,
+      agent: 'dest',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+
+    try {
+      await seedConsolidationCluster(source, 'semantic cluster');
+      await seedConsolidationCluster(source, 'procedural cluster');
+
+      const consolidation = await source.consolidate({
+        minClusterSize: 3,
+        similarityThreshold: 0.99,
+        extractPrinciple: (cluster) => (
+          cluster[0].content === 'procedural cluster'
+            ? { content: 'Retry with exponential backoff', type: 'procedural', conditions: ['429'] }
+            : { content: 'Semantic principle extracted from repetition', type: 'semantic' }
+        ),
+      });
+
+      const episode = source.db.prepare('SELECT id FROM episodes ORDER BY created_at LIMIT 1').get();
+      const semantic = source.db.prepare('SELECT id FROM semantics LIMIT 1').get();
+      const procedure = source.db.prepare('SELECT id FROM procedures LIMIT 1').get();
+      const now = new Date().toISOString();
+
+      source.db.prepare(`
+        INSERT INTO causal_links (id, cause_id, effect_id, link_type, mechanism, confidence, evidence_count, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('cl-1', episode.id, procedure.id, 'causal', 'rate limit triggers retry', 0.8, 1, now);
+
+      source.db.prepare(`
+        INSERT INTO contradictions (id, claim_a_id, claim_a_type, claim_b_id, claim_b_type, state, resolution, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('con-1', semantic.id, 'semantic', episode.id, 'episodic', 'open', null, now);
+
+      source.db.prepare(`
+        INSERT INTO audrey_config (key, value) VALUES ('custom_flag', 'enabled')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).run();
+
+      source.db.prepare(`
+        UPDATE consolidation_runs
+        SET confidence_deltas = ?, consolidation_prompt_hash = ?
+        WHERE id = ?
+      `).run(JSON.stringify({ semantic: 0.2, procedural: 0.1 }), 'prompt-hash', consolidation.runId);
+
+      const snapshot = source.export();
+      await dest.import(snapshot);
+
+      expect(dest.introspect()).toMatchObject({
+        episodic: 6,
+        semantic: 1,
+        procedural: 1,
+        causalLinks: 1,
+      });
+
+      const importedSnapshot = dest.export();
+      expect(normalizeSnapshot(importedSnapshot)).toEqual(normalizeSnapshot(snapshot));
+    } finally {
+      source.close();
+      dest.close();
+      if (existsSync(sourceDir)) rmSync(sourceDir, { recursive: true });
+      if (existsSync(destDir)) rmSync(destDir, { recursive: true });
+    }
   });
 });
