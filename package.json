@@ -57,7 +57,7 @@
   "bugs": {
     "url": "https://github.com/Evilander/Audrey/issues"
   },
-  "author": "Tyler Eveland <j.tyler.eveland@gmail.com>",
+  "author": "evilander",
   "engines": {
     "node": ">=18"
   },
