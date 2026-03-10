@@ -112,6 +112,24 @@ describe('reembedAll', () => {
     });
   });
 
+  it('preserves consolidated episode state in vec_episodes during re-embed', async () => {
+    const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 8 });
+    const emb = provider8.vectorToBuffer(await provider8.embed('content'));
+    db1.prepare(
+      'INSERT INTO episodes (id, content, embedding, source, source_reliability, consolidated, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run('ep-1', 'content', emb, 'direct-observation', 0.9, 1, new Date().toISOString());
+    db1.prepare(
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+    ).run('ep-1', emb, 'direct-observation', BigInt(1));
+    closeDatabase(db1);
+
+    ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
+    await reembedAll(db, provider16);
+
+    const row = db.prepare('SELECT consolidated FROM vec_episodes WHERE id = ?').get('ep-1');
+    expect(Number(row.consolidated)).toBe(1);
+  });
+
   it('rolls back all changes if embedding fails mid-way', async () => {
     ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
     const emb = provider8.vectorToBuffer(await provider8.embed('ep one'));

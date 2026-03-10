@@ -48,6 +48,14 @@ describe('MockLLMProvider', () => {
 });
 
 describe('AnthropicLLMProvider', () => {
+  it('throws clearly when no API key is configured', async () => {
+    const llm = new AnthropicLLMProvider();
+    llm.apiKey = '';
+    await expect(
+      llm.complete([{ role: 'user', content: 'test' }]),
+    ).rejects.toThrow('Anthropic LLM requires ANTHROPIC_API_KEY');
+  });
+
   it('calls the Anthropic Messages API', async () => {
     const mockResponse = {
       content: [{ type: 'text', text: '{"result": true}' }],
@@ -123,6 +131,14 @@ describe('AnthropicLLMProvider', () => {
 });
 
 describe('OpenAILLMProvider', () => {
+  it('throws clearly when no API key is configured', async () => {
+    const llm = new OpenAILLMProvider();
+    llm.apiKey = '';
+    await expect(
+      llm.complete([{ role: 'user', content: 'test' }]),
+    ).rejects.toThrow('OpenAI LLM requires OPENAI_API_KEY');
+  });
+
   it('calls the OpenAI Chat Completions API', async () => {
     const mockResponse = {
       choices: [{ message: { content: '{"result": true}' } }],

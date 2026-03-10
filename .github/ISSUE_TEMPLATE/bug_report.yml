@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a defect in Audrey runtime, MCP behavior, docs, or packaging.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What broke, and what did you expect instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Audrey version
+      description: npm version, git commit, or branch
+      placeholder: 0.16.1
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - MCP server
+        - SDK
+        - CLI
+        - README/docs
+        - Packaging/release
+        - CI
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Include commands, code, input, and actual output.
+      placeholder: |
+        1. Run ...
+        2. Call ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation attempted
+      description: Tests, health checks, or commands you already ran
+      placeholder: npm test, npx audrey status --json, etc.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, provider config, and anything else relevant

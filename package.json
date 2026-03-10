@@ -15,12 +15,15 @@
   "files": [
     "src/",
     "mcp-server/",
+    "docs/production-readiness.md",
+    "examples/",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "pack:check": "npm pack --dry-run"
   },
   "keywords": [
     "ai",
@@ -47,7 +50,9 @@
     "persistent-memory",
     "rag",
     "claude",
-    "agent-framework"
+    "agent-framework",
+    "fintech",
+    "healthcare"
   ],
   "repository": {
     "type": "git",

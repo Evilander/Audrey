@@ -132,6 +132,7 @@ export class Audrey extends EventEmitter {
     };
     this.decayConfig = { dormantThreshold: decay.dormantThreshold || 0.1 };
     this._autoConsolidateTimer = null;
+    this._closed = false;
     this.interferenceConfig = {
       enabled: interference.enabled ?? true,
       k: interference.k ?? 5,
@@ -564,6 +565,9 @@ export class Audrey extends EventEmitter {
     this._autoConsolidateTimer = setInterval(() => {
       this.consolidate(options).catch(err => this.emit('error', err));
     }, intervalMs);
+    if (typeof this._autoConsolidateTimer.unref === 'function') {
+      this._autoConsolidateTimer.unref();
+    }
   }
 
   stopAutoConsolidate() {
@@ -598,6 +602,8 @@ export class Audrey extends EventEmitter {
 
   /** @returns {void} */
   close() {
+    if (this._closed) return;
+    this._closed = true;
     this.stopAutoConsolidate();
     closeDatabase(this.db);
   }

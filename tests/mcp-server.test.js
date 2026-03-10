@@ -1,16 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { z } from 'zod';
+import { EventEmitter } from 'node:events';
 import { Audrey } from '../src/index.js';
 import { readStoredDimensions } from '../src/db.js';
-import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, SERVER_NAME, VERSION } from '../mcp-server/config.js';
+import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, MCP_ENTRYPOINT, SERVER_NAME, VERSION } from '../mcp-server/config.js';
 import {
   MAX_MEMORY_CONTENT_LENGTH,
+  buildStatusReport,
+  formatStatusReport,
   initializeEmbeddingProvider,
   memoryEncodeToolSchema,
   memoryForgetToolSchema,
   memoryImportToolSchema,
   memoryRecallToolSchema,
+  registerShutdownHandlers,
   registerDreamTool,
+  runStatusCommand,
   validateForgetSelection,
 } from '../mcp-server/index.js';
 import { existsSync, rmSync } from 'node:fs';
@@ -87,7 +92,14 @@ describe('MCP CLI: buildAudreyConfig', () => {
     expect(config.llm.provider).toBe('mock');
   });
 
-  it('does not set LLM when provider is not specified', () => {
+  it('auto-detects OpenAI LLM when only OPENAI_API_KEY is present', () => {
+    process.env.OPENAI_API_KEY = 'sk-openai-test';
+    const config = buildAudreyConfig();
+    expect(config.llm.provider).toBe('openai');
+    expect(config.llm.apiKey).toBe('sk-openai-test');
+  });
+
+  it('does not set LLM when provider is not specified and no keys are present', () => {
     const config = buildAudreyConfig();
     expect(config.llm).toBeUndefined();
   });
@@ -112,22 +124,30 @@ describe('MCP CLI: buildAudreyConfig', () => {
 });
 
 describe('MCP CLI: buildInstallArgs', () => {
-  it('builds mock config args when no API keys present', () => {
+  it('pins the installed command and persists the default local embedding config', () => {
     const args = buildInstallArgs({});
     expect(args).toContain(SERVER_NAME);
-    expect(args).toContain('npx');
-    expect(args).toContain('audrey');
+    const dashDashIdx = args.indexOf('--');
+    expect(args[dashDashIdx + 1]).toBe(process.execPath);
+    expect(args[dashDashIdx + 2]).toBe(MCP_ENTRYPOINT);
     const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
     // local is the default � no provider env var emitted, no API keys
-    expect(envPairsStr).not.toContain('AUDREY_EMBEDDING_PROVIDER=mock');
+    expect(envPairsStr).toContain(`AUDREY_DATA_DIR=${DEFAULT_DATA_DIR}`);
+    expect(envPairsStr).toContain('AUDREY_EMBEDDING_PROVIDER=local');
+    expect(envPairsStr).toContain('AUDREY_DEVICE=gpu');
     expect(envPairsStr).not.toContain('OPENAI_API_KEY');
   });
 
-  it('does not auto-select openai even when OPENAI_API_KEY is present', () => {
-    // OpenAI must be explicitly configured via AUDREY_EMBEDDING_PROVIDER=openai
-    const args = buildInstallArgs({ OPENAI_API_KEY: 'sk-test' });
+  it('respects an explicit local embedding choice even when Gemini keys are present', () => {
+    const args = buildInstallArgs({
+      AUDREY_EMBEDDING_PROVIDER: 'local',
+      AUDREY_DEVICE: 'cpu',
+      GOOGLE_API_KEY: 'google-test',
+    });
     const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
-    expect(envPairsStr).not.toContain('AUDREY_EMBEDDING_PROVIDER=openai');
+    expect(envPairsStr).toContain('AUDREY_EMBEDDING_PROVIDER=local');
+    expect(envPairsStr).toContain('AUDREY_DEVICE=cpu');
+    expect(envPairsStr).not.toContain('GOOGLE_API_KEY=google-test');
   });
 
   it('detects ANTHROPIC_API_KEY and enables LLM provider', () => {
@@ -137,19 +157,20 @@ describe('MCP CLI: buildInstallArgs', () => {
     expect(envPairsStr).toContain('ANTHROPIC_API_KEY=sk-ant-test');
   });
 
-  it('wraps command in cmd /c on Windows', () => {
-    const args = buildInstallArgs({});
-    if (process.platform === 'win32') {
-      const dashDashIdx = args.indexOf('--');
-      expect(args[dashDashIdx + 1]).toBe('cmd');
-      expect(args[dashDashIdx + 2]).toBe('/c');
-      expect(args[dashDashIdx + 3]).toBe('npx');
-      expect(args[dashDashIdx + 4]).toBe('audrey');
-    } else {
-      const dashDashIdx = args.indexOf('--');
-      expect(args[dashDashIdx + 1]).toBe('npx');
-      expect(args[dashDashIdx + 2]).toBe('audrey');
-    }
+  it('persists a custom data directory', () => {
+    const args = buildInstallArgs({ AUDREY_DATA_DIR: '/custom/audrey' });
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    expect(envPairsStr).toContain('AUDREY_DATA_DIR=/custom/audrey');
+  });
+
+  it('persists explicit OpenAI LLM config when selected', () => {
+    const args = buildInstallArgs({
+      AUDREY_LLM_PROVIDER: 'openai',
+      OPENAI_API_KEY: 'sk-openai-test',
+    });
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    expect(envPairsStr).toContain('AUDREY_LLM_PROVIDER=openai');
+    expect(envPairsStr).toContain('OPENAI_API_KEY=sk-openai-test');
   });
 
   it('places server name before -e flags to avoid variadic parsing bug', () => {
@@ -221,6 +242,96 @@ describe('MCP validation hardening', () => {
       'min_similarity',
       'purge',
     ]);
+  });
+});
+
+describe('MCP lifecycle hardening', () => {
+  it('closes Audrey on SIGTERM and exits cleanly', () => {
+    const fakeProcess = new EventEmitter();
+    fakeProcess.exit = vi.fn();
+    const audrey = { close: vi.fn() };
+
+    registerShutdownHandlers(fakeProcess, audrey, vi.fn());
+    fakeProcess.emit('SIGTERM');
+
+    expect(audrey.close).toHaveBeenCalledOnce();
+    expect(fakeProcess.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('exits non-zero on unhandled rejections', () => {
+    const fakeProcess = new EventEmitter();
+    fakeProcess.exit = vi.fn();
+    const audrey = { close: vi.fn() };
+    const logger = vi.fn();
+
+    registerShutdownHandlers(fakeProcess, audrey, logger);
+    fakeProcess.emit('unhandledRejection', new Error('boom'));
+
+    expect(audrey.close).toHaveBeenCalledOnce();
+    expect(fakeProcess.exit).toHaveBeenCalledWith(1);
+    expect(logger).toHaveBeenCalled();
+  });
+});
+
+describe('MCP status automation', () => {
+  afterEach(() => {
+    process.exitCode = undefined;
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+
+  it('builds a machine-readable report when no data directory exists yet', () => {
+    const report = buildStatusReport({
+      dataDir: './missing-audrey-dir',
+      claudeJsonPath: './missing-claude-config.json',
+    });
+
+    expect(report.registered).toBe(false);
+    expect(report.exists).toBe(false);
+    expect(report.stats).toBeNull();
+    expect(report.health).toBeNull();
+    expect(report.error).toBeNull();
+  });
+
+  it('formats the missing-directory case for humans', () => {
+    const text = formatStatusReport({
+      registered: false,
+      dataDir: './missing-audrey-dir',
+      exists: false,
+    });
+
+    expect(text).toContain('Registration: not registered');
+    expect(text).toContain('not yet created');
+  });
+
+  it('emits JSON and exits non-zero when fail-on-unhealthy is set', async () => {
+    const audrey = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'status-json-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+
+    await audrey.encode({ content: 'health drift episode', source: 'direct-observation' });
+    audrey.db.exec('DELETE FROM vec_episodes');
+    audrey.db.prepare(
+      "UPDATE audrey_config SET value = ? WHERE key = 'dimensions'"
+    ).run('16');
+    audrey.close();
+
+    const lines = [];
+    const { report, exitCode } = runStatusCommand({
+      argv: ['node', 'mcp-server/index.js', 'status', '--json', '--fail-on-unhealthy'],
+      dataDir: TEST_DIR,
+      claudeJsonPath: './missing-claude-config.json',
+      out: line => lines.push(line),
+    });
+
+    expect(exitCode).toBe(1);
+    expect(report.health.healthy).toBe(false);
+    expect(lines).toHaveLength(1);
+
+    const parsed = JSON.parse(lines[0]);
+    expect(parsed.health.healthy).toBe(false);
+    expect(parsed.health.reembed_recommended).toBe(true);
   });
 });
 

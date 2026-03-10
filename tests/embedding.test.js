@@ -86,6 +86,12 @@ describe('createEmbeddingProvider', () => {
 });
 
 describe('OpenAIEmbeddingProvider timeout', () => {
+  it('throws clearly when no API key is configured', async () => {
+    const emb = new OpenAIEmbeddingProvider();
+    emb.apiKey = '';
+    await expect(emb.embed('test')).rejects.toThrow('OpenAI embedding requires OPENAI_API_KEY');
+  });
+
   it('aborts fetch after timeout', async () => {
     global.fetch = vi.fn().mockImplementation((_url, opts) =>
       new Promise((resolve, reject) => {

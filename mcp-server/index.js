@@ -12,10 +12,11 @@ import { readStoredDimensions } from '../src/db.js';
 import {
   VERSION,
   SERVER_NAME,
-  DEFAULT_DATA_DIR,
   buildAudreyConfig,
   buildInstallArgs,
+  resolveDataDir,
   resolveEmbeddingProvider,
+  resolveLLMProvider,
 } from './config.js';
 
 const VALID_SOURCES = ['direct-observation', 'told-by-user', 'tool-result', 'inference', 'model-generated'];
@@ -105,7 +106,7 @@ export const memoryForgetToolSchema = {
 };
 
 async function reembed() {
-  const dataDir = process.env.AUDREY_DATA_DIR || DEFAULT_DATA_DIR;
+  const dataDir = resolveDataDir(process.env);
   const explicit = process.env.AUDREY_EMBEDDING_PROVIDER;
   const embedding = resolveEmbeddingProvider(process.env, explicit);
   const storedDims = readStoredDimensions(dataDir);
@@ -127,29 +128,8 @@ async function reembed() {
   }
 }
 
-function resolveLLMConfig() {
-  const explicit = process.env.AUDREY_LLM_PROVIDER;
-  if (explicit === 'anthropic') {
-    return { provider: 'anthropic', apiKey: process.env.ANTHROPIC_API_KEY };
-  }
-  if (explicit === 'openai') {
-    return { provider: 'openai', apiKey: process.env.OPENAI_API_KEY };
-  }
-  if (explicit === 'mock') {
-    return { provider: 'mock' };
-  }
-  // Auto-detect: prefer anthropic, then openai
-  if (process.env.ANTHROPIC_API_KEY) {
-    return { provider: 'anthropic', apiKey: process.env.ANTHROPIC_API_KEY };
-  }
-  if (process.env.OPENAI_API_KEY) {
-    return { provider: 'openai', apiKey: process.env.OPENAI_API_KEY };
-  }
-  return null;
-}
-
 async function dream() {
-  const dataDir = process.env.AUDREY_DATA_DIR || DEFAULT_DATA_DIR;
+  const dataDir = resolveDataDir(process.env);
   const explicit = process.env.AUDREY_EMBEDDING_PROVIDER;
   const embedding = resolveEmbeddingProvider(process.env, explicit);
   const storedDims = readStoredDimensions(dataDir);
@@ -160,7 +140,7 @@ async function dream() {
     embedding,
   };
 
-  const llm = resolveLLMConfig();
+  const llm = resolveLLMProvider(process.env, process.env.AUDREY_LLM_PROVIDER);
   if (llm) config.llm = llm;
 
   const audrey = new Audrey(config);
@@ -197,28 +177,46 @@ async function dream() {
 }
 
 async function greeting() {
-  const dataDir = process.env.AUDREY_DATA_DIR || DEFAULT_DATA_DIR;
+  const dataDir = resolveDataDir(process.env);
+  const contextArg = process.argv[3] || undefined;
 
   if (!existsSync(dataDir)) {
     console.log('[audrey] No data yet — fresh start.');
     return;
   }
 
-  const dimensions = readStoredDimensions(dataDir) || 8;
+  const storedDimensions = readStoredDimensions(dataDir);
+  const resolvedEmbedding = resolveEmbeddingProvider(process.env, process.env.AUDREY_EMBEDDING_PROVIDER);
+  const canUseResolvedEmbedding = Boolean(contextArg)
+    && storedDimensions !== null
+    && storedDimensions === resolvedEmbedding.dimensions;
+  const dimensions = storedDimensions || resolvedEmbedding.dimensions || 8;
   const audrey = new Audrey({
     dataDir,
     agent: 'greeting',
-    embedding: { provider: 'mock', dimensions },
+    embedding: canUseResolvedEmbedding
+      ? resolvedEmbedding
+      : { provider: 'mock', dimensions },
   });
 
   try {
-    const contextArg = process.argv[3] || undefined;
-    const result = await audrey.greeting({ context: contextArg });
+    if (canUseResolvedEmbedding) {
+      await initializeEmbeddingProvider(audrey.embeddingProvider);
+    }
+    const result = await audrey.greeting({ context: canUseResolvedEmbedding ? contextArg : undefined });
     const health = audrey.memoryStatus();
 
     const lines = [];
     lines.push(`[Audrey v${VERSION}] Memory briefing`);
     lines.push('');
+
+    if (contextArg && !canUseResolvedEmbedding) {
+      lines.push(
+        `Context recall skipped: stored index is ${storedDimensions ?? 'unknown'}d `
+        + `but current embedding config resolves to ${resolvedEmbedding.dimensions}d.`
+      );
+      lines.push('');
+    }
 
     // Mood
     if (result.mood && result.mood.samples > 0) {
@@ -295,7 +293,7 @@ function timeSince(isoDate) {
 }
 
 async function reflect() {
-  const dataDir = process.env.AUDREY_DATA_DIR || DEFAULT_DATA_DIR;
+  const dataDir = resolveDataDir(process.env);
   const explicit = process.env.AUDREY_EMBEDDING_PROVIDER;
   const embedding = resolveEmbeddingProvider(process.env, explicit);
 
@@ -305,7 +303,7 @@ async function reflect() {
     embedding,
   };
 
-  const llm = resolveLLMConfig();
+  const llm = resolveLLMProvider(process.env, process.env.AUDREY_LLM_PROVIDER);
   if (llm) config.llm = llm;
 
   const audrey = new Audrey(config);
@@ -368,17 +366,27 @@ function install() {
     process.exit(1);
   }
 
-  const resolvedEmbedding = resolveEmbeddingProvider(process.env);
+  const dataDir = resolveDataDir(process.env);
+  const resolvedEmbedding = resolveEmbeddingProvider(process.env, process.env.AUDREY_EMBEDDING_PROVIDER);
+  const resolvedLlm = resolveLLMProvider(process.env, process.env.AUDREY_LLM_PROVIDER);
   if (resolvedEmbedding.provider === 'gemini') {
-    console.log('Detected GOOGLE_API_KEY/GEMINI_API_KEY - using Gemini embeddings (3072d)');
+    console.log('Using Gemini embeddings (3072d)');
   } else if (resolvedEmbedding.provider === 'local') {
-    console.log('No explicit embedding provider configured - using local embeddings (384d)');
+    console.log(`Using local embeddings (384d, device=${resolvedEmbedding.device || 'gpu'})`);
   } else if (resolvedEmbedding.provider === 'openai') {
-    console.log('Using explicit OpenAI embeddings (1536d)');
+    console.log('Using OpenAI embeddings (1536d)');
+  } else if (resolvedEmbedding.provider === 'mock') {
+    console.log('Using mock embeddings');
   }
 
-  if (process.env.ANTHROPIC_API_KEY) {
-    console.log('Detected ANTHROPIC_API_KEY - enabling LLM-powered consolidation + contradiction detection');
+  if (resolvedLlm?.provider === 'anthropic') {
+    console.log('Using Anthropic for LLM-powered consolidation, contradiction detection, and reflection');
+  } else if (resolvedLlm?.provider === 'openai') {
+    console.log('Using OpenAI for LLM-powered consolidation, contradiction detection, and reflection');
+  } else if (resolvedLlm?.provider === 'mock') {
+    console.log('Using mock LLM provider');
+  } else {
+    console.log('No LLM provider configured - consolidation and contradiction detection will use heuristics');
   }
 
   try {
@@ -417,12 +425,14 @@ CLI subcommands:
   npx audrey install   - Register MCP server with Claude Code
   npx audrey uninstall - Remove MCP server registration
   npx audrey status    - Show memory store health and stats
+  npx audrey status --json - Emit machine-readable health output
+  npx audrey status --json --fail-on-unhealthy - Exit non-zero on unhealthy status
   npx audrey greeting  - Output session briefing (for hooks)
   npx audrey reflect   - Reflect on conversation + dream cycle (for hooks)
   npx audrey dream     - Run consolidation + decay cycle
   npx audrey reembed   - Re-embed all memories with current provider
 
-Data stored in: ${DEFAULT_DATA_DIR}
+Data stored in: ${dataDir}
 Verify: claude mcp list
 `);
 }
@@ -444,9 +454,15 @@ function uninstall() {
   }
 }
 
-function status() {
+function cliHasFlag(flag, argv = process.argv) {
+  return Array.isArray(argv) && argv.includes(flag);
+}
+
+export function buildStatusReport({
+  dataDir = resolveDataDir(process.env),
+  claudeJsonPath = join(homedir(), '.claude.json'),
+} = {}) {
   let registered = false;
-  const claudeJsonPath = join(homedir(), '.claude.json');
   try {
     const claudeConfig = JSON.parse(readFileSync(claudeJsonPath, 'utf-8'));
     registered = SERVER_NAME in (claudeConfig.mcpServers || {});
@@ -454,41 +470,108 @@ function status() {
     // Ignore unreadable config.
   }
 
-  console.log(`Registration: ${registered ? 'active' : 'not registered'}`);
+  const report = {
+    generatedAt: new Date().toISOString(),
+    registered,
+    dataDir,
+    exists: existsSync(dataDir),
+    storedDimensions: null,
+    stats: null,
+    health: null,
+    lastConsolidation: null,
+    error: null,
+  };
 
-  if (!existsSync(DEFAULT_DATA_DIR)) {
-    console.log(`Data directory: ${DEFAULT_DATA_DIR} (not yet created - will be created on first use)`);
-    return;
+  if (!report.exists) {
+    return report;
   }
 
   try {
-    const dimensions = readStoredDimensions(DEFAULT_DATA_DIR) || 8;
+    report.storedDimensions = readStoredDimensions(dataDir);
+    const dimensions = report.storedDimensions || 8;
     const audrey = new Audrey({
-      dataDir: DEFAULT_DATA_DIR,
+      dataDir,
       agent: 'status-check',
       embedding: { provider: 'mock', dimensions },
     });
-    const stats = audrey.introspect();
-    const health = audrey.memoryStatus();
-    const lastConsolidation = audrey.db.prepare(`
+    report.stats = audrey.introspect();
+    report.health = audrey.memoryStatus();
+    report.lastConsolidation = audrey.db.prepare(`
       SELECT completed_at FROM consolidation_runs
       WHERE status = 'completed'
       ORDER BY completed_at DESC
       LIMIT 1
     `).get()?.completed_at || 'never';
     audrey.close();
-
-    console.log(`Data directory: ${DEFAULT_DATA_DIR}`);
-    console.log(`Memories: ${stats.episodic} episodic, ${stats.semantic} semantic, ${stats.procedural} procedural`);
-    console.log(`Index sync: ${health.vec_episodes}/${health.searchable_episodes} episodic, ${health.vec_semantics}/${health.searchable_semantics} semantic, ${health.vec_procedures}/${health.searchable_procedures} procedural`);
-    console.log(`Health: ${health.healthy ? 'healthy' : 'unhealthy'}${health.reembed_recommended ? ' (re-embed recommended)' : ''}`);
-    console.log(`Dormant: ${stats.dormant}`);
-    console.log(`Causal links: ${stats.causalLinks}`);
-    console.log(`Contradictions: ${stats.contradictions.open} open, ${stats.contradictions.resolved} resolved`);
-    console.log(`Consolidation runs: ${stats.totalConsolidationRuns}`);
-    console.log(`Last consolidation: ${lastConsolidation}`);
   } catch (err) {
-    console.log(`Data directory: ${DEFAULT_DATA_DIR} (exists but could not read: ${err.message})`);
+    report.error = err.message || String(err);
+  }
+
+  return report;
+}
+
+export function formatStatusReport(report) {
+  const lines = [];
+  lines.push(`Registration: ${report.registered ? 'active' : 'not registered'}`);
+
+  if (!report.exists) {
+    lines.push(`Data directory: ${report.dataDir} (not yet created - will be created on first use)`);
+    return lines.join('\n');
+  }
+
+  if (report.error) {
+    lines.push(`Data directory: ${report.dataDir} (exists but could not read: ${report.error})`);
+    return lines.join('\n');
+  }
+
+  lines.push(`Data directory: ${report.dataDir}`);
+  lines.push(`Stored dimensions: ${report.storedDimensions ?? 'unknown'}`);
+  lines.push(
+    `Memories: ${report.stats.episodic} episodic, ${report.stats.semantic} semantic, ${report.stats.procedural} procedural`
+  );
+  lines.push(
+    `Index sync: ${report.health.vec_episodes}/${report.health.searchable_episodes} episodic, `
+    + `${report.health.vec_semantics}/${report.health.searchable_semantics} semantic, `
+    + `${report.health.vec_procedures}/${report.health.searchable_procedures} procedural`
+  );
+  lines.push(
+    `Health: ${report.health.healthy ? 'healthy' : 'unhealthy'}`
+    + `${report.health.reembed_recommended ? ' (re-embed recommended)' : ''}`
+  );
+  lines.push(`Dormant: ${report.stats.dormant}`);
+  lines.push(`Causal links: ${report.stats.causalLinks}`);
+  lines.push(`Contradictions: ${report.stats.contradictions.open} open, ${report.stats.contradictions.resolved} resolved`);
+  lines.push(`Consolidation runs: ${report.stats.totalConsolidationRuns}`);
+  lines.push(`Last consolidation: ${report.lastConsolidation}`);
+
+  return lines.join('\n');
+}
+
+export function runStatusCommand({
+  argv = process.argv,
+  dataDir = resolveDataDir(process.env),
+  claudeJsonPath = join(homedir(), '.claude.json'),
+  out = console.log,
+} = {}) {
+  const report = buildStatusReport({ dataDir, claudeJsonPath });
+  if (cliHasFlag('--json', argv)) {
+    out(JSON.stringify(report, null, 2));
+  } else {
+    out(formatStatusReport(report));
+  }
+
+  const exitCode = report.error
+    || (cliHasFlag('--fail-on-unhealthy', argv) && report.exists && report.health && !report.health.healthy)
+    ? 1
+    : 0;
+
+  return { report, exitCode };
+}
+
+function status() {
+  const { exitCode } = runStatusCommand();
+  if (exitCode !== 0) {
+    process.exitCode = exitCode;
   }
 }
 
@@ -498,6 +581,42 @@ function toolResult(data) {
 
 function toolError(err) {
   return { isError: true, content: [{ type: 'text', text: `Error: ${err.message || String(err)}` }] };
+}
+
+export function registerShutdownHandlers(processRef, audrey, logger = console.error) {
+  let closed = false;
+
+  const shutdown = (message, exitCode = 0) => {
+    if (message) {
+      logger(message);
+    }
+    if (!closed) {
+      closed = true;
+      try {
+        audrey.close();
+      } catch (err) {
+        logger(`[audrey-mcp] shutdown error: ${err.message || String(err)}`);
+        exitCode = exitCode === 0 ? 1 : exitCode;
+      }
+    }
+    if (typeof processRef.exit === 'function') {
+      processRef.exit(exitCode);
+    }
+  };
+
+  processRef.once('SIGINT', () => shutdown('[audrey-mcp] received SIGINT, shutting down'));
+  processRef.once('SIGTERM', () => shutdown('[audrey-mcp] received SIGTERM, shutting down'));
+  processRef.once('SIGHUP', () => shutdown('[audrey-mcp] received SIGHUP, shutting down'));
+  processRef.once('uncaughtException', err => {
+    logger('[audrey-mcp] uncaught exception:', err);
+    shutdown(null, 1);
+  });
+  processRef.once('unhandledRejection', reason => {
+    logger('[audrey-mcp] unhandled rejection:', reason);
+    shutdown(null, 1);
+  });
+
+  return shutdown;
 }
 
 export function registerDreamTool(server, audrey) {
@@ -683,12 +802,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('[audrey-mcp] connected via stdio');
-
-  process.on('SIGINT', () => {
-    console.error('[audrey-mcp] shutting down');
-    audrey.close();
-    process.exit(0);
-  });
+  registerShutdownHandlers(process, audrey);
 }
 
 const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

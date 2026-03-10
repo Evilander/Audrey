@@ -1,18 +1,47 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const VERSION = '0.16.1';
 export const SERVER_NAME = 'audrey-memory';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
+export const MCP_ENTRYPOINT = fileURLToPath(new URL('./index.js', import.meta.url));
+const VALID_EMBEDDING_PROVIDERS = new Set(['mock', 'local', 'gemini', 'openai']);
+const VALID_LLM_PROVIDERS = new Set(['mock', 'anthropic', 'openai']);
+
+function assertValidProvider(provider, validProviders, envVar) {
+  if (!validProviders.has(provider)) {
+    throw new Error(`Unsupported ${envVar} value: ${provider}`);
+  }
+}
+
+function defaultEmbeddingDimensions(provider) {
+  switch (provider) {
+    case 'mock':
+      return 64;
+    case 'openai':
+      return 1536;
+    case 'gemini':
+      return 3072;
+    case 'local':
+    default:
+      return 384;
+  }
+}
+
+export function resolveDataDir(env = process.env) {
+  return env.AUDREY_DATA_DIR || DEFAULT_DATA_DIR;
+}
 
 /**
  * Resolves which embedding provider to use.
  * Priority: explicit config -> gemini (if GOOGLE_API_KEY exists) -> local
  * OpenAI is NEVER auto-selected -- must be set explicitly via AUDREY_EMBEDDING_PROVIDER=openai.
  */
-export function resolveEmbeddingProvider(env, explicit) {
+export function resolveEmbeddingProvider(env, explicit = env.AUDREY_EMBEDDING_PROVIDER) {
   if (explicit && explicit !== 'auto') {
-    const dims = explicit === 'openai' ? 1536 : explicit === 'gemini' ? 3072 : 384;
+    assertValidProvider(explicit, VALID_EMBEDDING_PROVIDERS, 'AUDREY_EMBEDDING_PROVIDER');
+    const dims = defaultEmbeddingDimensions(explicit);
     const apiKey = explicit === 'gemini'
       ? (env.GOOGLE_API_KEY || env.GEMINI_API_KEY)
       : explicit === 'openai'
@@ -28,53 +57,77 @@ export function resolveEmbeddingProvider(env, explicit) {
   return { provider: 'local', dimensions: 384, device: env.AUDREY_DEVICE || 'gpu' };
 }
 
+export function resolveLLMProvider(env, explicit = env.AUDREY_LLM_PROVIDER) {
+  if (explicit && explicit !== 'auto') {
+    assertValidProvider(explicit, VALID_LLM_PROVIDERS, 'AUDREY_LLM_PROVIDER');
+    if (explicit === 'anthropic') {
+      return { provider: 'anthropic', apiKey: env.ANTHROPIC_API_KEY };
+    }
+    if (explicit === 'openai') {
+      return { provider: 'openai', apiKey: env.OPENAI_API_KEY };
+    }
+    return { provider: 'mock' };
+  }
+
+  if (env.ANTHROPIC_API_KEY) {
+    return { provider: 'anthropic', apiKey: env.ANTHROPIC_API_KEY };
+  }
+  if (env.OPENAI_API_KEY) {
+    return { provider: 'openai', apiKey: env.OPENAI_API_KEY };
+  }
+  return null;
+}
+
 export function buildAudreyConfig() {
-  const dataDir = process.env.AUDREY_DATA_DIR || DEFAULT_DATA_DIR;
+  const dataDir = resolveDataDir(process.env);
   const agent = process.env.AUDREY_AGENT || 'claude-code';
   const explicitProvider = process.env.AUDREY_EMBEDDING_PROVIDER;
-  const llmProvider = process.env.AUDREY_LLM_PROVIDER;
 
   const embedding = resolveEmbeddingProvider(process.env, explicitProvider);
+  const llm = resolveLLMProvider(process.env, process.env.AUDREY_LLM_PROVIDER);
 
   const config = { dataDir, agent, embedding };
-
-  if (llmProvider === 'anthropic') {
-    config.llm = { provider: 'anthropic', apiKey: process.env.ANTHROPIC_API_KEY };
-  } else if (llmProvider === 'openai') {
-    config.llm = { provider: 'openai', apiKey: process.env.OPENAI_API_KEY };
-  } else if (llmProvider === 'mock') {
-    config.llm = { provider: 'mock' };
+  if (llm) {
+    config.llm = llm;
   }
 
   return config;
 }
 
 export function buildInstallArgs(env = process.env) {
-  const envPairs = [`AUDREY_DATA_DIR=${DEFAULT_DATA_DIR}`];
+  const envPairs = new Map();
+  const addEnv = (key, value) => {
+    if (value === undefined || value === null || value === '') return;
+    envPairs.set(key, `${key}=${value}`);
+  };
 
-  const embedding = resolveEmbeddingProvider(env);
-  if (embedding.provider === 'gemini') {
-    envPairs.push('AUDREY_EMBEDDING_PROVIDER=gemini');
-    envPairs.push(`GOOGLE_API_KEY=${embedding.apiKey}`);
+  addEnv('AUDREY_DATA_DIR', resolveDataDir(env));
+
+  const embedding = resolveEmbeddingProvider(env, env.AUDREY_EMBEDDING_PROVIDER);
+  addEnv('AUDREY_EMBEDDING_PROVIDER', embedding.provider);
+  if (embedding.provider === 'local') {
+    addEnv('AUDREY_DEVICE', embedding.device || env.AUDREY_DEVICE || 'gpu');
+  } else if (embedding.provider === 'gemini') {
+    addEnv('GOOGLE_API_KEY', embedding.apiKey);
   } else if (embedding.provider === 'openai') {
-    envPairs.push('AUDREY_EMBEDDING_PROVIDER=openai');
-    envPairs.push(`OPENAI_API_KEY=${env.OPENAI_API_KEY}`);
+    addEnv('OPENAI_API_KEY', embedding.apiKey);
   }
 
-  if (env.ANTHROPIC_API_KEY) {
-    envPairs.push('AUDREY_LLM_PROVIDER=anthropic');
-    envPairs.push(`ANTHROPIC_API_KEY=${env.ANTHROPIC_API_KEY}`);
+  const llm = resolveLLMProvider(env, env.AUDREY_LLM_PROVIDER);
+  if (llm) {
+    addEnv('AUDREY_LLM_PROVIDER', llm.provider);
+    if (llm.provider === 'anthropic') {
+      addEnv('ANTHROPIC_API_KEY', llm.apiKey);
+    } else if (llm.provider === 'openai') {
+      addEnv('OPENAI_API_KEY', llm.apiKey);
+    }
   }
 
   const args = ['mcp', 'add', '-s', 'user', SERVER_NAME];
-  for (const pair of envPairs) {
+  for (const pair of envPairs.values()) {
     args.push('-e', pair);
   }
-  if (process.platform === 'win32') {
-    args.push('--', 'cmd', '/c', 'npx', 'audrey');
-  } else {
-    args.push('--', 'npx', 'audrey');
-  }
+  args.push('--', process.execPath, MCP_ENTRYPOINT);
 
   return args;
 }

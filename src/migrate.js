@@ -6,7 +6,7 @@ export async function reembedAll(db, embeddingProvider, { dropAndRecreate = fals
     createVec0Tables(db, embeddingProvider.dimensions);
   }
 
-  const episodes = db.prepare('SELECT id, content, source FROM episodes').all();
+  const episodes = db.prepare('SELECT id, content, source, consolidated FROM episodes').all();
   const semantics = db.prepare('SELECT id, content, state FROM semantics').all();
   const procedures = db.prepare('SELECT id, content, state FROM procedures').all();
 
@@ -37,7 +37,7 @@ export async function reembedAll(db, embeddingProvider, { dropAndRecreate = fals
       const buf = embeddingProvider.vectorToBuffer(episodeVectors[i]);
       updateEpLegacy.run(buf, episodes[i].id);
       deleteVecEp.run(episodes[i].id);
-      insertVecEp.run(episodes[i].id, buf, episodes[i].source, BigInt(0));
+      insertVecEp.run(episodes[i].id, buf, episodes[i].source, BigInt(episodes[i].consolidated ?? 0));
     }
     for (let i = 0; i < semantics.length; i++) {
       const buf = embeddingProvider.vectorToBuffer(semanticVectors[i]);

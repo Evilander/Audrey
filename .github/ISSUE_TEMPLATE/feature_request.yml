@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a new capability or improvement for Audrey.
+title: "[feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What production or developer problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the behavior you want and how you expect to use it.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Primary surface
+      options:
+        - MCP server
+        - SDK
+        - CLI
+        - Docs/examples
+        - Packaging/release
+        - Database/migrations
+    validations:
+      required: true
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: Include the workflow, operators, and why this matters now.
+      placeholder: fintech ops, healthcare ops, internal agent platform, etc.
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Risks or tradeoffs
+      description: Call out any performance, migration, safety, or UX concerns you already see.
