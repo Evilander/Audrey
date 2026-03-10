@@ -160,6 +160,36 @@ describe('runConsolidation', () => {
     expect(inputIds.length).toBe(3);
     expect(outputIds.length).toBe(1);
   });
+
+  it('does not hold a write transaction open while extracting or embedding principles', async () => {
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'direct-observation' });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'tool-result' });
+    await encodeEpisode(db, embedding, { content: 'same thing', source: 'told-by-user' });
+
+    const transactionStates = [];
+    const checkingEmbedding = {
+      modelName: embedding.modelName,
+      modelVersion: embedding.modelVersion,
+      async embed(text) {
+        transactionStates.push(db.inTransaction);
+        return embedding.embed(text);
+      },
+      vectorToBuffer(vector) {
+        return embedding.vectorToBuffer(vector);
+      },
+    };
+
+    await runConsolidation(db, checkingEmbedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: () => {
+        transactionStates.push(db.inTransaction);
+        return { content: 'Principle', type: 'semantic' };
+      },
+    });
+
+    expect(transactionStates).toEqual([false, false]);
+  });
 });
 
 describe('runConsolidation with LLM', () => {

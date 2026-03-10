@@ -97,6 +97,10 @@ async function llmExtractPrinciple(llmProvider, episodes) {
   return llmProvider.json(messages);
 }
 
+function inClause(ids) {
+  return ids.map(() => '?').join(',');
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
@@ -132,6 +136,7 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
     const allOutputIds = [];
     let principlesExtracted = 0;
     let proceduresExtracted = 0;
+    const preparedClusters = [];
     const insertProcedure = db.prepare(`
       INSERT INTO procedures (
         id, content, embedding, state, trigger_conditions,
@@ -149,8 +154,6 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
       ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertVecSemantic = db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)');
-    const markEpisode = db.prepare('UPDATE episodes SET consolidated = 1 WHERE id = ?');
-    const markVecEpisode = db.prepare('UPDATE vec_episodes SET consolidated = ? WHERE id = ?');
     const updateRunCompleted = db.prepare(`
       UPDATE consolidation_runs
       SET status = 'completed',
@@ -165,70 +168,89 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
+    for (const cluster of clusters) {
+      let principle;
+      if (extractPrinciple) {
+        principle = await extractPrinciple(cluster);
+      } else if (llmProvider) {
+        principle = await llmExtractPrinciple(llmProvider, cluster);
+      } else {
+        principle = defaultExtractPrinciple(cluster);
+      }
+
+      if (!principle || !principle.content) continue;
+
+      const vector = await embeddingProvider.embed(principle.content);
+      const clusterIds = cluster.map(ep => ep.id);
+      preparedClusters.push({
+        principle,
+        clusterIds,
+        sourceTypeDiversity: new Set(cluster.map(ep => ep.source)).size,
+        embeddingBuffer: embeddingProvider.vectorToBuffer(vector),
+        memoryId: generateId(),
+        createdAt: new Date().toISOString(),
+        maxSalience: Math.max(...cluster.map(ep => ep.salience ?? 0.5)),
+      });
+    }
+
     db.exec('BEGIN IMMEDIATE');
     try {
-      for (const cluster of clusters) {
-        let principle;
-        if (extractPrinciple) {
-          principle = extractPrinciple(cluster);
-        } else if (llmProvider) {
-          principle = await llmExtractPrinciple(llmProvider, cluster);
-        } else {
-          principle = defaultExtractPrinciple(cluster);
+      for (const prepared of preparedClusters) {
+        const placeholders = inClause(prepared.clusterIds);
+        const eligibleCount = db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM episodes
+          WHERE id IN (${placeholders})
+            AND consolidated = 0
+            AND superseded_by IS NULL
+        `).get(...prepared.clusterIds).count;
+
+        if (eligibleCount !== prepared.clusterIds.length) {
+          continue;
         }
 
-        if (!principle || !principle.content) continue;
-
-        const clusterIds = cluster.map(ep => ep.id);
-        const sourceTypeDiversity = new Set(cluster.map(ep => ep.source)).size;
-        const vector = await embeddingProvider.embed(principle.content);
-        const embeddingBuffer = embeddingProvider.vectorToBuffer(vector);
-        const memoryId = generateId();
-        const createdAt = new Date().toISOString();
-        const maxSalience = Math.max(...cluster.map(ep => ep.salience ?? 0.5));
-
-        allInputIds.push(...clusterIds);
-
-        if (principle.type === 'procedural') {
+        if (prepared.principle.type === 'procedural') {
           insertProcedure.run(
-            memoryId,
-            principle.content,
-            embeddingBuffer,
-            principle.conditions ? JSON.stringify(principle.conditions) : null,
-            JSON.stringify(clusterIds),
+            prepared.memoryId,
+            prepared.principle.content,
+            prepared.embeddingBuffer,
+            prepared.principle.conditions ? JSON.stringify(prepared.principle.conditions) : null,
+            JSON.stringify(prepared.clusterIds),
             embeddingProvider.modelName,
             embeddingProvider.modelVersion,
-            createdAt,
-            maxSalience,
+            prepared.createdAt,
+            prepared.maxSalience,
           );
-          insertVecProcedure.run(memoryId, embeddingBuffer, 'active');
+          insertVecProcedure.run(prepared.memoryId, prepared.embeddingBuffer, 'active');
           proceduresExtracted++;
         } else {
           insertSemantic.run(
-            memoryId,
-            principle.content,
-            embeddingBuffer,
-            JSON.stringify(clusterIds),
-            cluster.length,
-            cluster.length,
-            sourceTypeDiversity,
+            prepared.memoryId,
+            prepared.principle.content,
+            prepared.embeddingBuffer,
+            JSON.stringify(prepared.clusterIds),
+            prepared.clusterIds.length,
+            prepared.clusterIds.length,
+            prepared.sourceTypeDiversity,
             runId,
             embeddingProvider.modelName,
             embeddingProvider.modelVersion,
             llmProvider?.modelName || null,
-            createdAt,
-            maxSalience,
+            prepared.createdAt,
+            prepared.maxSalience,
           );
-          insertVecSemantic.run(memoryId, embeddingBuffer, 'active');
+          insertVecSemantic.run(prepared.memoryId, prepared.embeddingBuffer, 'active');
         }
 
-        allOutputIds.push(memoryId);
+        db.prepare(`UPDATE episodes SET consolidated = 1 WHERE id IN (${placeholders})`).run(...prepared.clusterIds);
+        db.prepare(`UPDATE vec_episodes SET consolidated = ? WHERE id IN (${placeholders})`).run(
+          BigInt(1),
+          ...prepared.clusterIds,
+        );
+
+        allInputIds.push(...prepared.clusterIds);
+        allOutputIds.push(prepared.memoryId);
         principlesExtracted++;
-
-        for (const ep of cluster) {
-          markEpisode.run(ep.id);
-          markVecEpisode.run(BigInt(1), ep.id);
-        }
       }
 
       const completedAt = new Date().toISOString();

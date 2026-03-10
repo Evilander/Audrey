@@ -4,6 +4,8 @@
  * @property {string} content
  */
 
+import { describeHttpError, requireApiKey } from './utils.js';
+
 function extractJSON(text) {
   const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
   return fenced ? fenced[1].trim() : text.trim();
@@ -112,6 +114,7 @@ export class AnthropicLLMProvider {
    * @returns {Promise<LLMCompletionResult>}
    */
   async complete(messages, options = {}) {
+    requireApiKey(this.apiKey, 'Anthropic LLM', 'ANTHROPIC_API_KEY');
     const systemMsg = messages.find(m => m.role === 'system')?.content;
     const nonSystemMsgs = messages.filter(m => m.role !== 'system');
 
@@ -137,8 +140,7 @@ export class AnthropicLLMProvider {
       });
 
       if (!response.ok) {
-        const errorBody = await response.text().catch(() => '');
-        throw new Error(`Anthropic API error: ${response.status} ${errorBody}`);
+        throw new Error(`Anthropic API error: ${await describeHttpError(response)}`);
       }
 
       const data = await response.json();
@@ -182,6 +184,7 @@ export class OpenAILLMProvider {
    * @returns {Promise<LLMCompletionResult>}
    */
   async complete(messages, options = {}) {
+    requireApiKey(this.apiKey, 'OpenAI LLM', 'OPENAI_API_KEY');
     const body = {
       model: this.model,
       max_tokens: options.maxTokens || this.maxTokens,
@@ -202,7 +205,7 @@ export class OpenAILLMProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`OpenAI API error: ${response.status}`);
+        throw new Error(`OpenAI API error: ${await describeHttpError(response)}`);
       }
 
       const data = await response.json();

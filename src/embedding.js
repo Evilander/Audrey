@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { describeHttpError, requireApiKey } from './utils.js';
 
 /**
  * @typedef {Object} EmbeddingProvider
@@ -54,6 +55,7 @@ export class OpenAIEmbeddingProvider {
   }
 
   async embed(text) {
+    requireApiKey(this.apiKey, 'OpenAI embedding', 'OPENAI_API_KEY');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
     try {
@@ -66,7 +68,7 @@ export class OpenAIEmbeddingProvider {
         body: JSON.stringify({ input: text, model: this.model, dimensions: this.dimensions }),
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`OpenAI embedding failed: ${response.status}`);
+      if (!response.ok) throw new Error(`OpenAI embedding failed: ${await describeHttpError(response)}`);
       const data = await response.json();
       return data.data[0].embedding;
     } finally {
@@ -75,6 +77,7 @@ export class OpenAIEmbeddingProvider {
   }
 
   async embedBatch(texts) {
+    requireApiKey(this.apiKey, 'OpenAI embedding', 'OPENAI_API_KEY');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
     try {
@@ -87,7 +90,7 @@ export class OpenAIEmbeddingProvider {
         body: JSON.stringify({ input: texts, model: this.model, dimensions: this.dimensions }),
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`OpenAI embedding failed: ${response.status}`);
+      if (!response.ok) throw new Error(`OpenAI embedding failed: ${await describeHttpError(response)}`);
       const data = await response.json();
       return data.data.map(d => d.embedding);
     } finally {
@@ -177,7 +180,7 @@ export class GeminiEmbeddingProvider {
   }
 
   async embed(text) {
-    if (!this.apiKey) throw new Error('Gemini embedding requires GOOGLE_API_KEY');
+    requireApiKey(this.apiKey, 'Gemini embedding', 'GOOGLE_API_KEY');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
     try {
@@ -190,7 +193,7 @@ export class GeminiEmbeddingProvider {
           signal: controller.signal,
         }
       );
-      if (!response.ok) throw new Error(`Gemini embedding failed: ${response.status}`);
+      if (!response.ok) throw new Error(`Gemini embedding failed: ${await describeHttpError(response)}`);
       const data = await response.json();
       return data.embedding.values;
     } finally {
@@ -200,7 +203,7 @@ export class GeminiEmbeddingProvider {
 
   async embedBatch(texts) {
     if (texts.length === 0) return [];
-    if (!this.apiKey) throw new Error('Gemini embedding requires GOOGLE_API_KEY');
+    requireApiKey(this.apiKey, 'Gemini embedding', 'GOOGLE_API_KEY');
     const results = [];
     for (let i = 0; i < texts.length; i += 100) {
       const chunk = texts.slice(i, i + 100);
@@ -221,7 +224,7 @@ export class GeminiEmbeddingProvider {
             signal: controller.signal,
           }
         );
-        if (!response.ok) throw new Error(`Gemini batch embedding failed: ${response.status}`);
+        if (!response.ok) throw new Error(`Gemini batch embedding failed: ${await describeHttpError(response)}`);
         const data = await response.json();
         results.push(...data.embeddings.map(e => e.values));
       } finally {

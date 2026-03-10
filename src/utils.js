@@ -36,3 +36,28 @@ export function safeJsonParse(str, fallback = null) {
   try { return JSON.parse(str); }
   catch { return fallback; }
 }
+
+/**
+ * @param {string | undefined | null} apiKey
+ * @param {string} operation
+ * @param {string} envVar
+ * @returns {void}
+ */
+export function requireApiKey(apiKey, operation, envVar) {
+  if (typeof apiKey !== 'string' || apiKey.trim() === '') {
+    throw new Error(`${operation} requires ${envVar}`);
+  }
+}
+
+/**
+ * @param {{ status: number, text: () => Promise<string> }} response
+ * @returns {Promise<string>}
+ */
+export async function describeHttpError(response) {
+  if (typeof response.text !== 'function') {
+    return `${response.status}`;
+  }
+  const body = await response.text().catch(() => '');
+  const normalized = body.replace(/\s+/g, ' ').trim().slice(0, 300);
+  return normalized ? `${response.status} ${normalized}` : `${response.status}`;
+}
