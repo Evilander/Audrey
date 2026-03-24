@@ -1,8 +1,119 @@
-import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier } from './confidence.js';
+import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier, sourceReliability } from './confidence.js';
 import { interferenceModifier } from './interference.js';
 import { contextMatchRatio, contextModifier } from './context.js';
 import { moodCongruenceModifier, affectSimilarity } from './affect.js';
 import { daysBetween, safeJsonParse } from './utils.js';
+
+const STOPWORDS = new Set([
+  'a', 'an', 'and', 'are', 'at', 'be', 'by', 'did', 'do', 'does', 'for', 'from', 'had', 'has', 'have',
+  'how', 'i', 'in', 'is', 'it', 'me', 'my', 'now', 'of', 'on', 'or', 'our', 's', 'sam', 'she', 'that',
+  'the', 'their', 'them', 'there', 'they', 'this', 'to', 'was', 'we', 'were', 'what', 'when', 'where',
+  'which', 'who', 'why', 'with', 'would', 'you', 'your',
+]);
+
+const IDENTIFIER_TERMS = new Set(['account', 'api', 'credential', 'id', 'identifier', 'key', 'number', 'password', 'secret', 'ssn', 'token']);
+
+function tokenize(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function significantTokens(text) {
+  return tokenize(text).filter(token => !STOPWORDS.has(token));
+}
+
+function lexicalCoverage(query, content) {
+  const queryTokens = significantTokens(query);
+  if (queryTokens.length === 0) return 1;
+  const contentTokens = new Set(significantTokens(content));
+  let matched = 0;
+  for (const token of queryTokens) {
+    if (contentTokens.has(token)) matched++;
+  }
+  return matched / queryTokens.length;
+}
+
+function hasIdentifierIntent(query) {
+  const normalized = String(query || '').toLowerCase();
+  const asksForValue = /\b(find|give|lookup|show|tell|what|which)\b/.test(normalized);
+  const mentionsIdentifier = /\b(account number|api key|credential|id|identifier|key|number|passport number|password|secret|ssn|token)\b/.test(normalized);
+  return asksForValue && mentionsIdentifier;
+}
+
+function hasIdentifierEvidence(content) {
+  const tokens = significantTokens(content);
+  if (tokens.some(token => IDENTIFIER_TERMS.has(token))) {
+    return true;
+  }
+  return /(?:\b\d{4,}\b|sk-[a-z0-9_-]+)/i.test(content);
+}
+
+function adjustedScore(query, entry) {
+  const coverage = lexicalCoverage(query, entry.content);
+  let score = entry.score;
+
+  if (hasIdentifierIntent(query) && !hasIdentifierEvidence(entry.content)) {
+    score *= 0.02;
+  }
+
+  return { score, coverage };
+}
+
+function overlapRatio(contentA, contentB) {
+  const tokensA = significantTokens(contentA);
+  const tokensB = significantTokens(contentB);
+  if (tokensA.length === 0 || tokensB.length === 0) return 0;
+  const setB = new Set(tokensB);
+  let matched = 0;
+  for (const token of tokensA) {
+    if (setB.has(token)) matched++;
+  }
+  return matched / Math.min(tokensA.length, tokensB.length);
+}
+
+function reliabilityForRecallSource(source) {
+  if (source === 'consolidation') {
+    return sourceReliability('tool-result');
+  }
+  return sourceReliability(source);
+}
+
+function shouldSuppressDuplicate(existing, candidate) {
+  const overlap = overlapRatio(existing.content, candidate.content);
+  if (overlap < 0.5) return false;
+  if (existing.type !== candidate.type) return false;
+  const existingReliability = reliabilityForRecallSource(existing.source);
+  const candidateReliability = reliabilityForRecallSource(candidate.source);
+  if (existingReliability < candidateReliability) return false;
+  if (existingReliability - candidateReliability < 0.2) return false;
+  return existing.score >= candidate.score * 0.95;
+}
+
+function applyResultGuards(query, results, limit) {
+  const identifierIntent = hasIdentifierIntent(query);
+  const rescored = results
+    .map(entry => {
+      const { score, coverage } = adjustedScore(query, entry);
+      return { ...entry, score, lexicalCoverage: coverage };
+    })
+    .filter(entry => !identifierIntent || entry.score > 0.05)
+    .sort((a, b) => b.score - a.score);
+
+  const accepted = [];
+  for (const candidate of rescored) {
+    if (accepted.some(existing => shouldSuppressDuplicate(existing, candidate))) {
+      continue;
+    }
+    accepted.push(candidate);
+    if (accepted.length >= limit) break;
+  }
+
+  return accepted;
+}
 
 function computeEpisodicConfidence(ep, now, confidenceConfig = {}) {
   const ageDays = daysBetween(ep.created_at, now);
@@ -329,8 +440,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
     }
   }
 
-  allResults.sort((a, b) => b.score - a.score);
-  const top = allResults.slice(0, limit);
+  const top = applyResultGuards(query, allResults, limit);
   for (const entry of top) {
     yield entry;
   }

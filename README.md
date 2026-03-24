@@ -34,6 +34,8 @@ Audrey models memory as a working system instead of a filing cabinet.
 - MCP server for Claude Code with 13 memory tools
 - JavaScript SDK for direct application use
 - Health checks via `npx audrey status --json`
+- Benchmark harness with SVG/HTML reports via `npm run bench:memory`
+- Regression gate for benchmark quality via `npm run bench:memory:check`
 - Optional local embeddings and optional hosted LLM providers
 - Strongest production fit today in financial services ops and healthcare ops
 
@@ -222,13 +224,79 @@ npx audrey dream
 
 # Repair vector/index drift after provider or dimension changes
 npx audrey reembed
+
+# Run the benchmark harness
+npm run bench:memory
+
+# Fail CI if Audrey drops below benchmark guardrails
+npm run bench:memory:check
 ```
+
+## Benchmarking
+
+Audrey now ships with a memory benchmark harness built for two purposes:
+
+- measure Audrey against naive local baselines on LongMemEval-style memory abilities plus privacy and abstention checks
+- keep Audrey grounded against published LoCoMo results from leading memory systems
+
+Run it with:
+
+```bash
+npm run bench:memory
+```
+
+Artifacts land in `benchmarks/output/` as JSON, SVG charts, and an HTML report.
+
+For CI and release gates:
+
+```bash
+npm run bench:memory:check
+```
+
+That command fails if Audrey drops below its minimum local score, local pass rate, or required margin over the strongest naive baseline.
+
+For committed GitHub-friendly charts:
+
+```bash
+npm run bench:memory:readme-assets
+```
+
+### README Snapshot
+
+Local Audrey-vs-baseline results:
+
+![Audrey local memory benchmark](docs/assets/benchmarks/local-benchmark.svg)
+
+Published comparison anchors from current LLM memory systems:
+
+![Published LLM memory benchmark comparison](docs/assets/benchmarks/published-memory-standards.svg)
+
+External bars are published numbers from primary sources, not Audrey reruns. They are included so the README stays grounded against the current memory field instead of only showing internal wins.
+
+| System | Anchor | What it represents |
+|---|---|---|
+| Audrey | Internal LongMemEval-style suite | Local-first memory with consolidation, contradiction handling, abstention, and privacy checks |
+| MIRIX | Published LoCoMo 85.4 | Typed multimodal memory with strong temporal/state handling |
+| Letta Filesystem | Published LoCoMo 74.0 | Context-engineering and filesystem-style memory |
+| Mem0 Graph Memory | Published LoCoMo 68.5 | Graph memory with production cost/latency focus |
+| Mem0 | Published LoCoMo 66.9 | Production-oriented long-term memory baseline |
+| LongMemEval | Benchmark protocol | Benchmark focused on extraction, updates, temporal reasoning, multi-session reasoning, and abstention |
+
+Primary comparison sources:
+
+- [MIRIX paper](https://arxiv.org/abs/2507.07957)
+- [Mem0 paper](https://arxiv.org/abs/2504.19413)
+- [Letta benchmark write-up](https://www.letta.com/blog/benchmarking-ai-agent-memory)
+- [LongMemEval paper](https://arxiv.org/abs/2410.10813)
+
+Benchmark guide: [docs/benchmarking.md](docs/benchmarking.md)
 
 ## Repository
 
 - Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Security policy: [SECURITY.md](SECURITY.md)
 - CI workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
+- Benchmarking guide: [docs/benchmarking.md](docs/benchmarking.md)
 
 ## Development
 
@@ -236,12 +304,18 @@ npx audrey reembed
 npm ci
 npm test
 npm run pack:check
+npm run bench:memory
+npm run bench:memory:check
+npm run bench:memory:readme-assets
 ```
 
 Current validated baseline:
 
 - `npm test`
 - `npm run pack:check`
+- `npm run bench:memory`
+- `npm run bench:memory:check`
+- `npm run bench:memory:readme-assets`
 
 ## License
 

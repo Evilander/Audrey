@@ -663,4 +663,36 @@ describe('recall', () => {
       expect(contents).toContain('secret memory');
     });
   });
+
+  describe('retrieval guards', () => {
+    it('abstains on identifier-style questions when only tangential context exists', async () => {
+      await encodeEpisode(db, embedding, {
+        content: 'Sam renewed a passport in February 2026.',
+        source: 'tool-result',
+      });
+      await encodeEpisode(db, embedding, {
+        content: 'Sam has a trip to Toronto next month.',
+        source: 'told-by-user',
+      });
+
+      const results = await recall(db, embedding, 'What is Sam passport number?', { limit: 10 });
+      expect(results.find(r => r.content.includes('passport'))).toBeUndefined();
+    });
+
+    it('suppresses lower-reliability duplicate answers when a stronger one exists', async () => {
+      await encodeEpisode(db, embedding, {
+        content: 'The outage was caused by an expired TLS certificate on api.example.com.',
+        source: 'direct-observation',
+      });
+      await encodeEpisode(db, embedding, {
+        content: 'The outage was caused by database corruption.',
+        source: 'model-generated',
+      });
+
+      const results = await recall(db, embedding, 'What caused the outage?', { limit: 10 });
+      const contents = results.map(r => r.content);
+      expect(contents).toContain('The outage was caused by an expired TLS certificate on api.example.com.');
+      expect(contents).not.toContain('The outage was caused by database corruption.');
+    });
+  });
 });
