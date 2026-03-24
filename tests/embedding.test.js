@@ -1,6 +1,30 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { createEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider, LocalEmbeddingProvider, GeminiEmbeddingProvider } from '../src/embedding.js';
 
+const RUN_LOCAL_EMBEDDING_INTEGRATION = process.env.AUDREY_RUN_LOCAL_EMBEDDING_TESTS === '1';
+const describeLocalEmbeddingIntegration = RUN_LOCAL_EMBEDDING_INTEGRATION ? describe : describe.skip;
+
+function createFakeLocalPipelineFactory({ failDevices = [] } = {}) {
+  const failed = new Set(failDevices);
+  return vi.fn(async (_task, _model, { device }) => {
+    if (failed.has(device)) {
+      throw new Error(`device ${device} unavailable`);
+    }
+
+    return async input => {
+      if (Array.isArray(input)) {
+        return {
+          tolist: () => input.map(() => Array(384).fill(device === 'cpu' ? 0.5 : 0.25)),
+        };
+      }
+
+      return {
+        data: Float32Array.from(Array(384).fill(device === 'cpu' ? 0.5 : 0.25)),
+      };
+    };
+  });
+}
+
 describe('MockEmbeddingProvider', () => {
   it('returns a fixed-dimension vector', async () => {
     const provider = new MockEmbeddingProvider({ dimensions: 8 });
@@ -146,7 +170,7 @@ describe('OpenAIEmbeddingProvider.embedBatch', () => {
   });
 });
 
-describe('LocalEmbeddingProvider', () => {
+describeLocalEmbeddingIntegration('LocalEmbeddingProvider', () => {
   let provider;
 
   beforeAll(async () => {
@@ -214,18 +238,32 @@ describe('LocalEmbeddingProvider device config', () => {
   });
 
   it('exposes _actualDevice after ready()', async () => {
-    const provider = new LocalEmbeddingProvider({ device: 'cpu' });
+    const pipelineFactory = createFakeLocalPipelineFactory();
+    const provider = new LocalEmbeddingProvider({ device: 'cpu', pipelineFactory });
     await provider.ready();
     expect(provider._actualDevice).toBe('cpu');
-  }, 120_000);
+    expect(pipelineFactory).toHaveBeenCalledTimes(1);
+  });
 
   it('falls back to cpu when requested device fails', async () => {
-    const provider = new LocalEmbeddingProvider({ device: 'cuda' });
+    const pipelineFactory = createFakeLocalPipelineFactory({ failDevices: ['cuda'] });
+    const provider = new LocalEmbeddingProvider({ device: 'cuda', pipelineFactory });
     await provider.ready();
     expect(provider._actualDevice).toBe('cpu');
     const vec = await provider.embed('test');
     expect(vec).toHaveLength(384);
-  }, 120_000);
+    expect(pipelineFactory).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses the same ready promise', async () => {
+    const pipelineFactory = createFakeLocalPipelineFactory();
+    const provider = new LocalEmbeddingProvider({ device: 'cpu', pipelineFactory });
+    const first = provider.ready();
+    const second = provider.ready();
+    await Promise.all([first, second]);
+    expect(first).toBe(second);
+    expect(pipelineFactory).toHaveBeenCalledTimes(1);
+  });
 
   it('accepts batchSize option', () => {
     const provider = new LocalEmbeddingProvider({ batchSize: 32 });
