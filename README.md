@@ -8,6 +8,8 @@ Production memory for AI agents and MCP workflows.
 
 Audrey gives agents a local, inspectable memory layer that can encode episodes, consolidate them into principles, detect contradictions, and let stale knowledge decay instead of accumulating forever.
 
+> **If you liked `/dream`** — Anthropic's Claude Code recently shipped `/dream`, which runs scheduled maintenance and memory consolidation inside Claude Code sessions. Audrey has been doing this since before `/dream` existed, and goes significantly further: episodic-to-semantic consolidation, contradiction detection with resolution tracking, confidence scoring with forgetting curves, emotional affect encoding, causal reasoning, source reliability weighting, and a full sleep/wake lifecycle. Where `/dream` gives Claude Code a single maintenance pass, Audrey gives any agent a complete cognitive memory architecture — with the biological fidelity to match. If Anthropic built `/dream`, it validates that this problem matters. Audrey is the production-grade answer.
+
 ## Why Audrey
 
 Most AI memory tools are storage wrappers. They save facts, retrieve facts, and keep everything forever. That leaves real production problems unsolved:
@@ -32,7 +34,9 @@ Audrey models memory as a working system instead of a filing cabinet.
 
 - Local SQLite-backed memory with `sqlite-vec`
 - MCP server for Claude Code with 13 memory tools
+- **Claude Code hooks integration** — automatic memory in every session (`npx audrey hooks install`)
 - JavaScript SDK for direct application use
+- **Git-friendly versioning** via JSON snapshots (`npx audrey snapshot` / `restore`)
 - Health checks via `npx audrey status --json`
 - Benchmark harness with SVG/HTML reports via `npm run bench:memory`
 - Regression gate for benchmark quality via `npm run bench:memory:check`
@@ -44,7 +48,8 @@ Audrey models memory as a working system instead of a filing cabinet.
 ### MCP Server for Claude Code
 
 ```bash
-npx audrey install
+npx audrey install          # Register 13 MCP memory tools
+npx audrey hooks install    # Wire automatic memory into session lifecycle
 ```
 
 Audrey auto-detects providers from your environment:
@@ -121,19 +126,69 @@ Every Claude Code session gets these tools after `npx audrey install`:
 ## CLI
 
 ```bash
-npx audrey install
-npx audrey uninstall
-npx audrey status
-npx audrey status --json
-npx audrey status --json --fail-on-unhealthy
-npx audrey greeting
-npx audrey greeting "auth"
-npx audrey reflect
-npx audrey dream
-npx audrey reembed
+# Setup
+npx audrey install              # Register MCP server with Claude Code
+npx audrey uninstall            # Remove MCP server registration
+npx audrey hooks install        # Wire Audrey into Claude Code hooks (automatic memory)
+npx audrey hooks uninstall      # Remove Audrey hooks
+
+# Health and monitoring
+npx audrey status               # Human-readable health report
+npx audrey status --json        # Machine-readable health output
+npx audrey status --json --fail-on-unhealthy  # CI gate
+
+# Session lifecycle (used by hooks automatically)
+npx audrey greeting             # Load identity, principles, mood
+npx audrey greeting "auth"      # With context-aware recall
+npx audrey recall "query"       # Semantic memory search (returns hook-compatible JSON)
+npx audrey reflect              # Consolidate learnings from stdin conversation + dream
+
+# Maintenance
+npx audrey dream                # Full consolidation + decay cycle
+npx audrey reembed              # Re-embed all memories after provider/dimension change
+
+# Versioning
+npx audrey snapshot             # Export memories to timestamped JSON file
+npx audrey snapshot backup.json # Export to specific file
+npx audrey restore backup.json  # Restore from snapshot (re-embeds with current provider)
+npx audrey restore backup.json --force  # Overwrite existing memories
 ```
 
-`greeting` and `reflect` are designed for Claude Code hooks, so you can wire them into session start and stop automation.
+## Hooks Integration
+
+Audrey integrates directly into Claude Code's hook lifecycle for automatic, zero-config memory in every session:
+
+```bash
+npx audrey hooks install
+```
+
+This configures four hooks in `~/.claude/settings.json`:
+
+| Hook Event | Command | What Happens |
+|---|---|---|
+| **SessionStart** | `npx audrey greeting` | Loads identity, learned principles, current mood, and recent memories |
+| **UserPromptSubmit** | `npx audrey recall` | Semantic search on every prompt — injects relevant memories as context |
+| **Stop** | `npx audrey reflect` | Extracts lasting learnings from the conversation, then runs a dream cycle |
+| **PostCompact** | `npx audrey greeting` | Re-injects critical memories after context window compaction |
+
+With hooks installed, Claude Code sessions automatically wake up with context, recall relevant memories per-prompt, and consolidate learnings when the session ends. No manual tool calls needed.
+
+## Versioning
+
+Audrey stores memories in SQLite with WAL mode, which isn't git-friendly. Instead, use JSON snapshots:
+
+```bash
+# Save a checkpoint
+npx audrey snapshot
+
+# Commit it
+git add audrey-snapshot-*.json && git commit -m "memory checkpoint"
+
+# Restore on another machine or after a reset
+npx audrey restore audrey-snapshot-2026-03-24_15-30-00.json
+```
+
+Snapshots are human-readable, diffable, and provider-agnostic. Embeddings are re-generated on import, so you can switch providers (e.g., local to Gemini) and restore seamlessly.
 
 ## Production Fit
 
@@ -210,13 +265,11 @@ const brain = new Audrey({
 
 ## Operations
 
-Recommended production checks:
+Recommended production workflow:
 
 ```bash
-# Human-readable status
+# Health checks
 npx audrey status
-
-# Monitoring-friendly status
 npx audrey status --json --fail-on-unhealthy
 
 # Scheduled maintenance
@@ -224,6 +277,10 @@ npx audrey dream
 
 # Repair vector/index drift after provider or dimension changes
 npx audrey reembed
+
+# Version control your memories
+npx audrey snapshot
+npx audrey restore <file> --force
 
 # Run the benchmark harness
 npm run bench:memory
