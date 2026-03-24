@@ -109,13 +109,14 @@ export class OpenAIEmbeddingProvider {
 
 /** @implements {EmbeddingProvider} */
 export class LocalEmbeddingProvider {
-  constructor({ model = 'Xenova/all-MiniLM-L6-v2', device = 'gpu', batchSize = 64 } = {}) {
+  constructor({ model = 'Xenova/all-MiniLM-L6-v2', device = 'gpu', batchSize = 64, pipelineFactory = null } = {}) {
     this.model = model;
     this.dimensions = 384;
     this.modelName = model;
     this.modelVersion = '1.0.0';
     this.device = device;
     this.batchSize = batchSize;
+    this.pipelineFactory = pipelineFactory;
     this._pipeline = null;
     this._readyPromise = null;
     this._actualDevice = null;
@@ -124,7 +125,7 @@ export class LocalEmbeddingProvider {
   ready() {
     if (!this._readyPromise) {
       this._readyPromise = (async () => {
-        const { pipeline } = await import('@huggingface/transformers');
+        const pipeline = this.pipelineFactory || (await import('@huggingface/transformers')).pipeline;
         try {
           this._pipeline = await pipeline('feature-extraction', this.model, {
             dtype: 'fp32', device: this.device,
