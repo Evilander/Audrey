@@ -6,6 +6,7 @@ import { readStoredDimensions } from '../src/db.js';
 import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, MCP_ENTRYPOINT, SERVER_NAME, VERSION } from '../mcp-server/config.js';
 import {
   MAX_MEMORY_CONTENT_LENGTH,
+  buildHooksConfig,
   buildStatusReport,
   formatStatusReport,
   initializeEmbeddingProvider,
@@ -889,4 +890,56 @@ describe('MCP tool: memory_status', () => {
   });
 });
 
+describe('buildHooksConfig', () => {
+  it('returns hook entries for all four lifecycle events', () => {
+    const config = buildHooksConfig();
+    expect(config).toHaveProperty('SessionStart');
+    expect(config).toHaveProperty('UserPromptSubmit');
+    expect(config).toHaveProperty('Stop');
+    expect(config).toHaveProperty('PostCompact');
+  });
 
+  it('SessionStart matcher targets startup and resume', () => {
+    const config = buildHooksConfig();
+    expect(config.SessionStart[0].matcher).toBe('startup|resume');
+    expect(config.SessionStart[0].hooks[0].command).toContain('audrey greeting');
+  });
+
+  it('UserPromptSubmit uses recall command', () => {
+    const config = buildHooksConfig();
+    expect(config.UserPromptSubmit[0].hooks[0].command).toContain('audrey recall');
+  });
+
+  it('Stop uses reflect command', () => {
+    const config = buildHooksConfig();
+    expect(config.Stop[0].hooks[0].command).toContain('audrey reflect');
+  });
+
+  it('PostCompact re-injects with greeting', () => {
+    const config = buildHooksConfig();
+    expect(config.PostCompact[0].hooks[0].command).toContain('audrey greeting');
+  });
+
+  it('all hooks have type command', () => {
+    const config = buildHooksConfig();
+    for (const entries of Object.values(config)) {
+      for (const entry of entries) {
+        for (const hook of entry.hooks) {
+          expect(hook.type).toBe('command');
+        }
+      }
+    }
+  });
+
+  it('all hooks have timeout values', () => {
+    const config = buildHooksConfig();
+    for (const entries of Object.values(config)) {
+      for (const entry of entries) {
+        for (const hook of entry.hooks) {
+          expect(typeof hook.timeout).toBe('number');
+          expect(hook.timeout).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+});
