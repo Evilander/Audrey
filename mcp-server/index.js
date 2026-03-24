@@ -772,6 +772,10 @@ Hooks integration (automatic memory in every session):
   npx audrey hooks install   - Add Audrey hooks to ~/.claude/settings.json
   npx audrey hooks uninstall - Remove Audrey hooks from settings
 
+REST API server (any language, any framework):
+  npx audrey serve [port]    - Start HTTP server (default: 3487)
+  AUDREY_API_KEY=secret npx audrey serve - Start with Bearer token auth
+
 Data stored in: ${dataDir}
 Verify: claude mcp list
 `);
@@ -1197,6 +1201,14 @@ if (isDirectRun) {
   } else if (subcommand === 'restore') {
     restore().catch(err => {
       console.error('[audrey] restore failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'serve') {
+    import('./serve.js').then(({ startServer }) => {
+      const port = process.argv[3] ? parseInt(process.argv[3], 10) : undefined;
+      return startServer({ port });
+    }).catch(err => {
+      console.error('[audrey] serve failed:', err);
       process.exit(1);
     });
   } else if (subcommand === 'status') {
