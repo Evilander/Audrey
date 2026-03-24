@@ -118,6 +118,7 @@ export class Audrey extends EventEmitter {
     const { db, migrated } = createDatabase(dataDir, { dimensions: this.embeddingProvider.dimensions });
     this.db = db;
     this._migrationPending = migrated;
+    this._pending = new Set();
     this.llmProvider = llm ? createLLMProvider(llm) : null;
     this.confidenceConfig = {
       weights: confidence.weights,
@@ -164,8 +165,13 @@ export class Audrey extends EventEmitter {
     this.emit('migration', counts);
   }
 
+  _trackAsync(promise) {
+    this._pending.add(promise);
+    promise.finally(() => this._pending.delete(promise));
+  }
+
   _emitValidation(id, params) {
-    validateMemory(this.db, this.embeddingProvider, { id, ...params }, {
+    const p = validateMemory(this.db, this.embeddingProvider, { id, ...params }, {
       llmProvider: this.llmProvider,
     })
       .then(validation => {
@@ -185,7 +191,8 @@ export class Audrey extends EventEmitter {
           });
         }
       })
-      .catch(err => this.emit('error', err));
+      .catch(err => { if (!this._closed) this.emit('error', err); });
+    this._trackAsync(p);
   }
 
   /**
@@ -198,22 +205,24 @@ export class Audrey extends EventEmitter {
     const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams);
     this.emit('encode', { id, ...params });
     if (this.interferenceConfig.enabled) {
-      applyInterference(this.db, this.embeddingProvider, id, params, this.interferenceConfig)
+      const p = applyInterference(this.db, this.embeddingProvider, id, params, this.interferenceConfig)
         .then(affected => {
           if (affected.length > 0) {
             this.emit('interference', { episodeId: id, affected });
           }
         })
-        .catch(err => this.emit('error', err));
+        .catch(err => { if (!this._closed) this.emit('error', err); });
+      this._trackAsync(p);
     }
     if (this.affectConfig.enabled && this.affectConfig.resonance.enabled && params.affect?.valence !== undefined) {
-      detectResonance(this.db, this.embeddingProvider, id, params, this.affectConfig.resonance)
+      const p = detectResonance(this.db, this.embeddingProvider, id, params, this.affectConfig.resonance)
         .then(echoes => {
           if (echoes.length > 0) {
             this.emit('resonance', { episodeId: id, affect: params.affect, echoes });
           }
         })
-        .catch(err => this.emit('error', err));
+        .catch(err => { if (!this._closed) this.emit('error', err); });
+      this._trackAsync(p);
     }
     this._emitValidation(id, params);
     return id;
@@ -600,11 +609,11 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  /** @returns {void} */
   close() {
     if (this._closed) return;
     this._closed = true;
     this.stopAutoConsolidate();
+    this._pending.clear();
     closeDatabase(this.db);
   }
 }

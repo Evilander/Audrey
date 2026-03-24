@@ -394,13 +394,14 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   const filters = { tags, sources, after, before };
 
   const allResults = [];
+  const errors = [];
 
   if (searchTypes.includes('episodic')) {
     try {
       const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters, includePrivate);
       allResults.push(...episodic);
-    } catch {
-      // A broken episodic index should not block semantic/procedural recall.
+    } catch (err) {
+      errors.push({ type: 'episodic', message: err.message });
     }
   }
 
@@ -417,8 +418,8 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
           `UPDATE semantics SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
         ).run(nowISO, ...semIds);
       }
-    } catch {
-      // A broken semantic index should not block other memory types.
+    } catch (err) {
+      errors.push({ type: 'semantic', message: err.message });
     }
   }
 
@@ -435,13 +436,14 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
           `UPDATE procedures SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
         ).run(nowISO, ...procIds);
       }
-    } catch {
-      // A broken procedural index should not block other memory types.
+    } catch (err) {
+      errors.push({ type: 'procedural', message: err.message });
     }
   }
 
   const top = applyResultGuards(query, allResults, limit);
   for (const entry of top) {
+    if (errors.length > 0) entry._recallErrors = errors;
     yield entry;
   }
 }

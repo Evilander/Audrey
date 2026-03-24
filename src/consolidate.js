@@ -193,8 +193,7 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
       });
     }
 
-    db.exec('BEGIN IMMEDIATE');
-    try {
+    const writeConsolidation = db.transaction(() => {
       for (const prepared of preparedClusters) {
         const placeholders = inClause(prepared.clusterIds);
         const eligibleCount = db.prepare(`
@@ -259,13 +258,8 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
         generateId(), runId, minClusterSize, similarityThreshold,
         episodesEvaluated, clusters.length, principlesExtracted, completedAt,
       );
-      db.exec('COMMIT');
-    } catch (err) {
-      if (db.inTransaction) {
-        db.exec('ROLLBACK');
-      }
-      throw err;
-    }
+    });
+    writeConsolidation.immediate();
 
     return {
       runId,
