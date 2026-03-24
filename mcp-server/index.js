@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Audrey } from '../src/index.js';
@@ -356,6 +356,339 @@ async function reflect() {
   }
 }
 
+async function recall() {
+  const dataDir = resolveDataDir(process.env);
+
+  if (!existsSync(dataDir)) {
+    // No data yet — nothing to recall
+    process.exit(0);
+  }
+
+  // Read hook JSON from stdin
+  let hookInput = null;
+  if (!process.stdin.isTTY) {
+    const chunks = [];
+    for await (const chunk of process.stdin) {
+      chunks.push(chunk);
+    }
+    const raw = Buffer.concat(chunks).toString('utf-8').trim();
+    if (raw) {
+      try {
+        hookInput = JSON.parse(raw);
+      } catch {
+        console.error('[audrey] Could not parse stdin as JSON');
+        process.exit(0);
+      }
+    }
+  }
+
+  // Extract query from hook input or CLI arg
+  const query = hookInput?.prompt        // UserPromptSubmit hook
+    || hookInput?.query                  // direct query field
+    || process.argv[3];                  // CLI argument
+
+  if (!query || typeof query !== 'string' || !query.trim()) {
+    process.exit(0);
+  }
+
+  const storedDimensions = readStoredDimensions(dataDir);
+  const resolvedEmbedding = resolveEmbeddingProvider(process.env, process.env.AUDREY_EMBEDDING_PROVIDER);
+  const canEmbed = storedDimensions !== null && storedDimensions === resolvedEmbedding.dimensions;
+
+  if (!canEmbed) {
+    // Dimension mismatch — skip recall silently
+    process.exit(0);
+  }
+
+  const audrey = new Audrey({
+    dataDir,
+    agent: 'recall-hook',
+    embedding: resolvedEmbedding,
+  });
+
+  try {
+    await initializeEmbeddingProvider(audrey.embeddingProvider);
+
+    const limit = parseInt(process.argv[4], 10) || 5;
+    const results = await audrey.recall(query.trim(), {
+      limit,
+      includePrivate: false,
+    });
+
+    if (!results || results.length === 0) {
+      process.exit(0);
+    }
+
+    const lines = results.map(r => {
+      const type = r.type === 'semantic' ? 'principle' : r.type === 'procedural' ? 'procedure' : 'memory';
+      return `[${type}] ${r.content}`;
+    });
+
+    const output = {
+      additionalContext: `Relevant memories from Audrey:\n\n${lines.join('\n\n')}`,
+    };
+
+    console.log(JSON.stringify(output));
+  } finally {
+    audrey.close();
+  }
+}
+
+export function buildHooksConfig({ scope = 'user' } = {}) {
+  const audreyBin = 'npx audrey';
+
+  return {
+    SessionStart: [
+      {
+        matcher: 'startup|resume',
+        hooks: [
+          {
+            type: 'command',
+            command: `${audreyBin} greeting`,
+            timeout: 30,
+          },
+        ],
+      },
+    ],
+    UserPromptSubmit: [
+      {
+        matcher: '',
+        hooks: [
+          {
+            type: 'command',
+            command: `${audreyBin} recall`,
+            timeout: 15,
+          },
+        ],
+      },
+    ],
+    Stop: [
+      {
+        matcher: '',
+        hooks: [
+          {
+            type: 'command',
+            command: `${audreyBin} reflect`,
+            timeout: 120,
+          },
+        ],
+      },
+    ],
+    PostCompact: [
+      {
+        matcher: '',
+        hooks: [
+          {
+            type: 'command',
+            command: `${audreyBin} greeting`,
+            timeout: 30,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function hooksInstall() {
+  const settingsPath = join(homedir(), '.claude', 'settings.json');
+  const settingsDir = join(homedir(), '.claude');
+
+  let settings = {};
+  if (existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    } catch {
+      console.error(`[audrey] Could not parse ${settingsPath}. Please fix it manually.`);
+      process.exit(1);
+    }
+  }
+
+  const audreyHooks = buildHooksConfig();
+
+  if (!settings.hooks) {
+    settings.hooks = {};
+  }
+
+  // Merge Audrey hooks with existing hooks, preserving user's existing hooks
+  for (const [event, audreyEntries] of Object.entries(audreyHooks)) {
+    if (!settings.hooks[event]) {
+      settings.hooks[event] = [];
+    }
+
+    // Remove any previously-installed Audrey hooks (by command match)
+    settings.hooks[event] = settings.hooks[event].filter(entry => {
+      if (!entry.hooks) return true;
+      return !entry.hooks.some(h => h.command && h.command.includes('npx audrey'));
+    });
+
+    // Add Audrey hooks
+    settings.hooks[event].push(...audreyEntries);
+  }
+
+  mkdirSync(settingsDir, { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+
+  console.log(`[audrey] Hooks installed in ${settingsPath}
+
+Hooks configured:
+  SessionStart  → npx audrey greeting   (load identity, principles, mood)
+  UserPromptSubmit → npx audrey recall   (semantic memory search per prompt)
+  Stop          → npx audrey reflect     (consolidate learnings + dream cycle)
+  PostCompact   → npx audrey greeting    (re-inject memories after compaction)
+
+Verify: Open ${settingsPath} or run claude /hooks
+`);
+}
+
+function hooksUninstall() {
+  const settingsPath = join(homedir(), '.claude', 'settings.json');
+
+  if (!existsSync(settingsPath)) {
+    console.log('[audrey] No settings.json found. Nothing to remove.');
+    return;
+  }
+
+  let settings;
+  try {
+    settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+  } catch {
+    console.error(`[audrey] Could not parse ${settingsPath}.`);
+    process.exit(1);
+  }
+
+  if (!settings.hooks) {
+    console.log('[audrey] No hooks configured. Nothing to remove.');
+    return;
+  }
+
+  let removed = 0;
+  for (const event of Object.keys(settings.hooks)) {
+    const before = settings.hooks[event].length;
+    settings.hooks[event] = settings.hooks[event].filter(entry => {
+      if (!entry.hooks) return true;
+      return !entry.hooks.some(h => h.command && h.command.includes('npx audrey'));
+    });
+    removed += before - settings.hooks[event].length;
+
+    // Clean up empty arrays
+    if (settings.hooks[event].length === 0) {
+      delete settings.hooks[event];
+    }
+  }
+
+  // Clean up empty hooks object
+  if (Object.keys(settings.hooks).length === 0) {
+    delete settings.hooks;
+  }
+
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+  console.log(`[audrey] Removed ${removed} hook(s) from ${settingsPath}`);
+}
+
+export function resolveSnapshotPath(outputArg, dataDir) {
+  if (outputArg) return resolve(outputArg);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+  return resolve(dataDir, '..', `audrey-snapshot-${timestamp}.json`);
+}
+
+async function snapshot() {
+  const dataDir = resolveDataDir(process.env);
+
+  if (!existsSync(dataDir)) {
+    console.error('[audrey] No data directory found. Nothing to snapshot.');
+    process.exit(1);
+  }
+
+  const storedDimensions = readStoredDimensions(dataDir);
+  const dimensions = storedDimensions || 8;
+  const audrey = new Audrey({
+    dataDir,
+    agent: 'snapshot',
+    embedding: { provider: 'mock', dimensions },
+  });
+
+  try {
+    const data = audrey.export();
+    const stats = audrey.introspect();
+
+    const outputPath = resolveSnapshotPath(process.argv[3], dataDir);
+
+    writeFileSync(outputPath, JSON.stringify(data, null, 2) + '\n');
+
+    console.log(`[audrey] Snapshot saved to ${outputPath}`);
+    console.log(`  ${stats.episodic} episodes, ${stats.semantic} semantics, ${stats.procedural} procedures`);
+    console.log(`  ${data.contradictions?.length || 0} contradictions, ${data.causalLinks?.length || 0} causal links`);
+    console.log(`  Version: ${data.version}, exported at: ${data.exportedAt}`);
+    console.log('');
+    console.log('To restore: npx audrey restore ' + outputPath);
+  } finally {
+    audrey.close();
+  }
+}
+
+async function restore() {
+  const snapshotPath = process.argv[3];
+  if (!snapshotPath) {
+    console.error('Usage: npx audrey restore <snapshot-file>');
+    console.error('  e.g.: npx audrey restore audrey-snapshot-2026-03-24.json');
+    process.exit(1);
+  }
+
+  const resolvedPath = resolve(snapshotPath);
+  if (!existsSync(resolvedPath)) {
+    console.error(`[audrey] Snapshot file not found: ${resolvedPath}`);
+    process.exit(1);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(readFileSync(resolvedPath, 'utf-8'));
+  } catch {
+    console.error(`[audrey] Could not parse snapshot file: ${resolvedPath}`);
+    process.exit(1);
+  }
+
+  if (!data.version || !data.episodes) {
+    console.error('[audrey] Invalid snapshot: missing version or episodes field.');
+    process.exit(1);
+  }
+
+  const dataDir = resolveDataDir(process.env);
+  const explicit = process.env.AUDREY_EMBEDDING_PROVIDER;
+  const embedding = resolveEmbeddingProvider(process.env, explicit);
+
+  const audrey = new Audrey({ dataDir, agent: 'restore', embedding });
+
+  try {
+    await initializeEmbeddingProvider(audrey.embeddingProvider);
+
+    const stats = audrey.introspect();
+    const isEmpty = stats.episodic === 0 && stats.semantic === 0 && stats.procedural === 0;
+
+    if (!isEmpty) {
+      const force = process.argv.includes('--force');
+      if (!force) {
+        console.error('[audrey] Database is not empty. Use --force to purge and restore.');
+        console.error(`  Current: ${stats.episodic} episodes, ${stats.semantic} semantics, ${stats.procedural} procedures`);
+        process.exit(1);
+      }
+      console.log('[audrey] --force: purging existing memories before restore...');
+      audrey.purge();
+    }
+
+    console.log(`[audrey] Restoring from snapshot v${data.version} (${data.exportedAt || 'unknown date'})...`);
+    console.log(`[audrey] Re-embedding with ${embedding.provider} (${embedding.dimensions}d)...`);
+
+    await audrey.import(data);
+
+    const restored = audrey.introspect();
+    console.log(`[audrey] Restored: ${restored.episodic} episodes, ${restored.semantic} semantics, ${restored.procedural} procedures`);
+    console.log('[audrey] Restore complete.');
+  } finally {
+    audrey.close();
+  }
+}
+
 function install() {
   try {
     execFileSync('claude', ['--version'], { stdio: 'ignore' });
@@ -426,9 +759,18 @@ CLI subcommands:
   npx audrey status --json - Emit machine-readable health output
   npx audrey status --json --fail-on-unhealthy - Exit non-zero on unhealthy status
   npx audrey greeting  - Output session briefing (for hooks)
+  npx audrey recall    - Semantic recall for hook context injection
   npx audrey reflect   - Reflect on conversation + dream cycle (for hooks)
   npx audrey dream     - Run consolidation + decay cycle
   npx audrey reembed   - Re-embed all memories with current provider
+
+Versioning (git-friendly memory snapshots):
+  npx audrey snapshot [file] - Export memories to a JSON snapshot file
+  npx audrey restore <file>  - Restore memories from a snapshot (--force to overwrite)
+
+Hooks integration (automatic memory in every session):
+  npx audrey hooks install   - Add Audrey hooks to ~/.claude/settings.json
+  npx audrey hooks uninstall - Remove Audrey hooks from settings
 
 Data stored in: ${dataDir}
 Verify: claude mcp list
@@ -830,6 +1172,31 @@ if (isDirectRun) {
   } else if (subcommand === 'reflect') {
     reflect().catch(err => {
       console.error('[audrey] reflect failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'recall') {
+    recall().catch(err => {
+      console.error('[audrey] recall failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'hooks') {
+    const hooksAction = process.argv[3];
+    if (hooksAction === 'install') {
+      hooksInstall();
+    } else if (hooksAction === 'uninstall') {
+      hooksUninstall();
+    } else {
+      console.error('Usage: npx audrey hooks [install|uninstall]');
+      process.exit(1);
+    }
+  } else if (subcommand === 'snapshot') {
+    snapshot().catch(err => {
+      console.error('[audrey] snapshot failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'restore') {
+    restore().catch(err => {
+      console.error('[audrey] restore failed:', err);
       process.exit(1);
     });
   } else if (subcommand === 'status') {
