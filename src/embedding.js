@@ -186,10 +186,10 @@ export class GeminiEmbeddingProvider {
     const timer = setTimeout(() => controller.abort(), this.timeout);
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:embedContent?key=${this.apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:embedContent`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
           body: JSON.stringify({ model: `models/${this.model}`, content: { parts: [{ text }] } }),
           signal: controller.signal,
         }
@@ -212,10 +212,10 @@ export class GeminiEmbeddingProvider {
       const timer = setTimeout(() => controller.abort(), this.timeout);
       try {
         const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:batchEmbedContents?key=${this.apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:batchEmbedContents`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
             body: JSON.stringify({
               requests: chunk.map(text => ({
                 model: `models/${this.model}`,
