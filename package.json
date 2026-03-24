@@ -1,7 +1,7 @@
 {
   "name": "audrey",
   "version": "0.16.1",
-  "description": "Biological memory architecture for AI agents — encode, consolidate, and recall memories with confidence decay, contradiction detection, and causal graphs",
+  "description": "Biological memory architecture for AI agents - encode, consolidate, and recall memories with confidence decay, contradiction detection, and causal graphs",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -15,7 +15,9 @@
   "files": [
     "src/",
     "mcp-server/",
+    "benchmarks/*.js",
     "docs/production-readiness.md",
+    "docs/benchmarking.md",
     "examples/",
     "README.md",
     "LICENSE"
@@ -23,7 +25,11 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "pack:check": "npm pack --dry-run"
+    "pack:check": "npm pack --dry-run",
+    "bench:memory": "node benchmarks/run.js",
+    "bench:memory:json": "node benchmarks/run.js --json",
+    "bench:memory:check": "node benchmarks/run.js --check",
+    "bench:memory:readme-assets": "node benchmarks/run.js --readme-assets-dir docs/assets/benchmarks"
   },
   "keywords": [
     "ai",

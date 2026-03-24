@@ -29,6 +29,7 @@ jobs:
 
       - run: npm ci
       - run: npm test
+      - run: npm run bench:memory:check
       - run: npm run pack:check
 
   windows-smoke:
@@ -45,4 +46,5 @@ jobs:
 
       - run: npm ci
       - run: npm test
+      - run: npm run bench:memory:check
       - run: npm run pack:check

@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -181,7 +179,7 @@ async function greeting() {
   const contextArg = process.argv[3] || undefined;
 
   if (!existsSync(dataDir)) {
-    console.log('[audrey] No data yet — fresh start.');
+    console.log('[audrey] No data yet - fresh start.');
     return;
   }
 
@@ -643,6 +641,8 @@ export function registerDreamTool(server, audrey) {
 }
 
 async function main() {
+  const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
+  const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
   const config = buildAudreyConfig();
   const audrey = new Audrey(config);
 

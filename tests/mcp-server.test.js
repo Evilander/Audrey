@@ -131,7 +131,7 @@ describe('MCP CLI: buildInstallArgs', () => {
     expect(args[dashDashIdx + 1]).toBe(process.execPath);
     expect(args[dashDashIdx + 2]).toBe(MCP_ENTRYPOINT);
     const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
-    // local is the default � no provider env var emitted, no API keys
+    // Local is the default, so the install args should persist local embedding config without API keys.
     expect(envPairsStr).toContain(`AUDREY_DATA_DIR=${DEFAULT_DATA_DIR}`);
     expect(envPairsStr).toContain('AUDREY_EMBEDDING_PROVIDER=local');
     expect(envPairsStr).toContain('AUDREY_DEVICE=gpu');
@@ -888,3 +888,4 @@ describe('MCP tool: memory_status', () => {
     expect(status.healthy).toBe(false);
   });
 });
+
