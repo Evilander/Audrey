@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { z } from 'zod';
 import { EventEmitter } from 'node:events';
 import { Audrey } from '../src/index.js';
@@ -888,4 +888,5 @@ describe('MCP tool: memory_status', () => {
     expect(status.healthy).toBe(false);
   });
 });
+
 
