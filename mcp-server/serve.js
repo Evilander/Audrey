@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { unlinkSync } from 'node:fs';
 import { Audrey } from '../src/index.js';
@@ -40,6 +41,8 @@ function json(res, status, data) {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
     'Access-Control-Allow-Origin': '*',
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'no-store',
   });
   res.end(body);
 }
@@ -72,8 +75,12 @@ export function createAudreyServer(audrey, options = {}) {
 
   function authenticate(req, res) {
     if (!apiKey) return true;
-    const auth = req.headers.authorization;
-    if (auth === `Bearer ${apiKey}`) return true;
+    const auth = req.headers.authorization || '';
+    const expected = `Bearer ${apiKey}`;
+    if (auth.length === expected.length &&
+        timingSafeEqual(Buffer.from(auth), Buffer.from(expected))) {
+      return true;
+    }
     json(res, 401, { error: 'Unauthorized' });
     return false;
   }
@@ -199,18 +206,26 @@ export function createAudreyServer(audrey, options = {}) {
         }
       }
     } catch (err) {
-      const status = err.message.includes('too large') ? 413
-        : err.message.includes('Invalid JSON') ? 400
-        : 500;
-      json(res, status, { error: err.message });
+      if (err.message.includes('too large')) {
+        json(res, 413, { error: 'Request body too large' });
+      } else if (err.message.includes('Invalid JSON')) {
+        json(res, 400, { error: 'Invalid JSON in request body' });
+      } else if (err.message.includes('source type')) {
+        json(res, 400, { error: err.message });
+      } else {
+        console.error('[audrey] Internal error:', err.message);
+        json(res, 500, { error: 'Internal server error' });
+      }
     }
   });
 
+  server._ctx = ctx;
   return server;
 }
 
 export async function startServer(options = {}) {
   const port = options.port || parseInt(process.env.AUDREY_PORT, 10) || DEFAULT_PORT;
+  const host = options.host || process.env.AUDREY_HOST || '127.0.0.1';
   const apiKey = options.apiKey || process.env.AUDREY_API_KEY || null;
 
   const config = buildAudreyConfig();
@@ -219,11 +234,15 @@ export async function startServer(options = {}) {
 
   const server = createAudreyServer(audrey, { apiKey, audreyFactory });
 
-  server.listen(port, () => {
-    console.log(`[audrey] REST API server listening on http://localhost:${port}`);
+  server.listen(port, host, () => {
+    console.log(`[audrey] REST API server listening on http://${host}:${port}`);
     console.log(`[audrey] Data: ${config.dataDir}`);
     console.log(`[audrey] Embedding: ${config.embedding.provider}`);
-    if (apiKey) console.log('[audrey] Auth: Bearer token required');
+    if (apiKey) {
+      console.log('[audrey] Auth: Bearer token required');
+    } else {
+      console.warn('[audrey] WARNING: No API key configured. Set AUDREY_API_KEY for production use.');
+    }
     console.log('');
     console.log('Endpoints:');
     console.log('  GET  /health       - Liveness probe');
@@ -241,7 +260,7 @@ export async function startServer(options = {}) {
 
   const shutdown = () => {
     console.log('\n[audrey] Shutting down...');
-    audrey.close();
+    server._ctx.audrey.close();
     server.close();
     process.exit(0);
   };

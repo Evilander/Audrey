@@ -223,7 +223,7 @@ describe('Audrey REST API Server', () => {
       content: 'test memory',
       source: 'invalid-source-type',
     });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(400);
     expect(res.data.error).toContain('source type');
   });
 
