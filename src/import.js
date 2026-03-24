@@ -16,9 +16,37 @@ function isDatabaseEmpty(db) {
   return tables.every(table => db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get().c === 0);
 }
 
+const VALID_SOURCES = new Set(['direct-observation', 'told-by-user', 'tool-result', 'inference', 'model-generated']);
+
+function validateSnapshot(snapshot) {
+  const errors = [];
+  for (let i = 0; i < (snapshot.episodes || []).length; i++) {
+    const ep = snapshot.episodes[i];
+    if (!ep.id) errors.push(`episodes[${i}]: missing id`);
+    if (!ep.content) errors.push(`episodes[${i}]: missing content`);
+    if (!ep.source || !VALID_SOURCES.has(ep.source)) errors.push(`episodes[${i}]: invalid source "${ep.source}"`);
+  }
+  for (let i = 0; i < (snapshot.semantics || []).length; i++) {
+    const sem = snapshot.semantics[i];
+    if (!sem.id) errors.push(`semantics[${i}]: missing id`);
+    if (!sem.content) errors.push(`semantics[${i}]: missing content`);
+  }
+  for (let i = 0; i < (snapshot.procedures || []).length; i++) {
+    const proc = snapshot.procedures[i];
+    if (!proc.id) errors.push(`procedures[${i}]: missing id`);
+    if (!proc.content) errors.push(`procedures[${i}]: missing content`);
+  }
+  return errors;
+}
+
 export async function importMemories(db, embeddingProvider, snapshot) {
   if (!isDatabaseEmpty(db)) {
     throw new Error('Cannot import into a database that is not empty');
+  }
+
+  const validationErrors = validateSnapshot(snapshot);
+  if (validationErrors.length > 0) {
+    throw new Error(`Invalid snapshot: ${validationErrors.join('; ')}`);
   }
 
   const episodes = snapshot.episodes || [];
