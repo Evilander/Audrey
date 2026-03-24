@@ -128,9 +128,9 @@ export class Audrey extends EventEmitter {
       affectWeight: affect.weight ?? 0.2,
     };
     this.consolidationConfig = {
-      minEpisodes: consolidation.minEpisodes || 3,
+      minEpisodes: consolidation.minEpisodes ?? 3,
     };
-    this.decayConfig = { dormantThreshold: decay.dormantThreshold || 0.1 };
+    this.decayConfig = { dormantThreshold: decay.dormantThreshold ?? 0.1 };
     this._autoConsolidateTimer = null;
     this._closed = false;
     this.interferenceConfig = {
@@ -325,8 +325,8 @@ export class Audrey extends EventEmitter {
   async consolidate(options = {}) {
     await this._ensureMigrated();
     const result = await runConsolidation(this.db, this.embeddingProvider, {
-      minClusterSize: options.minClusterSize || this.consolidationConfig.minEpisodes,
-      similarityThreshold: options.similarityThreshold || 0.80,
+      minClusterSize: options.minClusterSize ?? this.consolidationConfig.minEpisodes,
+      similarityThreshold: options.similarityThreshold ?? 0.80,
       extractPrinciple: options.extractPrinciple,
       llmProvider: options.llmProvider || this.llmProvider,
     });
@@ -342,7 +342,7 @@ export class Audrey extends EventEmitter {
    */
   decay(options = {}) {
     const result = applyDecay(this.db, {
-      dormantThreshold: options.dormantThreshold || this.decayConfig.dormantThreshold,
+      dormantThreshold: options.dormantThreshold ?? this.decayConfig.dormantThreshold,
       halfLives: options.halfLives ?? this.confidenceConfig.halfLives,
     });
     this.emit('decay', result);

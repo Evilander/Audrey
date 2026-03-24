@@ -4,11 +4,18 @@
 [![npm version](https://img.shields.io/npm/v/audrey.svg)](https://www.npmjs.com/package/audrey)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Production memory for AI agents and MCP workflows.
+Persistent memory for Claude Code and AI agents. Two commands, every session remembers.
 
-Audrey gives agents a local, inspectable memory layer that can encode episodes, consolidate them into principles, detect contradictions, and let stale knowledge decay instead of accumulating forever.
+```bash
+npx audrey install          # 13 MCP memory tools
+npx audrey hooks install    # automatic memory in every session
+```
 
-> **If you liked `/dream`** — Anthropic's Claude Code recently shipped `/dream`, which runs scheduled maintenance and memory consolidation inside Claude Code sessions. Audrey has been doing this since before `/dream` existed, and goes significantly further: episodic-to-semantic consolidation, contradiction detection with resolution tracking, confidence scoring with forgetting curves, emotional affect encoding, causal reasoning, source reliability weighting, and a full sleep/wake lifecycle. Where `/dream` gives Claude Code a single maintenance pass, Audrey gives any agent a complete cognitive memory architecture — with the biological fidelity to match. If Anthropic built `/dream`, it validates that this problem matters. Audrey is the production-grade answer.
+That's it. Claude Code now wakes up knowing what happened yesterday, recalls relevant context per-prompt, and consolidates learnings when the session ends. No cloud, no config files, no infrastructure — one SQLite file.
+
+Audrey also works as a standalone SDK, MCP server, and REST API for any AI agent framework.
+
+> **On `/dream`** — Anthropic recently shipped `/dream` for Claude Code memory maintenance. Audrey predates it and goes further: episodic-to-semantic consolidation, contradiction detection, confidence decay, emotional affect, causal reasoning, and source reliability weighting. `/dream` is a maintenance pass. Audrey is a cognitive memory architecture.
 
 ## Why Audrey
 
@@ -37,6 +44,7 @@ Audrey models memory as a working system instead of a filing cabinet.
 - **Claude Code hooks integration** — automatic memory in every session (`npx audrey hooks install`)
 - JavaScript SDK for direct application use
 - **Git-friendly versioning** via JSON snapshots (`npx audrey snapshot` / `restore`)
+- **REST API server** — any language, any framework (`npx audrey serve`)
 - Health checks via `npx audrey status --json`
 - Benchmark harness with SVG/HTML reports via `npm run bench:memory`
 - Regression gate for benchmark quality via `npm run bench:memory:check`
@@ -152,6 +160,10 @@ npx audrey snapshot             # Export memories to timestamped JSON file
 npx audrey snapshot backup.json # Export to specific file
 npx audrey restore backup.json  # Restore from snapshot (re-embeds with current provider)
 npx audrey restore backup.json --force  # Overwrite existing memories
+
+# REST API server
+npx audrey serve                # Start HTTP server on port 3487
+npx audrey serve 8080           # Custom port
 ```
 
 ## Hooks Integration
@@ -172,6 +184,44 @@ This configures four hooks in `~/.claude/settings.json`:
 | **PostCompact** | `npx audrey greeting` | Re-injects critical memories after context window compaction |
 
 With hooks installed, Claude Code sessions automatically wake up with context, recall relevant memories per-prompt, and consolidate learnings when the session ends. No manual tool calls needed.
+
+## REST API Server
+
+Turn Audrey into an HTTP service that any language or framework can use:
+
+```bash
+npx audrey serve           # Start on port 3487
+npx audrey serve 8080      # Custom port
+AUDREY_API_KEY=secret npx audrey serve  # With Bearer token auth
+```
+
+Endpoints:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Liveness probe |
+| `GET` | `/status` | Memory stats (introspect) |
+| `POST` | `/encode` | Store a memory (`{ content, source, tags?, context?, affect? }`) |
+| `POST` | `/recall` | Semantic search (`{ query, limit?, context? }`) |
+| `POST` | `/dream` | Full consolidation + decay cycle |
+| `POST` | `/consolidate` | Run consolidation only |
+| `POST` | `/forget` | Forget by `{ id }` or `{ query }` |
+| `POST` | `/snapshot` | Export all memories as JSON |
+| `POST` | `/restore` | Wipe and reimport from snapshot |
+
+Example from any language:
+
+```bash
+# Store a memory
+curl -X POST http://localhost:3487/encode \
+  -H "Content-Type: application/json" \
+  -d '{"content": "The deploy failed due to OOM", "source": "direct-observation"}'
+
+# Search memories
+curl -X POST http://localhost:3487/recall \
+  -H "Content-Type: application/json" \
+  -d '{"query": "deploy failures", "limit": 5}'
+```
 
 ## Versioning
 
@@ -328,7 +378,7 @@ Published comparison anchors from current LLM memory systems:
 
 ![Published LLM memory benchmark comparison](docs/assets/benchmarks/published-memory-standards.svg)
 
-External bars are published numbers from primary sources, not Audrey reruns. They are included so the README stays grounded against the current memory field instead of only showing internal wins.
+**Important:** These are two different measurement contexts. Audrey's bar is from its internal LongMemEval-style suite using mock embeddings. The external bars are published LoCoMo scores from primary sources — different benchmark, different conditions. They are included as field context, not a direct comparison. Running Audrey against LoCoMo proper is on the roadmap.
 
 | System | Anchor | What it represents |
 |---|---|---|
