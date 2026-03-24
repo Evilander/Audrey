@@ -198,6 +198,46 @@ describe('Audrey REST API Server', () => {
     const res = await request(server, 'GET', '/health');
     expect(res.headers['access-control-allow-origin']).toBe('*');
   });
+
+  it('POST /encode rejects non-JSON body', async () => {
+    const res = await new Promise((resolve, reject) => {
+      const addr = server.address();
+      const req = http.request({
+        hostname: '127.0.0.1', port: addr.port, path: '/encode',
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      }, r => {
+        const chunks = [];
+        r.on('data', c => chunks.push(c));
+        r.on('end', () => resolve({ status: r.statusCode, data: JSON.parse(Buffer.concat(chunks).toString()) }));
+      });
+      req.on('error', reject);
+      req.write('not json at all');
+      req.end();
+    });
+    expect(res.status).toBe(400);
+    expect(res.data.error).toContain('Invalid JSON');
+  });
+
+  it('POST /encode handles invalid source type gracefully', async () => {
+    const res = await request(server, 'POST', '/encode', {
+      content: 'test memory',
+      source: 'invalid-source-type',
+    });
+    expect(res.status).toBe(500);
+    expect(res.data.error).toContain('source type');
+  });
+
+  it('handles concurrent requests', async () => {
+    const promises = Array.from({ length: 10 }, (_, i) =>
+      request(server, 'POST', '/encode', {
+        content: `Concurrent memory ${i}`,
+        source: 'direct-observation',
+      })
+    );
+    const results = await Promise.all(promises);
+    expect(results.every(r => r.status === 201)).toBe(true);
+    expect(new Set(results.map(r => r.data.id)).size).toBe(10);
+  });
 });
 
 describe('Audrey REST API with auth', () => {

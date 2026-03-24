@@ -37,6 +37,7 @@ Audrey models memory as a working system instead of a filing cabinet.
 - **Claude Code hooks integration** — automatic memory in every session (`npx audrey hooks install`)
 - JavaScript SDK for direct application use
 - **Git-friendly versioning** via JSON snapshots (`npx audrey snapshot` / `restore`)
+- **REST API server** — any language, any framework (`npx audrey serve`)
 - Health checks via `npx audrey status --json`
 - Benchmark harness with SVG/HTML reports via `npm run bench:memory`
 - Regression gate for benchmark quality via `npm run bench:memory:check`
@@ -152,6 +153,10 @@ npx audrey snapshot             # Export memories to timestamped JSON file
 npx audrey snapshot backup.json # Export to specific file
 npx audrey restore backup.json  # Restore from snapshot (re-embeds with current provider)
 npx audrey restore backup.json --force  # Overwrite existing memories
+
+# REST API server
+npx audrey serve                # Start HTTP server on port 3487
+npx audrey serve 8080           # Custom port
 ```
 
 ## Hooks Integration
@@ -172,6 +177,44 @@ This configures four hooks in `~/.claude/settings.json`:
 | **PostCompact** | `npx audrey greeting` | Re-injects critical memories after context window compaction |
 
 With hooks installed, Claude Code sessions automatically wake up with context, recall relevant memories per-prompt, and consolidate learnings when the session ends. No manual tool calls needed.
+
+## REST API Server
+
+Turn Audrey into an HTTP service that any language or framework can use:
+
+```bash
+npx audrey serve           # Start on port 3487
+npx audrey serve 8080      # Custom port
+AUDREY_API_KEY=secret npx audrey serve  # With Bearer token auth
+```
+
+Endpoints:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Liveness probe |
+| `GET` | `/status` | Memory stats (introspect) |
+| `POST` | `/encode` | Store a memory (`{ content, source, tags?, context?, affect? }`) |
+| `POST` | `/recall` | Semantic search (`{ query, limit?, context? }`) |
+| `POST` | `/dream` | Full consolidation + decay cycle |
+| `POST` | `/consolidate` | Run consolidation only |
+| `POST` | `/forget` | Forget by `{ id }` or `{ query }` |
+| `POST` | `/snapshot` | Export all memories as JSON |
+| `POST` | `/restore` | Wipe and reimport from snapshot |
+
+Example from any language:
+
+```bash
+# Store a memory
+curl -X POST http://localhost:3487/encode \
+  -H "Content-Type: application/json" \
+  -d '{"content": "The deploy failed due to OOM", "source": "direct-observation"}'
+
+# Search memories
+curl -X POST http://localhost:3487/recall \
+  -H "Content-Type: application/json" \
+  -d '{"query": "deploy failures", "limit": 5}'
+```
 
 ## Versioning
 
