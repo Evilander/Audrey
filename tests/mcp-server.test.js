@@ -1,5 +1,6 @@
 ﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { z } from 'zod';
+import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { Audrey } from '../src/index.js';
 import { readStoredDimensions } from '../src/db.js';
@@ -948,20 +949,22 @@ describe('buildHooksConfig', () => {
 describe('resolveSnapshotPath', () => {
   it('uses explicit output path when provided', () => {
     const result = resolveSnapshotPath('/tmp/my-snapshot.json', '/data');
-    expect(result).toBe('/tmp/my-snapshot.json');
+    // On Windows, resolve() prepends the drive letter (e.g. D:\tmp\...)
+    expect(result).toMatch(/my-snapshot\.json$/);
+    expect(path.isAbsolute(result)).toBe(true);
   });
 
   it('generates timestamped filename when no output arg given', () => {
     const result = resolveSnapshotPath(undefined, '/home/user/.audrey/data');
     expect(result).toMatch(/audrey-snapshot-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.json$/);
     // Should be in parent of dataDir (i.e., ~/.audrey/)
-    expect(result).toMatch(/^\/home\/user\/\.audrey\/audrey-snapshot-/);
+    expect(result).toContain(path.join('user', '.audrey', 'audrey-snapshot-'));
   });
 
   it('resolves relative output path to absolute', () => {
     const result = resolveSnapshotPath('./snapshots/backup.json', '/data');
-    expect(result).toContain('/snapshots/backup.json');
-    expect(result.startsWith('/')).toBe(true);
+    expect(result).toContain(path.join('snapshots', 'backup.json'));
+    expect(path.isAbsolute(result)).toBe(true);
   });
 });
 
