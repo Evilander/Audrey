@@ -585,6 +585,110 @@ function hooksUninstall() {
   console.log(`[audrey] Removed ${removed} hook(s) from ${settingsPath}`);
 }
 
+export function resolveSnapshotPath(outputArg, dataDir) {
+  if (outputArg) return resolve(outputArg);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+  return resolve(dataDir, '..', `audrey-snapshot-${timestamp}.json`);
+}
+
+async function snapshot() {
+  const dataDir = resolveDataDir(process.env);
+
+  if (!existsSync(dataDir)) {
+    console.error('[audrey] No data directory found. Nothing to snapshot.');
+    process.exit(1);
+  }
+
+  const storedDimensions = readStoredDimensions(dataDir);
+  const dimensions = storedDimensions || 8;
+  const audrey = new Audrey({
+    dataDir,
+    agent: 'snapshot',
+    embedding: { provider: 'mock', dimensions },
+  });
+
+  try {
+    const data = audrey.export();
+    const stats = audrey.introspect();
+
+    const outputPath = resolveSnapshotPath(process.argv[3], dataDir);
+
+    writeFileSync(outputPath, JSON.stringify(data, null, 2) + '\n');
+
+    console.log(`[audrey] Snapshot saved to ${outputPath}`);
+    console.log(`  ${stats.episodic} episodes, ${stats.semantic} semantics, ${stats.procedural} procedures`);
+    console.log(`  ${data.contradictions?.length || 0} contradictions, ${data.causalLinks?.length || 0} causal links`);
+    console.log(`  Version: ${data.version}, exported at: ${data.exportedAt}`);
+    console.log('');
+    console.log('To restore: npx audrey restore ' + outputPath);
+  } finally {
+    audrey.close();
+  }
+}
+
+async function restore() {
+  const snapshotPath = process.argv[3];
+  if (!snapshotPath) {
+    console.error('Usage: npx audrey restore <snapshot-file>');
+    console.error('  e.g.: npx audrey restore audrey-snapshot-2026-03-24.json');
+    process.exit(1);
+  }
+
+  const resolvedPath = resolve(snapshotPath);
+  if (!existsSync(resolvedPath)) {
+    console.error(`[audrey] Snapshot file not found: ${resolvedPath}`);
+    process.exit(1);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(readFileSync(resolvedPath, 'utf-8'));
+  } catch {
+    console.error(`[audrey] Could not parse snapshot file: ${resolvedPath}`);
+    process.exit(1);
+  }
+
+  if (!data.version || !data.episodes) {
+    console.error('[audrey] Invalid snapshot: missing version or episodes field.');
+    process.exit(1);
+  }
+
+  const dataDir = resolveDataDir(process.env);
+  const explicit = process.env.AUDREY_EMBEDDING_PROVIDER;
+  const embedding = resolveEmbeddingProvider(process.env, explicit);
+
+  const audrey = new Audrey({ dataDir, agent: 'restore', embedding });
+
+  try {
+    await initializeEmbeddingProvider(audrey.embeddingProvider);
+
+    const stats = audrey.introspect();
+    const isEmpty = stats.episodic === 0 && stats.semantic === 0 && stats.procedural === 0;
+
+    if (!isEmpty) {
+      const force = process.argv.includes('--force');
+      if (!force) {
+        console.error('[audrey] Database is not empty. Use --force to purge and restore.');
+        console.error(`  Current: ${stats.episodic} episodes, ${stats.semantic} semantics, ${stats.procedural} procedures`);
+        process.exit(1);
+      }
+      console.log('[audrey] --force: purging existing memories before restore...');
+      audrey.purge();
+    }
+
+    console.log(`[audrey] Restoring from snapshot v${data.version} (${data.exportedAt || 'unknown date'})...`);
+    console.log(`[audrey] Re-embedding with ${embedding.provider} (${embedding.dimensions}d)...`);
+
+    await audrey.import(data);
+
+    const restored = audrey.introspect();
+    console.log(`[audrey] Restored: ${restored.episodic} episodes, ${restored.semantic} semantics, ${restored.procedural} procedures`);
+    console.log('[audrey] Restore complete.');
+  } finally {
+    audrey.close();
+  }
+}
+
 function install() {
   try {
     execFileSync('claude', ['--version'], { stdio: 'ignore' });
@@ -659,6 +763,10 @@ CLI subcommands:
   npx audrey reflect   - Reflect on conversation + dream cycle (for hooks)
   npx audrey dream     - Run consolidation + decay cycle
   npx audrey reembed   - Re-embed all memories with current provider
+
+Versioning (git-friendly memory snapshots):
+  npx audrey snapshot [file] - Export memories to a JSON snapshot file
+  npx audrey restore <file>  - Restore memories from a snapshot (--force to overwrite)
 
 Hooks integration (automatic memory in every session):
   npx audrey hooks install   - Add Audrey hooks to ~/.claude/settings.json
@@ -1081,6 +1189,16 @@ if (isDirectRun) {
       console.error('Usage: npx audrey hooks [install|uninstall]');
       process.exit(1);
     }
+  } else if (subcommand === 'snapshot') {
+    snapshot().catch(err => {
+      console.error('[audrey] snapshot failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'restore') {
+    restore().catch(err => {
+      console.error('[audrey] restore failed:', err);
+      process.exit(1);
+    });
   } else if (subcommand === 'status') {
     status();
   } else {
