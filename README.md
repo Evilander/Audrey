@@ -4,11 +4,18 @@
 [![npm version](https://img.shields.io/npm/v/audrey.svg)](https://www.npmjs.com/package/audrey)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Production memory for AI agents and MCP workflows.
+Persistent memory for Claude Code and AI agents. Two commands, every session remembers.
 
-Audrey gives agents a local, inspectable memory layer that can encode episodes, consolidate them into principles, detect contradictions, and let stale knowledge decay instead of accumulating forever.
+```bash
+npx audrey install          # 13 MCP memory tools
+npx audrey hooks install    # automatic memory in every session
+```
 
-> **If you liked `/dream`** — Anthropic's Claude Code recently shipped `/dream`, which runs scheduled maintenance and memory consolidation inside Claude Code sessions. Audrey has been doing this since before `/dream` existed, and goes significantly further: episodic-to-semantic consolidation, contradiction detection with resolution tracking, confidence scoring with forgetting curves, emotional affect encoding, causal reasoning, source reliability weighting, and a full sleep/wake lifecycle. Where `/dream` gives Claude Code a single maintenance pass, Audrey gives any agent a complete cognitive memory architecture — with the biological fidelity to match. If Anthropic built `/dream`, it validates that this problem matters. Audrey is the production-grade answer.
+That's it. Claude Code now wakes up knowing what happened yesterday, recalls relevant context per-prompt, and consolidates learnings when the session ends. No cloud, no config files, no infrastructure — one SQLite file.
+
+Audrey also works as a standalone SDK, MCP server, and REST API for any AI agent framework.
+
+> **On `/dream`** — Anthropic recently shipped `/dream` for Claude Code memory maintenance. Audrey predates it and goes further: episodic-to-semantic consolidation, contradiction detection, confidence decay, emotional affect, causal reasoning, and source reliability weighting. `/dream` is a maintenance pass. Audrey is a cognitive memory architecture.
 
 ## Why Audrey
 
@@ -371,7 +378,7 @@ Published comparison anchors from current LLM memory systems:
 
 ![Published LLM memory benchmark comparison](docs/assets/benchmarks/published-memory-standards.svg)
 
-External bars are published numbers from primary sources, not Audrey reruns. They are included so the README stays grounded against the current memory field instead of only showing internal wins.
+**Important:** These are two different measurement contexts. Audrey's bar is from its internal LongMemEval-style suite using mock embeddings. The external bars are published LoCoMo scores from primary sources — different benchmark, different conditions. They are included as field context, not a direct comparison. Running Audrey against LoCoMo proper is on the roadmap.
 
 | System | Anchor | What it represents |
 |---|---|---|
