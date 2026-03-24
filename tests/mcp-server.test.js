@@ -16,6 +16,7 @@ import {
   memoryRecallToolSchema,
   registerShutdownHandlers,
   registerDreamTool,
+  resolveSnapshotPath,
   runStatusCommand,
   validateForgetSelection,
 } from '../mcp-server/index.js';
@@ -941,5 +942,125 @@ describe('buildHooksConfig', () => {
         }
       }
     }
+  });
+});
+
+describe('resolveSnapshotPath', () => {
+  it('uses explicit output path when provided', () => {
+    const result = resolveSnapshotPath('/tmp/my-snapshot.json', '/data');
+    expect(result).toBe('/tmp/my-snapshot.json');
+  });
+
+  it('generates timestamped filename when no output arg given', () => {
+    const result = resolveSnapshotPath(undefined, '/home/user/.audrey/data');
+    expect(result).toMatch(/audrey-snapshot-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.json$/);
+    // Should be in parent of dataDir (i.e., ~/.audrey/)
+    expect(result).toMatch(/^\/home\/user\/\.audrey\/audrey-snapshot-/);
+  });
+
+  it('resolves relative output path to absolute', () => {
+    const result = resolveSnapshotPath('./snapshots/backup.json', '/data');
+    expect(result).toContain('/snapshots/backup.json');
+    expect(result.startsWith('/')).toBe(true);
+  });
+});
+
+describe('snapshot and restore round-trip', () => {
+  const SNAP_DIR = './test-snapshot-roundtrip';
+  const SNAP_DIR_2 = './test-snapshot-roundtrip-2';
+  let audrey;
+
+  beforeEach(() => {
+    rmSync(SNAP_DIR, { recursive: true, force: true });
+    rmSync(SNAP_DIR_2, { recursive: true, force: true });
+    audrey = new Audrey({
+      dataDir: SNAP_DIR,
+      agent: 'snap-test',
+      embedding: { provider: 'mock', dimensions: 64 },
+    });
+  });
+
+  afterEach(() => {
+    audrey.close();
+    rmSync(SNAP_DIR, { recursive: true, force: true });
+    rmSync(SNAP_DIR_2, { recursive: true, force: true });
+  });
+
+  it('exports a valid snapshot with all fields', async () => {
+    await audrey.encode({ content: 'test memory alpha', source: 'direct-observation' });
+    await audrey.encode({ content: 'test memory beta', source: 'told-by-user' });
+
+    const snapshot = audrey.export();
+    expect(snapshot.version).toBe('0.16.1');
+    expect(snapshot.exportedAt).toBeTruthy();
+    expect(snapshot.episodes).toHaveLength(2);
+    expect(snapshot.episodes[0].content).toBe('test memory alpha');
+    expect(snapshot).toHaveProperty('semantics');
+    expect(snapshot).toHaveProperty('procedures');
+    expect(snapshot).toHaveProperty('causalLinks');
+    expect(snapshot).toHaveProperty('contradictions');
+    expect(snapshot).toHaveProperty('config');
+  });
+
+  it('round-trips memories through export and import into a fresh db', async () => {
+    await audrey.encode({ content: 'payment failed at gateway', source: 'direct-observation', tags: ['payments'] });
+    await audrey.encode({ content: 'retry with exponential backoff', source: 'told-by-user' });
+
+    const snapshot = audrey.export();
+    audrey.close();
+
+    // Import into a fresh database
+    const audrey2 = new Audrey({
+      dataDir: SNAP_DIR_2,
+      agent: 'snap-test-2',
+      embedding: { provider: 'mock', dimensions: 64 },
+    });
+
+    await audrey2.import(snapshot);
+    const stats = audrey2.introspect();
+    expect(stats.episodic).toBe(2);
+
+    const results = await audrey2.recall('payment retry', { limit: 5 });
+    expect(results.length).toBeGreaterThan(0);
+
+    audrey2.close();
+    // Re-assign so afterEach cleanup works
+    audrey = new Audrey({
+      dataDir: SNAP_DIR,
+      agent: 'snap-test',
+      embedding: { provider: 'mock', dimensions: 64 },
+    });
+  });
+
+  it('snapshot JSON is git-friendly (valid JSON, human-readable)', async () => {
+    await audrey.encode({ content: 'this is diffable', source: 'direct-observation' });
+
+    const snapshot = audrey.export();
+    const json = JSON.stringify(snapshot, null, 2);
+
+    // Valid JSON
+    expect(() => JSON.parse(json)).not.toThrow();
+
+    // Human-readable (contains newlines, indentation)
+    expect(json).toContain('\n');
+    expect(json).toContain('  ');
+
+    // Contains searchable content
+    expect(json).toContain('this is diffable');
+  });
+
+  it('preserves tags, source, and metadata through round-trip', async () => {
+    await audrey.encode({
+      content: 'important fact about auth',
+      source: 'told-by-user',
+      tags: ['auth', 'security'],
+      salience: 0.9,
+    });
+
+    const snapshot = audrey.export();
+    const ep = snapshot.episodes[0];
+    expect(ep.source).toBe('told-by-user');
+    expect(ep.tags).toEqual(['auth', 'security']);
+    expect(ep.salience).toBe(0.9);
   });
 });
