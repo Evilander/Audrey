@@ -598,6 +598,20 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
+  markUsed(id) {
+    const now = new Date().toISOString();
+    const tables = ['episodes', 'semantics', 'procedures'];
+    for (const table of tables) {
+      const result = this.db.prepare(
+        `UPDATE ${table} SET usage_count = usage_count + 1, last_used_at = ? WHERE id = ?`
+      ).run(now, id);
+      if (result.changes > 0) {
+        this.emit('used', { id, table, usageCount: result.changes });
+        return;
+      }
+    }
+  }
+
   async forgetByQuery(query, options = {}) {
     await this._ensureMigrated();
     const result = await forgetByQueryFn(this.db, this.embeddingProvider, query, options);
