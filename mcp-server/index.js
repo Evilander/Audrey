@@ -775,6 +775,7 @@ Hooks integration (automatic memory in every session):
 REST API server (any language, any framework):
   npx audrey serve [port]    - Start HTTP server (default: 3487)
   AUDREY_API_KEY=secret npx audrey serve - Start with Bearer token auth
+  npx audrey dashboard       - Start server and open memory dashboard
 
 Data stored in: ${dataDir}
 Verify: claude mcp list
@@ -1209,6 +1210,22 @@ if (isDirectRun) {
       return startServer({ port });
     }).catch(err => {
       console.error('[audrey] serve failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'dashboard') {
+    import('./serve.js').then(({ startServer }) => {
+      const port = process.argv[3] ? parseInt(process.argv[3], 10) : undefined;
+      return startServer({ port }).then(({ server }) => {
+        const addr = server.address();
+        const url = `http://localhost:${addr.port}/dashboard`;
+        console.log(`[audrey] Opening dashboard: ${url}`);
+        import('node:child_process').then(({ exec: execCmd }) => {
+          const cmd = process.platform === 'win32' ? `start ${url}` : process.platform === 'darwin' ? `open ${url}` : `xdg-open ${url}`;
+          execCmd(cmd);
+        });
+      });
+    }).catch(err => {
+      console.error('[audrey] dashboard failed:', err);
       process.exit(1);
     });
   } else if (subcommand === 'status') {
