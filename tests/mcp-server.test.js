@@ -879,7 +879,7 @@ describe('MCP tool: memory_status', () => {
     expect(status.procedures).toBe(0);
     expect(status.vec_procedures).toBe(0);
     expect(status.dimensions).toBe(8);
-    expect(status.schema_version).toBe(7);
+    expect(status.schema_version).toBe(8);
     expect(status.healthy).toBe(true);
   });
 

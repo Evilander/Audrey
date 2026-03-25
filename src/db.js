@@ -248,7 +248,7 @@ function addColumnIfMissing(db, table, column, definition) {
   }
 }
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 const MIGRATIONS = [
   { version: 1, up(db) { addColumnIfMissing(db, 'episodes', 'context', "TEXT DEFAULT '{}'"); } },
@@ -258,6 +258,14 @@ const MIGRATIONS = [
   { version: 5, up(db) { addColumnIfMissing(db, 'procedures', 'interference_count', 'INTEGER DEFAULT 0'); } },
   { version: 6, up(db) { addColumnIfMissing(db, 'procedures', 'salience', 'REAL DEFAULT 0.5'); } },
   { version: 7, up(db) { addColumnIfMissing(db, 'episodes', 'private', 'INTEGER DEFAULT 0'); } },
+  { version: 8, up(db) {
+    addColumnIfMissing(db, 'episodes', 'agent', "TEXT DEFAULT 'default'");
+    addColumnIfMissing(db, 'semantics', 'agent', "TEXT DEFAULT 'default'");
+    addColumnIfMissing(db, 'procedures', 'agent', "TEXT DEFAULT 'default'");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_semantics_agent ON semantics(agent)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_agent ON procedures(agent)");
+  }},
 ];
 
 function runMigrations(db) {

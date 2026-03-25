@@ -279,3 +279,86 @@ describe('Audrey REST API with auth', () => {
     expect(res.data.ok).toBe(true);
   });
 });
+
+describe('Audrey REST API multi-agent', () => {
+  let server;
+  let audrey;
+  let dataDir;
+
+  beforeAll(async () => {
+    dataDir = mkdtempSync(join(tmpdir(), 'audrey-serve-multiagent-'));
+    audrey = new Audrey({
+      dataDir,
+      agent: 'server-default',
+      embedding: { provider: 'mock', dimensions: 64 },
+    });
+    server = createAudreyServer(audrey);
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  afterAll(() => {
+    server.close();
+    try { audrey.close(); } catch {}
+    try { rmSync(dataDir, { recursive: true, force: true }); } catch {}
+  });
+
+  function agentRequest(method, path, body, agent) {
+    return new Promise((resolve, reject) => {
+      const addr = server.address();
+      const headers = { 'Content-Type': 'application/json' };
+      if (agent) headers['X-Audrey-Agent'] = agent;
+      const req = http.request({
+        hostname: '127.0.0.1', port: addr.port, path, method, headers,
+      }, res => {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString();
+          let data;
+          try { data = JSON.parse(raw); } catch { data = raw; }
+          resolve({ status: res.statusCode, data });
+        });
+      });
+      req.on('error', reject);
+      if (body) req.write(JSON.stringify(body));
+      req.end();
+    });
+  }
+
+  it('encodes with agent from X-Audrey-Agent header', async () => {
+    const res = await agentRequest('POST', '/encode', {
+      content: 'Agent Fox remembers the mission',
+      source: 'direct-observation',
+    }, 'agent-fox');
+    expect(res.status).toBe(201);
+  });
+
+  it('encodes with different agent', async () => {
+    const res = await agentRequest('POST', '/encode', {
+      content: 'Agent Wolf remembers the target',
+      source: 'direct-observation',
+    }, 'agent-wolf');
+    expect(res.status).toBe(201);
+  });
+
+  it('recall with scope=agent filters by X-Audrey-Agent', async () => {
+    const res = await agentRequest('POST', '/recall', {
+      query: 'mission target',
+      scope: 'agent',
+    }, 'agent-fox');
+    expect(res.status).toBe(200);
+    for (const r of res.data.results) {
+      expect(r.agent).toBe('agent-fox');
+    }
+  });
+
+  it('recall with scope=shared returns all agents', async () => {
+    const res = await agentRequest('POST', '/recall', {
+      query: 'mission target',
+      scope: 'shared',
+    }, 'agent-fox');
+    expect(res.status).toBe(200);
+    const agents = new Set(res.data.results.map(r => r.agent));
+    expect(agents.size).toBeGreaterThanOrEqual(2);
+  });
+});

@@ -186,6 +186,7 @@ function buildEpisodicEntry(ep, confidence, score, includeProvenance, contextMat
     score,
     source: ep.source,
     createdAt: ep.created_at,
+    agent: ep.agent || 'default',
   };
   if (contextMatch !== undefined) {
     entry.contextMatch = contextMatch;
@@ -214,6 +215,7 @@ function buildSemanticEntry(sem, confidence, score, includeProvenance) {
     source: 'consolidation',
     state: sem.state,
     createdAt: sem.created_at,
+    agent: sem.agent || 'default',
   };
   if (includeProvenance) {
     entry.provenance = {
@@ -237,6 +239,7 @@ function buildProceduralEntry(proc, confidence, score, includeProvenance) {
     source: 'consolidation',
     state: proc.state,
     createdAt: proc.created_at,
+    agent: proc.agent || 'default',
   };
   if (includeProvenance) {
     entry.provenance = {
@@ -266,10 +269,12 @@ function safeKForTable(db, table, candidateK) {
   return rowCount > 0 ? Math.min(candidateK, rowCount) : 0;
 }
 
-function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters = {}, includePrivate = false) {
+function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters = {}, includePrivate = false, agentFilter = null) {
   const safeK = safeKForTable(db, 'vec_episodes', candidateK);
   if (safeK === 0) return [];
   const privateClause = includePrivate ? '' : 'AND e."private" = 0';
+  const agentClause = agentFilter ? 'AND e.agent = ?' : '';
+  const params = agentFilter ? [queryBuffer, safeK, agentFilter] : [queryBuffer, safeK];
   const rows = db.prepare(`
     SELECT e.*, (1.0 - v.distance) AS similarity
     FROM vec_episodes v
@@ -278,7 +283,8 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
       AND k = ?
       AND e.superseded_by IS NULL
       ${privateClause}
-  `).all(queryBuffer, safeK);
+      ${agentClause}
+  `).all(...params);
 
   const results = [];
   for (const row of rows) {
@@ -313,9 +319,11 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
   return results;
 }
 
-function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}) {
+function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}, agentFilter = null) {
   const safeK = safeKForTable(db, 'vec_semantics', candidateK);
   if (safeK === 0) return { results: [], matchedIds: [] };
+  const agentClause = agentFilter ? 'AND s.agent = ?' : '';
+  const params = agentFilter ? [queryBuffer, safeK, agentFilter] : [queryBuffer, safeK];
   const rows = db.prepare(`
     SELECT s.*, (1.0 - v.distance) AS similarity
     FROM vec_semantics v
@@ -323,7 +331,8 @@ function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includePro
     WHERE v.embedding MATCH ?
       AND k = ?
       ${stateClause(includeDormant)}
-  `).all(queryBuffer, safeK);
+      ${agentClause}
+  `).all(...params);
 
   const results = [];
   const matchedIds = [];
@@ -338,9 +347,11 @@ function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includePro
   return { results, matchedIds };
 }
 
-function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}) {
+function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}, agentFilter = null) {
   const safeK = safeKForTable(db, 'vec_procedures', candidateK);
   if (safeK === 0) return { results: [], matchedIds: [] };
+  const agentClause = agentFilter ? 'AND p.agent = ?' : '';
+  const params = agentFilter ? [queryBuffer, safeK, agentFilter] : [queryBuffer, safeK];
   const rows = db.prepare(`
     SELECT p.*, (1.0 - v.distance) AS similarity
     FROM vec_procedures v
@@ -348,7 +359,8 @@ function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeP
     WHERE v.embedding MATCH ?
       AND k = ?
       ${stateClause(includeDormant)}
-  `).all(queryBuffer, safeK);
+      ${agentClause}
+  `).all(...params);
 
   const results = [];
   const matchedIds = [];
@@ -383,12 +395,15 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
     after,
     before,
     includePrivate = false,
+    scope = 'shared',
+    agent,
   } = options;
 
   const queryVector = await embeddingProvider.embed(query);
   const queryBuffer = embeddingProvider.vectorToBuffer(queryVector);
   const searchTypes = types || ['episodic', 'semantic', 'procedural'];
   const now = new Date();
+  const agentFilter = scope === 'agent' && agent ? agent : null;
   const hasFilters = tags?.length || sources?.length || after || before;
   const candidateK = hasFilters ? limit * 5 : limit * 3;
   const filters = { tags, sources, after, before };
@@ -398,7 +413,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
 
   if (searchTypes.includes('episodic')) {
     try {
-      const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters, includePrivate);
+      const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters, includePrivate, agentFilter);
       allResults.push(...episodic);
     } catch (err) {
       errors.push({ type: 'episodic', message: err.message });
@@ -408,7 +423,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   if (searchTypes.includes('semantic')) {
     try {
       const { results: semResults, matchedIds: semIds } =
-        knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters);
+        knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters, agentFilter);
       allResults.push(...semResults);
 
       if (semIds.length > 0) {
@@ -426,7 +441,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   if (searchTypes.includes('procedural')) {
     try {
       const { results: procResults, matchedIds: procIds } =
-        knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters);
+        knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters, agentFilter);
       allResults.push(...procResults);
 
       if (procIds.length > 0) {
