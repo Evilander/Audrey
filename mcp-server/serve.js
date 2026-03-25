@@ -100,6 +100,8 @@ export function createAudreyServer(audrey, options = {}) {
 
     if (!authenticate(req, res)) return;
 
+    const requestAgent = req.headers['x-audrey-agent'] || null;
+
     try {
       switch (key) {
         case 'GET /health': {
@@ -119,6 +121,7 @@ export function createAudreyServer(audrey, options = {}) {
             json(res, 400, { error: 'content is required' });
             return;
           }
+          if (requestAgent) body.agent = requestAgent;
           const id = await ctx.audrey.encode(body);
           json(res, 201, { id });
           break;
@@ -131,6 +134,7 @@ export function createAudreyServer(audrey, options = {}) {
             return;
           }
           const { query, ...opts } = body;
+          if (requestAgent) opts.agent = requestAgent;
           const results = await ctx.audrey.recall(query, opts);
           json(res, 200, { results });
           break;
