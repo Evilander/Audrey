@@ -1,6 +1,7 @@
 import { generateId } from './ulid.js';
 import { sourceReliability } from './confidence.js';
 import { arousalSalienceBoost } from './affect.js';
+import { hasFTSTables, insertFTSEpisode } from './fts.js';
 
 /**
  * @param {import('better-sqlite3').Database} db
@@ -57,6 +58,9 @@ export async function encodeEpisode(db, embeddingProvider, {
     ).run(id, embeddingBuffer, source, BigInt(0));
     if (supersedes) {
       db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ?').run(id, supersedes);
+    }
+    if (hasFTSTables(db)) {
+      insertFTSEpisode(db, id, content, tags);
     }
   });
 
