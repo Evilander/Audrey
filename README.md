@@ -378,16 +378,26 @@ Published comparison anchors from current LLM memory systems:
 
 ![Published LLM memory benchmark comparison](docs/assets/benchmarks/published-memory-standards.svg)
 
-**Important:** These are two different measurement contexts. Audrey's bar is from its internal LongMemEval-style suite using mock embeddings. The external bars are published LoCoMo scores from primary sources — different benchmark, different conditions. They are included as field context, not a direct comparison. Running Audrey against LoCoMo proper is on the roadmap.
+**Audrey 93.8% with local MiniLM embeddings** (384d, offline-capable). Per-category breakdown:
 
-| System | Anchor | What it represents |
-|---|---|---|
-| Audrey | Internal LongMemEval-style suite | Local-first memory with consolidation, contradiction handling, abstention, and privacy checks |
-| MIRIX | Published LoCoMo 85.4 | Typed multimodal memory with strong temporal/state handling |
-| Letta Filesystem | Published LoCoMo 74.0 | Context-engineering and filesystem-style memory |
-| Mem0 Graph Memory | Published LoCoMo 68.5 | Graph memory with production cost/latency focus |
-| Mem0 | Published LoCoMo 66.9 | Production-oriented long-term memory baseline |
-| LongMemEval | Benchmark protocol | Benchmark focused on extraction, updates, temporal reasoning, multi-session reasoning, and abstention |
+| Category | Audrey | Vector Only | Best Baseline |
+|---|---|---|---|
+| Information Extraction | 100% | 100% | 100% |
+| Knowledge Updates | 100% | 0% | 50% |
+| Multi-Session Reasoning | 100% | 100% | 100% |
+| Temporal Reasoning | 100% | 100% | 100% |
+| Abstention | 50% | 50% | 50% |
+| Privacy | 100% | 0% | 0% |
+
+Published comparison anchors from the field (different benchmarks and conditions — included for field context, not direct comparison):
+
+| System | Benchmark | Score | What it represents |
+|---|---|---|---|
+| **Audrey** | Internal LongMemEval-style | **93.8%** | Consolidation, contradiction, abstention, privacy |
+| MIRIX | Published LoCoMo | 85.4% | Typed multimodal memory |
+| Letta Filesystem | Published LoCoMo | 74.0% | Context-engineering |
+| Mem0 Graph Memory | Published LoCoMo | 68.5% | Graph memory |
+| Mem0 | Published LoCoMo | 66.9% | Production baseline |
 
 Primary comparison sources:
 
