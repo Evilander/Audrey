@@ -3,6 +3,7 @@ import { interferenceModifier } from './interference.js';
 import { contextMatchRatio, contextModifier } from './context.js';
 import { moodCongruenceModifier, affectSimilarity } from './affect.js';
 import { daysBetween, safeJsonParse } from './utils.js';
+import { hasFTSTables, searchFTSEpisodes, searchFTSSemantics, searchFTSProcedures, sanitizeFTSQuery } from './fts.js';
 
 const STOPWORDS = new Set([
   'a', 'an', 'and', 'are', 'at', 'be', 'by', 'did', 'do', 'does', 'for', 'from', 'had', 'has', 'have',
@@ -397,13 +398,54 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
     includePrivate = false,
     scope = 'shared',
     agent,
+    retrieval = 'hybrid',
   } = options;
 
-  const queryVector = await embeddingProvider.embed(query);
-  const queryBuffer = embeddingProvider.vectorToBuffer(queryVector);
   const searchTypes = types || ['episodic', 'semantic', 'procedural'];
   const now = new Date();
   const agentFilter = scope === 'agent' && agent ? agent : null;
+
+  // Keyword-only mode: FTS5 search without vector embeddings
+  if (retrieval === 'keyword') {
+    const ftsAvailable = hasFTSTables(db);
+    if (!ftsAvailable) {
+      return; // No FTS tables, no keyword results
+    }
+    const sanitized = sanitizeFTSQuery(query);
+    if (!sanitized) return;
+
+    const keywordResults = [];
+    try {
+      if (searchTypes.includes('episodic')) {
+        for (const row of searchFTSEpisodes(db, sanitized, limit * 3, agentFilter)) {
+          keywordResults.push({ id: row.id, content: row.content, type: 'episodic', score: -row.rank, agent: 'default' });
+        }
+      }
+      if (searchTypes.includes('semantic')) {
+        for (const row of searchFTSSemantics(db, sanitized, limit * 3, agentFilter)) {
+          keywordResults.push({ id: row.id, content: row.content, type: 'semantic', score: -row.rank, agent: 'default' });
+        }
+      }
+      if (searchTypes.includes('procedural')) {
+        for (const row of searchFTSProcedures(db, sanitized, limit * 3, agentFilter)) {
+          keywordResults.push({ id: row.id, content: row.content, type: 'procedural', score: -row.rank, agent: 'default' });
+        }
+      }
+    } catch {
+      // FTS query syntax error — fall through with whatever we have
+    }
+    keywordResults.sort((a, b) => b.score - a.score);
+    for (const entry of keywordResults.slice(0, limit)) {
+      entry.confidence = 1;
+      entry.source = 'keyword';
+      entry.createdAt = now.toISOString();
+      yield entry;
+    }
+    return;
+  }
+
+  const queryVector = await embeddingProvider.embed(query);
+  const queryBuffer = embeddingProvider.vectorToBuffer(queryVector);
   const hasFilters = tags?.length || sources?.length || after || before;
   const candidateK = hasFilters ? limit * 5 : limit * 3;
   const filters = { tags, sources, after, before };
@@ -453,6 +495,53 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
       }
     } catch (err) {
       errors.push({ type: 'procedural', message: err.message });
+    }
+  }
+
+  // Hybrid mode: merge vector results with FTS5 keyword results via RRF
+  if (retrieval === 'hybrid' && hasFTSTables(db)) {
+    const sanitized = sanitizeFTSQuery(query);
+    if (sanitized) {
+      const keywordHits = new Map();
+      try {
+        if (searchTypes.includes('episodic')) {
+          for (const row of searchFTSEpisodes(db, sanitized, limit * 3, agentFilter)) {
+            keywordHits.set(row.id, (keywordHits.get(row.id) || 0) + 1);
+          }
+        }
+        if (searchTypes.includes('semantic')) {
+          for (const row of searchFTSSemantics(db, sanitized, limit * 3, agentFilter)) {
+            keywordHits.set(row.id, (keywordHits.get(row.id) || 0) + 1);
+          }
+        }
+        if (searchTypes.includes('procedural')) {
+          for (const row of searchFTSProcedures(db, sanitized, limit * 3, agentFilter)) {
+            keywordHits.set(row.id, (keywordHits.get(row.id) || 0) + 1);
+          }
+        }
+      } catch {
+        // FTS query error — continue with vector-only results
+      }
+
+      // RRF boost: memories found by both vector AND keyword get a score bonus
+      const RRF_K = 60;
+      if (keywordHits.size > 0) {
+        // Rank keyword results by their BM25 order
+        const keywordRanks = new Map();
+        let rank = 1;
+        for (const id of keywordHits.keys()) {
+          keywordRanks.set(id, rank++);
+        }
+
+        for (const result of allResults) {
+          if (keywordRanks.has(result.id)) {
+            // Boost score for results found by both vector AND keyword search
+            const kRank = keywordRanks.get(result.id);
+            const rrfBoost = 1 / (RRF_K + kRank);
+            result.score = result.score + rrfBoost;
+          }
+        }
+      }
     }
   }
 
