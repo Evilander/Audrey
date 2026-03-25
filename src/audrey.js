@@ -201,7 +201,7 @@ export class Audrey extends EventEmitter {
    */
   async encode(params) {
     await this._ensureMigrated();
-    const encodeParams = { ...params, arousalWeight: this.affectConfig.arousalWeight };
+    const encodeParams = { ...params, arousalWeight: this.affectConfig.arousalWeight, agent: this.agent };
     const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams);
     this.emit('encode', { id, ...params });
     if (this.interferenceConfig.enabled) {
@@ -299,6 +299,7 @@ export class Audrey extends EventEmitter {
     await this._ensureMigrated();
     return recallFn(this.db, this.embeddingProvider, query, {
       ...options,
+      agent: this.agent,
       confidenceConfig: this._recallConfig(options),
     });
   }
@@ -312,6 +313,7 @@ export class Audrey extends EventEmitter {
     await this._ensureMigrated();
     yield* recallStreamFn(this.db, this.embeddingProvider, query, {
       ...options,
+      agent: this.agent,
       confidenceConfig: this._recallConfig(options),
     });
   }
