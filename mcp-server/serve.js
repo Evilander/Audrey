@@ -9,6 +9,155 @@ import { VERSION } from './config.js';
 const DEFAULT_PORT = 3487;
 const MAX_BODY = 10 * 1024 * 1024; // 10 MB
 
+function getDashboardHTML() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audrey Memory Dashboard</title>
+<style>
+  :root { --bg: #0f0f0f; --card: #1a1a1a; --border: #2a2a2a; --text: #e0e0e0; --dim: #888; --accent: #6c9; --warn: #e94; --err: #e55; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; background: var(--bg); color: var(--text); padding: 24px; max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 1.4em; margin-bottom: 4px; color: var(--accent); }
+  .subtitle { color: var(--dim); font-size: 0.85em; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .card h3 { font-size: 0.8em; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .stat { font-size: 2em; font-weight: bold; color: var(--accent); }
+  .stat.warn { color: var(--warn); }
+  .stat.err { color: var(--err); }
+  .stat-label { font-size: 0.75em; color: var(--dim); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
+  th { text-align: left; color: var(--dim); font-weight: normal; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--border); max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; }
+  .badge-active, .badge-completed { background: #1a3a2a; color: var(--accent); }
+  .badge-dormant { background: #3a2a1a; color: var(--warn); }
+  .badge-open, .badge-failed { background: #3a1a1a; color: var(--err); }
+  .refresh { position: fixed; top: 16px; right: 16px; background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-family: inherit; }
+  .refresh:hover { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<h1>Audrey</h1>
+<p class="subtitle">Memory Health Dashboard</p>
+<button class="refresh" onclick="load()">Refresh</button>
+<div id="content"><p style="color:#888">Loading...</p></div>
+<script>
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+function truncate(s, n) { return s.length > n ? esc(s.slice(0, n)) + '...' : esc(s); }
+
+async function load() {
+  try {
+    const [s, a] = await Promise.all([
+      fetch('/status').then(r => r.json()),
+      fetch('/analytics').then(r => r.json()),
+    ]);
+    render(s, a);
+  } catch (e) {
+    document.getElementById('content').textContent = 'Failed to load: ' + e.message;
+  }
+}
+
+function render(s, a) {
+  const ct = s.contradictions;
+  const el = document.getElementById('content');
+  el.innerHTML = '';
+
+  // Stats grid
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  const cards = [
+    ['Episodic', s.episodic, 'raw events'],
+    ['Semantic', s.semantic, 'consolidated principles'],
+    ['Procedural', s.procedural, 'learned workflows'],
+    ['Causal Links', s.causalLinks, 'cause-effect pairs'],
+    ['Dormant', s.dormant, 'below threshold', s.dormant > 0 ? 'warn' : ''],
+    ['Contradictions', ct.open + ' open', (ct.open+ct.resolved+ct.context_dependent+ct.reopened) + ' total', ct.open > 0 ? 'err' : ''],
+    ['Consolidations', s.totalConsolidationRuns, s.lastConsolidation ? 'Last: ' + new Date(s.lastConsolidation).toLocaleString() : 'Never'],
+  ];
+  for (const [title, value, label, cls] of cards) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    c.innerHTML = '<h3>' + esc(title) + '</h3><div class="stat ' + (cls||'') + '">' + esc(String(value)) + '</div><div class="stat-label">' + esc(label) + '</div>';
+    grid.appendChild(c);
+  }
+  el.appendChild(grid);
+
+  // Agent activity
+  if (a.agents && a.agents.length > 0) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.marginBottom = '16px';
+    let html = '<h3>Agent Activity</h3><table><tr><th>Agent</th><th>Memories</th></tr>';
+    for (const ag of a.agents) html += '<tr><td>' + esc(ag.agent) + '</td><td>' + ag.count + '</td></tr>';
+    html += '</table>';
+    card.innerHTML = html;
+    el.appendChild(card);
+  }
+
+  // Top semantics
+  if (a.topSemantics && a.topSemantics.length > 0) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.marginBottom = '16px';
+    let html = '<h3>Top Semantic Principles</h3><table><tr><th>Content</th><th>Retrieved</th><th>Used</th><th>State</th></tr>';
+    for (const sem of a.topSemantics) {
+      html += '<tr><td title="' + esc(sem.content) + '">' + truncate(sem.content, 80) + '</td><td>' + sem.retrieval_count + '</td><td>' + (sem.usage_count||0) + '</td><td><span class="badge badge-' + esc(sem.state) + '">' + esc(sem.state) + '</span></td></tr>';
+    }
+    html += '</table>';
+    card.innerHTML = html;
+    el.appendChild(card);
+  }
+
+  // Recent episodes
+  if (a.topEpisodes && a.topEpisodes.length > 0) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.marginBottom = '16px';
+    let html = '<h3>Recent Episodes</h3><table><tr><th>Content</th><th>Used</th><th>Created</th></tr>';
+    for (const ep of a.topEpisodes.slice(0, 10)) {
+      html += '<tr><td title="' + esc(ep.content) + '">' + truncate(ep.content, 80) + '</td><td>' + (ep.usage_count||0) + '</td><td>' + new Date(ep.created_at).toLocaleDateString() + '</td></tr>';
+    }
+    html += '</table>';
+    card.innerHTML = html;
+    el.appendChild(card);
+  }
+
+  // Consolidation history
+  if (a.recentRuns && a.recentRuns.length > 0) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.marginBottom = '16px';
+    let html = '<h3>Consolidation History</h3><table><tr><th>Started</th><th>Status</th><th>Duration</th></tr>';
+    for (const run of a.recentRuns.slice(0, 10)) {
+      const dur = run.completed_at && run.started_at ? ((new Date(run.completed_at) - new Date(run.started_at)) / 1000).toFixed(1) + 's' : '-';
+      html += '<tr><td>' + new Date(run.started_at).toLocaleString() + '</td><td><span class="badge badge-' + esc(run.status) + '">' + esc(run.status) + '</span></td><td>' + dur + '</td></tr>';
+    }
+    html += '</table>';
+    card.innerHTML = html;
+    el.appendChild(card);
+  }
+
+  const footer = document.createElement('p');
+  footer.style.cssText = 'color:#888;font-size:0.75em;margin-top:24px';
+  footer.textContent = 'Audrey v${VERSION} — refreshed ' + new Date().toLocaleTimeString();
+  el.appendChild(footer);
+}
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>`;
+}
+
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -112,6 +261,33 @@ export function createAudreyServer(audrey, options = {}) {
         case 'GET /status': {
           const stats = ctx.audrey.introspect();
           json(res, 200, stats);
+          break;
+        }
+
+        case 'GET /analytics': {
+          const db = ctx.audrey.db;
+          const topEpisodes = db.prepare(
+            'SELECT id, content, usage_count, created_at FROM episodes ORDER BY usage_count DESC LIMIT 10'
+          ).all();
+          const topSemantics = db.prepare(
+            "SELECT id, content, retrieval_count, usage_count, state FROM semantics WHERE state != 'rolled_back' ORDER BY retrieval_count DESC LIMIT 10"
+          ).all();
+          const recentRuns = db.prepare(
+            'SELECT * FROM consolidation_runs ORDER BY started_at DESC LIMIT 20'
+          ).all();
+          const metrics = db.prepare(
+            'SELECT * FROM consolidation_metrics ORDER BY completed_at DESC LIMIT 20'
+          ).all();
+          const agents = db.prepare(
+            "SELECT agent, COUNT(*) as count FROM episodes GROUP BY agent ORDER BY count DESC"
+          ).all();
+          json(res, 200, { topEpisodes, topSemantics, recentRuns, metrics, agents });
+          break;
+        }
+
+        case 'GET /dashboard': {
+          res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
+          res.end(getDashboardHTML());
           break;
         }
 
