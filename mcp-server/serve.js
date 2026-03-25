@@ -154,6 +154,17 @@ export function createAudreyServer(audrey, options = {}) {
           break;
         }
 
+        case 'POST /mark-used': {
+          const body = await parseBody(req);
+          if (!body.id) {
+            json(res, 400, { error: 'id is required' });
+            return;
+          }
+          ctx.audrey.markUsed(body.id);
+          json(res, 200, { ok: true });
+          break;
+        }
+
         case 'POST /forget': {
           const body = await parseBody(req);
           if (body.query) {
@@ -207,6 +218,7 @@ export function createAudreyServer(audrey, options = {}) {
             'POST /recall',
             'POST /dream',
             'POST /consolidate',
+            'POST /mark-used',
             'POST /forget',
             'POST /snapshot',
             'POST /restore',
