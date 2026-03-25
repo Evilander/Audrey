@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { join } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
+import { createFTSTables, backfillFTS } from './fts.js';
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS episodes (
@@ -248,7 +249,7 @@ function addColumnIfMissing(db, table, column, definition) {
   }
 }
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 const MIGRATIONS = [
   { version: 1, up(db) { addColumnIfMissing(db, 'episodes', 'context', "TEXT DEFAULT '{}'"); } },
@@ -265,6 +266,10 @@ const MIGRATIONS = [
     db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent)");
     db.exec("CREATE INDEX IF NOT EXISTS idx_semantics_agent ON semantics(agent)");
     db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_agent ON procedures(agent)");
+  }},
+  { version: 9, up(db) {
+    createFTSTables(db);
+    backfillFTS(db);
   }},
 ];
 
