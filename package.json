@@ -4,6 +4,7 @@
   "description": "Biological memory architecture for AI agents - encode, consolidate, and recall memories with confidence decay, contradiction detection, and causal graphs",
   "type": "module",
   "main": "src/index.js",
+  "types": "types/index.d.ts",
   "exports": {
     ".": "./src/index.js",
     "./mcp": "./mcp-server/index.js"
@@ -19,6 +20,7 @@
     "docs/production-readiness.md",
     "docs/benchmarking.md",
     "examples/",
+    "types/",
     "README.md",
     "LICENSE"
   ],

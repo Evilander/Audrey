@@ -19,6 +19,7 @@ export async function encodeEpisode(db, embeddingProvider, {
   affect = {},
   arousalWeight = 0.3,
   private: isPrivate = false,
+  agent = 'default',
 }) {
   if (!content || typeof content !== 'string') throw new Error('content must be a non-empty string');
   if (salience < 0 || salience > 1) throw new Error('salience must be between 0 and 1');
@@ -38,8 +39,8 @@ export async function encodeEpisode(db, embeddingProvider, {
       INSERT INTO episodes (
         id, content, embedding, source, source_reliability, salience, context, affect,
         tags, causal_trigger, causal_consequence, created_at,
-        embedding_model, embedding_version, supersedes, "private"
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        embedding_model, embedding_version, supersedes, "private", agent
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, content, embeddingBuffer, source, reliability, effectiveSalience,
       JSON.stringify(context),
@@ -49,6 +50,7 @@ export async function encodeEpisode(db, embeddingProvider, {
       now, embeddingProvider.modelName, embeddingProvider.modelVersion,
       supersedes || null,
       isPrivate ? 1 : 0,
+      agent,
     );
     db.prepare(
       'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
