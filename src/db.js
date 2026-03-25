@@ -249,7 +249,7 @@ function addColumnIfMissing(db, table, column, definition) {
   }
 }
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 const MIGRATIONS = [
   { version: 1, up(db) { addColumnIfMissing(db, 'episodes', 'context', "TEXT DEFAULT '{}'"); } },
@@ -270,6 +270,14 @@ const MIGRATIONS = [
   { version: 9, up(db) {
     createFTSTables(db);
     backfillFTS(db);
+  }},
+  { version: 10, up(db) {
+    addColumnIfMissing(db, 'episodes', 'usage_count', 'INTEGER DEFAULT 0');
+    addColumnIfMissing(db, 'episodes', 'last_used_at', 'TEXT');
+    addColumnIfMissing(db, 'semantics', 'usage_count', 'INTEGER DEFAULT 0');
+    addColumnIfMissing(db, 'semantics', 'last_used_at', 'TEXT');
+    addColumnIfMissing(db, 'procedures', 'usage_count', 'INTEGER DEFAULT 0');
+    addColumnIfMissing(db, 'procedures', 'last_used_at', 'TEXT');
   }},
 ];
 
