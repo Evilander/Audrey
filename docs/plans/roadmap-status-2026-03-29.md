@@ -3,6 +3,7 @@
 This note replaces stale assumptions from the earlier `codex.md` roadmap with the current repo state.
 
 Canonical next-step strategy now lives in `docs/plans/industry-standard-memory-plan-2026-03-29.md`.
+Treat this file as a status note, not the canonical execution plan.
 
 ## Current State
 
