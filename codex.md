@@ -1,5 +1,7 @@
 # Audrey: 90-Day Path to Business Viability
 
+> Status note for agents on 2026-03-29: this file is strategically stale in multiple places. Use `docs/plans/roadmap-status-2026-03-29.md` for current shipped-state corrections and `docs/plans/industry-standard-memory-plan-2026-03-29.md` for the current LLM-only category plan.
+
 > **For agentic workers:** Execute phases in order. Each produces shippable software. Run tests after every task. Commit after every task. Do not skip phases.
 
 **Goal:** Transform Audrey from an 8-star npm package into a fundable AI memory platform with paying customers, standardized benchmark scores, and multi-language SDK support within 90 days.
