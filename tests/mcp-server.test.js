@@ -261,6 +261,34 @@ describe('MCP lifecycle hardening', () => {
     expect(fakeProcess.exit).toHaveBeenCalledWith(0);
   });
 
+  it('waits for pending Audrey work before exiting when waitForIdle is available', async () => {
+    const fakeProcess = new EventEmitter();
+    fakeProcess.exit = vi.fn();
+
+    let releaseIdle;
+    const idle = new Promise(resolve => {
+      releaseIdle = resolve;
+    });
+    const audrey = {
+      waitForIdle: vi.fn(() => idle),
+      close: vi.fn(),
+    };
+
+    registerShutdownHandlers(fakeProcess, audrey, vi.fn());
+    fakeProcess.emit('SIGTERM');
+
+    expect(audrey.waitForIdle).toHaveBeenCalledOnce();
+    expect(audrey.close).not.toHaveBeenCalled();
+    expect(fakeProcess.exit).not.toHaveBeenCalled();
+
+    releaseIdle();
+    await idle;
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(audrey.close).toHaveBeenCalledOnce();
+    expect(fakeProcess.exit).toHaveBeenCalledWith(0);
+  });
+
   it('exits non-zero on unhandled rejections', () => {
     const fakeProcess = new EventEmitter();
     fakeProcess.exit = vi.fn();

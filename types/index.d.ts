@@ -120,6 +120,7 @@ export interface RecallOptions {
   affect?: AffectParams;
   scope?: 'shared' | 'agent';
   agent?: string;
+  retrieval?: 'hybrid' | 'vector' | 'keyword';
 }
 
 export interface RecallResult {
@@ -142,6 +143,11 @@ export interface RecallResult {
   };
   _recallErrors?: Array<{ type: string; message: string }>;
 }
+
+export type RecallResults = RecallResult[] & {
+  partialFailure?: boolean;
+  errors?: Array<{ type: string; message: string }>;
+};
 
 // === Consolidation ===
 
@@ -344,7 +350,7 @@ export class Audrey extends EventEmitter {
   constructor(config: AudreyConfig);
 
   encode(params: EncodeParams): Promise<string>;
-  recall(query: string, options?: RecallOptions): Promise<RecallResult[]>;
+  recall(query: string, options?: RecallOptions): Promise<RecallResults>;
   recallStream(query: string, options?: RecallOptions): AsyncGenerator<RecallResult>;
   consolidate(options?: ConsolidateOptions): Promise<ConsolidationResult>;
   dream(options?: DreamOptions): Promise<DreamResult>;
@@ -358,6 +364,7 @@ export class Audrey extends EventEmitter {
   reflect(turns: string): Promise<ReflectResult>;
   startAutoConsolidate(intervalMs: number, options?: ConsolidateOptions): void;
   stopAutoConsolidate(): void;
+  waitForIdle(): Promise<void>;
   close(): void;
 }
 
@@ -369,7 +376,7 @@ export function readStoredDimensions(dataDir: string): number | null;
 
 // === Standalone Functions ===
 
-export function recall(db: Database, embeddingProvider: EmbeddingProvider, query: string, options?: RecallOptions): Promise<RecallResult[]>;
+export function recall(db: Database, embeddingProvider: EmbeddingProvider, query: string, options?: RecallOptions): Promise<RecallResults>;
 export function recallStream(db: Database, embeddingProvider: EmbeddingProvider, query: string, options?: RecallOptions): AsyncGenerator<RecallResult>;
 export function exportMemories(db: Database): Snapshot;
 export function importMemories(db: Database, embeddingProvider: EmbeddingProvider, snapshot: Snapshot): Promise<void>;

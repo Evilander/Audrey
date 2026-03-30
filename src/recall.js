@@ -376,14 +376,7 @@ function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeP
   return { results, matchedIds };
 }
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
- * @param {string} query
- * @param {{ minConfidence?: number, types?: string[], limit?: number, includeProvenance?: boolean, includeDormant?: boolean, tags?: string[], sources?: string[], after?: string, before?: string }} [options]
- * @returns {AsyncGenerator<{ id: string, content: string, type: string, confidence: number, score: number, source: string, createdAt: string }>}
- */
-export async function* recallStream(db, embeddingProvider, query, options = {}) {
+async function runRecallQuery(db, embeddingProvider, query, options = {}) {
   const {
     minConfidence = 0,
     types,
@@ -409,39 +402,39 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   if (retrieval === 'keyword') {
     const ftsAvailable = hasFTSTables(db);
     if (!ftsAvailable) {
-      return; // No FTS tables, no keyword results
+      return { top: [], errors: [] };
     }
     const sanitized = sanitizeFTSQuery(query);
-    if (!sanitized) return;
+    if (!sanitized) return { top: [], errors: [] };
 
     const keywordResults = [];
     try {
       if (searchTypes.includes('episodic')) {
         for (const row of searchFTSEpisodes(db, sanitized, limit * 3, agentFilter)) {
-          keywordResults.push({ id: row.id, content: row.content, type: 'episodic', score: -row.rank, agent: 'default' });
+          keywordResults.push({ id: row.id, content: row.content, type: 'episodic', score: -row.rank, agent: row.agent || 'default' });
         }
       }
       if (searchTypes.includes('semantic')) {
         for (const row of searchFTSSemantics(db, sanitized, limit * 3, agentFilter)) {
-          keywordResults.push({ id: row.id, content: row.content, type: 'semantic', score: -row.rank, agent: 'default' });
+          keywordResults.push({ id: row.id, content: row.content, type: 'semantic', score: -row.rank, agent: row.agent || 'default' });
         }
       }
       if (searchTypes.includes('procedural')) {
         for (const row of searchFTSProcedures(db, sanitized, limit * 3, agentFilter)) {
-          keywordResults.push({ id: row.id, content: row.content, type: 'procedural', score: -row.rank, agent: 'default' });
+          keywordResults.push({ id: row.id, content: row.content, type: 'procedural', score: -row.rank, agent: row.agent || 'default' });
         }
       }
     } catch {
       // FTS query syntax error — fall through with whatever we have
     }
     keywordResults.sort((a, b) => b.score - a.score);
-    for (const entry of keywordResults.slice(0, limit)) {
-      entry.confidence = 1;
-      entry.source = 'keyword';
-      entry.createdAt = now.toISOString();
-      yield entry;
-    }
-    return;
+    const top = keywordResults.slice(0, limit).map(entry => ({
+      ...entry,
+      confidence: 1,
+      source: 'keyword',
+      createdAt: now.toISOString(),
+    }));
+    return { top, errors: [] };
   }
 
   const queryVector = await embeddingProvider.embed(query);
@@ -546,6 +539,18 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   }
 
   const top = applyResultGuards(query, allResults, limit);
+  return { top, errors };
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
+ * @param {string} query
+ * @param {{ minConfidence?: number, types?: string[], limit?: number, includeProvenance?: boolean, includeDormant?: boolean, tags?: string[], sources?: string[], after?: string, before?: string }} [options]
+ * @returns {AsyncGenerator<{ id: string, content: string, type: string, confidence: number, score: number, source: string, createdAt: string }>}
+ */
+export async function* recallStream(db, embeddingProvider, query, options = {}) {
+  const { top, errors } = await runRecallQuery(db, embeddingProvider, query, options);
   for (const entry of top) {
     if (errors.length > 0) entry._recallErrors = errors;
     yield entry;
@@ -560,9 +565,9 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
  * @returns {Promise<Array<{ id: string, content: string, type: string, confidence: number, score: number, source: string, createdAt: string }>>}
  */
 export async function recall(db, embeddingProvider, query, options = {}) {
-  const results = [];
-  for await (const entry of recallStream(db, embeddingProvider, query, options)) {
-    results.push(entry);
-  }
+  const { top, errors } = await runRecallQuery(db, embeddingProvider, query, options);
+  const results = [...top];
+  results.partialFailure = errors.length > 0;
+  results.errors = errors;
   return results;
 }

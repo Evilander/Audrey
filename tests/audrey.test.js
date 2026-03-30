@@ -107,6 +107,24 @@ describe('Audrey', () => {
     expect(emitted).toBe(true);
   });
 
+  it('waitForIdle drains tracked background work', async () => {
+    let releasePending;
+    const pending = new Promise(resolve => {
+      releasePending = resolve;
+    });
+
+    brain._trackAsync(pending);
+    const wait = brain.waitForIdle();
+
+    await Promise.resolve();
+    expect(brain._pending.size).toBe(1);
+
+    releasePending();
+    await wait;
+
+    expect(brain._pending.size).toBe(0);
+  });
+
   it('runs consolidation', async () => {
     const result = await brain.consolidate();
     expect(result).toHaveProperty('runId');

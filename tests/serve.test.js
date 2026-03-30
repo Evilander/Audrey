@@ -132,6 +132,37 @@ describe('Audrey REST API Server', () => {
     expect(res.data.error).toContain('query');
   });
 
+  it('POST /recall reports partial failures when a search path is unavailable', async () => {
+    const brokenDataDir = mkdtempSync(join(tmpdir(), 'audrey-serve-partial-'));
+    const brokenAudrey = new Audrey({
+      dataDir: brokenDataDir,
+      agent: 'test-partial',
+      embedding: { provider: 'mock', dimensions: 64 },
+    });
+    const brokenServer = createAudreyServer(brokenAudrey);
+    await new Promise(resolve => brokenServer.listen(0, '127.0.0.1', resolve));
+
+    try {
+      brokenAudrey.db.exec('DROP TABLE vec_semantics');
+
+      const res = await request(brokenServer, 'POST', '/recall', {
+        query: 'server test memory',
+        types: ['semantic'],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.data.results).toEqual([]);
+      expect(res.data.partialFailure).toBe(true);
+      expect(res.data.errors).toEqual([
+        expect.objectContaining({ type: 'semantic' }),
+      ]);
+    } finally {
+      brokenServer.close();
+      brokenAudrey.close();
+      rmSync(brokenDataDir, { recursive: true, force: true });
+    }
+  });
+
   it('POST /dream runs consolidation cycle', async () => {
     const res = await request(server, 'POST', '/dream', {});
     expect(res.status).toBe(200);

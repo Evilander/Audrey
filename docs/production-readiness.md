@@ -62,6 +62,7 @@ Guardrails:
 8. Keep API keys, bearer tokens, and raw credentials out of encoded memory content.
 9. Decide whether `private` memories are allowed for your use case and document who can create them.
 10. Add application-level encryption, access control, logging, and retention policies around Audrey.
+11. On graceful shutdown paths, call `await brain.waitForIdle()` before `brain.close()` so tracked background work drains cleanly.
 
 ## Operations Commands
 

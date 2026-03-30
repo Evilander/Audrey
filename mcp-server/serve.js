@@ -214,6 +214,13 @@ function route(method, pathname) {
   return `${method} ${pathname}`;
 }
 
+async function drainAndCloseAudrey(audrey) {
+  if (audrey && typeof audrey.waitForIdle === 'function') {
+    await audrey.waitForIdle();
+  }
+  audrey?.close();
+}
+
 /**
  * Creates an HTTP server wrapping an Audrey instance.
  * @param {Audrey} audrey - The Audrey instance to serve
@@ -312,7 +319,11 @@ export function createAudreyServer(audrey, options = {}) {
           const { query, ...opts } = body;
           if (requestAgent) opts.agent = requestAgent;
           const results = await ctx.audrey.recall(query, opts);
-          json(res, 200, { results });
+          json(res, 200, {
+            results,
+            partialFailure: Boolean(results.partialFailure),
+            errors: results.errors ?? [],
+          });
           break;
         }
 
@@ -371,8 +382,8 @@ export function createAudreyServer(audrey, options = {}) {
             json(res, 501, { error: 'Restore not available: no audreyFactory configured' });
             return;
           }
-          ctx.audrey.close();
           const dbPath = ctx.audrey.db?.name;
+          await drainAndCloseAudrey(ctx.audrey);
           if (dbPath) {
             const dir = dirname(dbPath);
             for (const f of ['audrey.db', 'audrey.db-wal', 'audrey.db-shm']) {
@@ -456,9 +467,13 @@ export async function startServer(options = {}) {
 
   const shutdown = () => {
     console.log('\n[audrey] Shutting down...');
-    server._ctx.audrey.close();
-    server.close();
-    process.exit(0);
+    void drainAndCloseAudrey(server._ctx.audrey)
+      .catch(err => {
+        console.error('[audrey] Shutdown drain failed:', err.message);
+      })
+      .finally(() => {
+        server.close(() => process.exit(0));
+      });
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
