@@ -6,6 +6,7 @@ Audience: Claude Opus 4.6 or another autonomous coding agent continuing work in 
 
 - Correct repo: `B:\Projects\Claude\audrey\Audrey`
 - Do not work in the outer folder `B:\Projects\Claude\audrey` except to enter the nested repo.
+- Canonical strategic execution plan now lives in `docs/plans/claude-opus-4.6-master-plan-2026-03-30.md`
 - Primary PR branch in use: `codex/lifecycle-and-memory-os-plan-clean-2026-03-30`
 - Active PR: `https://github.com/Evilander/Audrey/pull/11`
 - Host shell quirks:
