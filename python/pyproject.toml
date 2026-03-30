@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audrey-memory"
+dynamic = ["version"]
+description = "Typed Python client for the Audrey LLM memory server"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+  { name = "evilander" }
+]
+keywords = [
+  "ai",
+  "agents",
+  "audrey",
+  "llm",
+  "memory",
+  "pydantic",
+  "python",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Typing :: Typed",
+]
+dependencies = [
+  "httpx>=0.27,<1",
+  "pydantic>=2.7,<3",
+]
+
+[project.urls]
+Homepage = "https://github.com/Evilander/Audrey"
+Repository = "https://github.com/Evilander/Audrey"
+Issues = "https://github.com/Evilander/Audrey/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "audrey_memory._version.__version__" }
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["audrey_memory*"]
+
+[tool.setuptools.package-data]
+audrey_memory = ["py.typed"]

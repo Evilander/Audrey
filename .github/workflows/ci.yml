@@ -32,6 +32,28 @@ jobs:
       - run: npm run bench:memory:check
       - run: npm run pack:check
 
+  python-sdk:
+    name: Python SDK on 3.11
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: npm ci
+      - run: python -m pip install --upgrade pip setuptools wheel build
+      - run: python -m pip install -e ./python
+      - run: python -m unittest discover -s python/tests -v
+      - run: python -m build --no-isolation python
+
   windows-smoke:
     name: Windows smoke on Node 20
     runs-on: windows-latest

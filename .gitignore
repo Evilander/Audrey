@@ -8,3 +8,12 @@ CLAUDE.md
 .worktrees/
 benchmarks/output/
 benchmarks/.tmp/
+python/build/
+python/dist/
+python/*.egg-info/
+python/.venv/
+python/.pytest_cache/
+python/**/__pycache__/
+pip-*/
+build-env-*/
+build-reqs-*.txt

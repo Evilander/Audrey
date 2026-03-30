@@ -21,13 +21,16 @@ import {
   runStatusCommand,
   validateForgetSelection,
 } from '../mcp-server/index.js';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 
 const TEST_DIR = './test-mcp-server';
+const PACKAGE_VERSION = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+).version;
 
 describe('MCP config', () => {
-  it('VERSION is 0.16.1', () => {
-    expect(VERSION).toBe('0.16.1');
+  it('VERSION matches package.json', () => {
+    expect(VERSION).toBe(PACKAGE_VERSION);
   });
 });
 
@@ -1022,7 +1025,7 @@ describe('snapshot and restore round-trip', () => {
     await audrey.encode({ content: 'test memory beta', source: 'told-by-user' });
 
     const snapshot = audrey.export();
-    expect(snapshot.version).toBe('0.16.1');
+    expect(snapshot.version).toBe(PACKAGE_VERSION);
     expect(snapshot.exportedAt).toBeTruthy();
     expect(snapshot.episodes).toHaveLength(2);
     expect(snapshot.episodes[0].content).toBe('test memory alpha');

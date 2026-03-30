@@ -43,6 +43,7 @@ Audrey models memory as a working system instead of a filing cabinet.
 - MCP server for Claude Code with 13 memory tools
 - **Claude Code hooks integration** — automatic memory in every session (`npx audrey hooks install`)
 - JavaScript SDK for direct application use
+- Python SDK package under `python/` for PyPI release as `audrey-memory`
 - **Git-friendly versioning** via JSON snapshots (`npx audrey snapshot` / `restore`)
 - **REST API server** - any language, any framework (`npx audrey serve`)
 - Health checks via `npx audrey status --json`
@@ -75,13 +76,33 @@ npx audrey status --json
 npx audrey status --json --fail-on-unhealthy
 ```
 
-### SDK
+### SDKs
 
 ```bash
 npm install audrey
 ```
 
 Zero external infrastructure. One SQLite file.
+
+### Python SDK
+
+The Python client source ships in [`python/`](python) and is packaged for PyPI as `audrey-memory`.
+
+```bash
+cd python
+python -m pip install -e .
+```
+
+Use it against the Audrey REST API:
+
+```python
+from audrey_memory import Audrey
+
+brain = Audrey(base_url="http://127.0.0.1:3487", api_key="secret", agent="support-agent")
+memory_id = brain.encode("Stripe returns HTTP 429 above 100 req/s", source="direct-observation")
+results = brain.recall("stripe rate limits", limit=5)
+brain.close()
+```
 
 ## Quick Start
 
