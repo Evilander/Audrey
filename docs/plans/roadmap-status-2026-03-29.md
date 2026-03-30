@@ -2,6 +2,8 @@
 
 This note replaces stale assumptions from the earlier `codex.md` roadmap with the current repo state.
 
+Canonical next-step strategy now lives in `docs/plans/industry-standard-memory-plan-2026-03-29.md`.
+
 ## Current State
 
 - Multi-agent memory is already shipped.
@@ -35,7 +37,7 @@ Original bug list status:
    The current README and some planning docs still contain mojibake artifacts that hurt first contact.
 
 2. Make benchmark claims externally reproducible.
-   Add first-party LoCoMo and LongMemEval adapters under `memorybench` or fold them into this repo in a reproducible way.
+   Add first-party LoCoMo and LongMemEval adapters under `memorybench` or fold them into this repo in a reproducible way. This is now the top proof-stack requirement in `industry-standard-memory-plan-2026-03-29.md`.
 
 3. Tighten restore and import contracts.
    Add explicit schema validation for snapshot versions and optional fields, then test malformed snapshots more aggressively.
@@ -45,3 +47,13 @@ Original bug list status:
 
 5. Harden the SDK shutdown story.
    Decide whether `close()` itself should eventually become async, or whether `waitForIdle()` remains the explicit graceful-shutdown contract.
+
+## Strategic Reframe
+
+The next competitive frame should be "memory control plane / memory OS" rather than "memory library with biological inspiration". The repo now has enough primitives to justify that direction, but it still needs:
+
+- real external benchmark proof
+- controller-mediated lifecycle policy
+- temporal/entity-state memory
+- utility-aware replay and ranking
+- typed resource memory
