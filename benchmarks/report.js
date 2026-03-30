@@ -11,7 +11,6 @@ const PALETTE = {
   muted: '#6b7280',
   surface: '#f8fafc',
   border: '#cbd5e1',
-  danger: '#b91c1c',
 };
 
 function escapeHtml(text) {
@@ -82,6 +81,7 @@ function renderCaseRows(localCases) {
   return localCases.map(caseResult => `
     <tr>
       <td>${escapeHtml(caseResult.title)}</td>
+      <td>${escapeHtml(caseResult.suite)}</td>
       <td>${escapeHtml(caseResult.family)}</td>
       ${caseResult.results.map(result => {
         const bg = result.passed ? '#ecfdf5' : result.score >= 0.5 ? '#fff7ed' : '#fef2f2';
@@ -92,10 +92,22 @@ function renderCaseRows(localCases) {
   `).join('\n');
 }
 
+function renderSuiteSections(suiteCharts) {
+  if (suiteCharts.length === 0) return '';
+  return suiteCharts.map(chart => `
+    <section class="callout">
+      <h2>${escapeHtml(chart.title)}</h2>
+      <p>${escapeHtml(chart.description)}</p>
+      <img src="./${escapeHtml(chart.fileName)}" alt="${escapeHtml(chart.title)} chart" />
+    </section>
+  `).join('\n');
+}
+
 export function writeBenchmarkArtifacts({
   outputDir,
   summary,
   localOverall,
+  localSuites,
   externalOverall,
   trends,
   readmeAssetsDir,
@@ -115,6 +127,22 @@ export function writeBenchmarkArtifacts({
   writeFileSync(join(outputDir, 'published-locomo.svg'), externalChart, 'utf8');
   writeFileSync(join(outputDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
 
+  const suiteCharts = localSuites.map(suite => {
+    const fileName = `${suite.id}-overall.svg`;
+    const chart = renderBarChart({
+      title: `${suite.title} Benchmark`,
+      rows: suite.overall.map(row => ({ label: row.system, value: row.scorePercent })),
+    });
+    writeFileSync(join(outputDir, fileName), chart, 'utf8');
+    return {
+      id: suite.id,
+      title: `${suite.title} Benchmark`,
+      description: suite.description,
+      fileName,
+      path: join(outputDir, fileName),
+    };
+  });
+
   let readmeAssets = null;
   if (readmeAssetsDir) {
     mkdirSync(readmeAssetsDir, { recursive: true });
@@ -122,8 +150,25 @@ export function writeBenchmarkArtifacts({
     const externalReadmeChart = join(readmeAssetsDir, 'published-memory-standards.svg');
     writeFileSync(localReadmeChart, localChart, 'utf8');
     writeFileSync(externalReadmeChart, externalChart, 'utf8');
+
+    const operationsSuite = suiteCharts.find(chart => chart.id === 'operations');
+    let operationsReadmeChart = null;
+    if (operationsSuite) {
+      operationsReadmeChart = join(readmeAssetsDir, 'operations-benchmark.svg');
+      writeFileSync(
+        operationsReadmeChart,
+        renderBarChart({
+          title: 'Audrey Memory Operations Benchmark',
+          rows: (localSuites.find(suite => suite.id === 'operations')?.overall || [])
+            .map(row => ({ label: row.system, value: row.scorePercent })),
+        }),
+        'utf8',
+      );
+    }
+
     readmeAssets = {
       localChart: localReadmeChart,
+      operationsChart: operationsReadmeChart,
       externalChart: externalReadmeChart,
     };
   }
@@ -151,16 +196,18 @@ export function writeBenchmarkArtifacts({
   <main>
     <h1>Audrey Memory Benchmark</h1>
     <div class="callout">
-      <p><strong>Method:</strong> Audrey is scored on LongMemEval-style capability families plus privacy and abstention checks. The benchmark report separates local Audrey-versus-baseline results from published external LoCoMo numbers so the comparison stays honest.</p>
+      <p><strong>Method:</strong> Audrey is scored on a LongMemEval-inspired retrieval benchmark plus an operation-level lifecycle benchmark. The report still separates local Audrey-versus-baseline results from published external LoCoMo numbers so the comparison stays honest.</p>
       <p><strong>Run:</strong> <code>${escapeHtml(summary.command)}</code></p>
       <p><strong>Generated:</strong> ${escapeHtml(summary.generatedAt)}</p>
     </div>
 
     <div class="grid">
       <section class="callout">
-        <h2>Local Benchmark</h2>
-        <img src="./local-overall.svg" alt="Local benchmark bar chart" />
+        <h2>Combined Local Benchmark</h2>
+        <img src="./local-overall.svg" alt="Combined local benchmark bar chart" />
       </section>
+
+      ${renderSuiteSections(suiteCharts)}
 
       <section class="callout">
         <h2>Published Leaderboard</h2>
@@ -174,6 +221,7 @@ export function writeBenchmarkArtifacts({
         <thead>
           <tr>
             <th>Case</th>
+            <th>Suite</th>
             <th>Family</th>
             ${summary.local.overall.map(row => `<th>${escapeHtml(row.system)}</th>`).join('')}
           </tr>
@@ -200,6 +248,7 @@ export function writeBenchmarkArtifacts({
     json: join(outputDir, 'summary.json'),
     html: join(outputDir, 'report.html'),
     localChart: join(outputDir, 'local-overall.svg'),
+    suiteCharts,
     externalChart: join(outputDir, 'published-locomo.svg'),
     readmeAssets,
   };

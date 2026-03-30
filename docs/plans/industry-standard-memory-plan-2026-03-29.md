@@ -256,6 +256,7 @@ Required additions:
 ### 3.6 Benchmark-proof gap
 
 Current benchmarking is good internal hygiene. It is not yet category-defining proof.
+Status delta as of 2026-03-30: the local operation-level benchmark is now shipped; external benchmark adapters remain the blocking proof gap.
 
 Required public proof:
 

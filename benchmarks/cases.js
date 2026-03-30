@@ -1,6 +1,8 @@
-export const BENCHMARK_CASES = [
+export const RETRIEVAL_CASES = [
   {
     id: 'information-extraction',
+    suite: 'retrieval',
+    kind: 'retrieval',
     family: 'information_extraction',
     title: 'Information extraction',
     description: 'Recover a directly stated user fact from durable memory.',
@@ -23,6 +25,8 @@ export const BENCHMARK_CASES = [
   },
   {
     id: 'knowledge-update',
+    suite: 'retrieval',
+    kind: 'retrieval',
     family: 'knowledge_updates',
     title: 'Knowledge updates',
     description: 'Prefer the newer fact over stale preferences.',
@@ -47,6 +51,8 @@ export const BENCHMARK_CASES = [
   },
   {
     id: 'multi-session-reasoning',
+    suite: 'retrieval',
+    kind: 'retrieval',
     family: 'multi_session_reasoning',
     title: 'Multi-session reasoning',
     description: 'Synthesize a decision from multiple related episodes.',
@@ -75,6 +81,8 @@ export const BENCHMARK_CASES = [
   },
   {
     id: 'temporal-reasoning',
+    suite: 'retrieval',
+    kind: 'retrieval',
     family: 'temporal_reasoning',
     title: 'Temporal reasoning',
     description: 'Answer by isolating the right time window.',
@@ -107,6 +115,8 @@ export const BENCHMARK_CASES = [
   },
   {
     id: 'abstention',
+    suite: 'retrieval',
+    kind: 'retrieval',
     family: 'abstention',
     title: 'Abstention',
     description: 'Avoid pretending to know a specific identifier that was never stored.',
@@ -127,6 +137,8 @@ export const BENCHMARK_CASES = [
   },
   {
     id: 'conflict-resolution',
+    suite: 'retrieval',
+    kind: 'retrieval',
     family: 'conflict_resolution',
     title: 'Conflict resolution',
     description: 'Prefer high-reliability evidence over model-generated noise.',
@@ -148,6 +160,8 @@ export const BENCHMARK_CASES = [
   },
   {
     id: 'procedural-learning',
+    suite: 'retrieval',
+    kind: 'retrieval',
     family: 'procedural_learning',
     title: 'Procedural learning',
     description: 'Turn repeated incidents into an actionable operating rule.',
@@ -185,6 +199,8 @@ export const BENCHMARK_CASES = [
   },
   {
     id: 'privacy-boundary',
+    suite: 'retrieval',
+    kind: 'retrieval',
     family: 'privacy_boundary',
     title: 'Privacy boundary',
     description: 'Never leak private memory into public recall.',
@@ -207,6 +223,188 @@ export const BENCHMARK_CASES = [
   },
 ];
 
+export const OPERATION_CASES = [
+  {
+    id: 'operation-update-overwrite',
+    suite: 'operations',
+    kind: 'operations',
+    family: 'update_overwrite',
+    title: 'Update and overwrite',
+    description: 'Current-state recall should prefer the new fact after an explicit overwrite.',
+    query: 'What is the primary deployment region now?',
+    expectAny: ['eu-west-1'],
+    forbid: ['us-east-1'],
+    steps: [
+      {
+        type: 'encode',
+        saveAs: 'initial-region',
+        memory: {
+          content: 'The primary deployment region is us-east-1.',
+          source: 'told-by-user',
+          tags: ['deployment', 'region'],
+        },
+      },
+      {
+        type: 'encode',
+        supersedesRef: 'initial-region',
+        memory: {
+          content: 'As of March 2026, the primary deployment region is eu-west-1.',
+          source: 'direct-observation',
+          tags: ['deployment', 'region', 'update'],
+        },
+      },
+    ],
+  },
+  {
+    id: 'operation-delete-and-abstain',
+    suite: 'operations',
+    kind: 'operations',
+    family: 'delete_and_abstain',
+    title: 'Delete and abstain',
+    description: 'Explicit deletion should remove a secret from later recall.',
+    query: 'What is the staging API token?',
+    expectNone: true,
+    forbid: ['tok-demo-staging-1234'],
+    steps: [
+      {
+        type: 'encode',
+        memory: {
+          content: 'The staging API token is tok-demo-staging-1234.',
+          source: 'told-by-user',
+          tags: ['secret', 'staging'],
+        },
+      },
+      {
+        type: 'encode',
+        memory: {
+          content: 'The staging environment rotates API credentials weekly.',
+          source: 'tool-result',
+          tags: ['staging', 'ops'],
+        },
+      },
+      {
+        type: 'forgetByQuery',
+        query: 'staging API token',
+        options: { minSimilarity: 0.35 },
+      },
+    ],
+  },
+  {
+    id: 'operation-semantic-merge',
+    suite: 'operations',
+    kind: 'operations',
+    family: 'semantic_merge',
+    title: 'Semantic merge',
+    description: 'Related episodes should merge into a reusable semantic operating rule.',
+    query: 'When should the disputes queue trigger manual review?',
+    expectAny: ['manual review', 'same bin in one hour'],
+    steps: [
+      {
+        type: 'encode',
+        memory: {
+          content: 'Three charge disputes from the same BIN landed in the queue within one hour.',
+          source: 'direct-observation',
+          tags: ['fraud', 'disputes'],
+        },
+      },
+      {
+        type: 'encode',
+        memory: {
+          content: 'Fraud ops escalated repeated same-BIN disputes for analyst attention.',
+          source: 'tool-result',
+          tags: ['fraud', 'disputes'],
+        },
+      },
+      {
+        type: 'encode',
+        memory: {
+          content: 'The queue stabilized after repeated same-BIN disputes were reviewed manually.',
+          source: 'told-by-user',
+          tags: ['fraud', 'disputes'],
+        },
+      },
+      {
+        type: 'consolidate',
+        minClusterSize: 3,
+        similarityThreshold: -0.3,
+        principle: {
+          content: 'Repeated disputes from the same BIN in one hour should trigger manual review.',
+          type: 'semantic',
+        },
+      },
+    ],
+    options: {
+      types: ['semantic'],
+    },
+  },
+  {
+    id: 'operation-procedural-merge',
+    suite: 'operations',
+    kind: 'operations',
+    family: 'procedural_merge',
+    title: 'Procedural merge',
+    description: 'Related episodes should merge into an executable procedure, not just a loose fact.',
+    query: 'What should the agent do after two webhook signature failures?',
+    expectAny: ['rotate the signing secret', 'replay queued events'],
+    steps: [
+      {
+        type: 'encode',
+        memory: {
+          content: 'Webhook signature verification failed twice for merchant ACME.',
+          source: 'direct-observation',
+          tags: ['webhooks', 'security'],
+        },
+      },
+      {
+        type: 'encode',
+        memory: {
+          content: 'Operations recovered the incident by rotating the signing secret.',
+          source: 'tool-result',
+          tags: ['webhooks', 'security'],
+        },
+      },
+      {
+        type: 'encode',
+        memory: {
+          content: 'Queued webhook events were replayed after the signing secret changed.',
+          source: 'told-by-user',
+          tags: ['webhooks', 'security'],
+        },
+      },
+      {
+        type: 'consolidate',
+        minClusterSize: 3,
+        similarityThreshold: -0.3,
+        principle: {
+          content: 'When webhook signature verification fails twice, rotate the signing secret and replay queued events.',
+          type: 'procedural',
+          conditions: ['signature verification fails twice', 'queued events pending'],
+        },
+      },
+    ],
+    options: {
+      types: ['procedural', 'semantic'],
+    },
+  },
+];
+
+export const LOCAL_BENCHMARK_SUITES = [
+  {
+    id: 'retrieval',
+    title: 'Retrieval capabilities',
+    description: 'LongMemEval-style memory abilities plus privacy and abstention.',
+    cases: RETRIEVAL_CASES,
+  },
+  {
+    id: 'operations',
+    title: 'Memory operations',
+    description: 'Update, delete, merge, and abstention behavior after lifecycle operations.',
+    cases: OPERATION_CASES,
+  },
+];
+
+export const BENCHMARK_CASES = LOCAL_BENCHMARK_SUITES.flatMap(suite => suite.cases);
+
 export const FAMILY_ORDER = [
   'information_extraction',
   'knowledge_updates',
@@ -216,4 +414,8 @@ export const FAMILY_ORDER = [
   'conflict_resolution',
   'procedural_learning',
   'privacy_boundary',
+  'update_overwrite',
+  'delete_and_abstain',
+  'semantic_merge',
+  'procedural_merge',
 ];
