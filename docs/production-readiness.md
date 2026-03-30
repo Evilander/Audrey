@@ -94,3 +94,28 @@ Use Audrey as a local sidecar to the agent service:
 - Regulated-data filtering handled before `memory_encode`
 
 That keeps Audrey focused on memory integrity while the host system owns compliance, tenancy, and transport security.
+
+## Docker Deployment
+
+Audrey now ships with a first-party container path for the REST API:
+
+```bash
+docker compose up -d --build
+```
+
+Operational notes:
+
+- The container persists SQLite data in the named volume `audrey-data`.
+- Set `AUDREY_API_KEY` before exposing the service beyond localhost.
+- For CI or very fast smoke checks, prefer `AUDREY_EMBEDDING_PROVIDER=mock` and `AUDREY_LLM_PROVIDER=mock`.
+- For stable local/offline container use, keep `AUDREY_EMBEDDING_PROVIDER=local` and `AUDREY_DEVICE=cpu`.
+- If you map the service to a different host port, keep the container port at `3487`.
+
+Suggested smoke check:
+
+```bash
+AUDREY_API_KEY=secret docker compose up -d --build
+curl -H "Authorization: Bearer secret" http://localhost:3487/health
+curl -H "Authorization: Bearer secret" http://localhost:3487/status
+docker compose logs --tail=100 audrey
+```
