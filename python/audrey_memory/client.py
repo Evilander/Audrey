@@ -1,0 +1,307 @@
+from __future__ import annotations
+
+from typing import Any, Mapping, TypeVar
+
+import httpx
+from pydantic import BaseModel
+
+from ._version import __version__
+from .types import (
+    AckResponse,
+    AnalyticsResponse,
+    ConsolidateRequest,
+    DreamRequest,
+    EncodeRequest,
+    EncodeResponse,
+    ForgetRequest,
+    ForgetResponse,
+    HealthResponse,
+    MarkUsedRequest,
+    MemorySnapshot,
+    OperationResult,
+    RecallRequest,
+    RecallResponse,
+    RestoreResponse,
+    StatusResponse,
+)
+
+ModelT = TypeVar("ModelT", bound=BaseModel)
+DEFAULT_TIMEOUT = 30.0
+DEFAULT_BASE_URL = "http://127.0.0.1:3487"
+
+
+class AudreyAPIError(RuntimeError):
+    def __init__(self, status_code: int, message: str, response_body: Any = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_body = response_body
+
+
+def _build_headers(api_key: str | None, agent: str | None) -> dict[str, str]:
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": f"audrey-memory-python/{__version__}",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    if agent:
+        headers["X-Audrey-Agent"] = agent
+    return headers
+
+
+def _dump_payload(payload: BaseModel | Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+    if isinstance(payload, BaseModel):
+        return payload.model_dump(exclude_none=True, mode="json")
+    return {key: value for key, value in dict(payload).items() if value is not None}
+
+
+def _error_message(response: httpx.Response, data: Any) -> str:
+    if isinstance(data, dict):
+        detail = data.get("error") or data.get("message")
+        if isinstance(detail, str) and detail.strip():
+            return detail
+    return f"Audrey API request failed with status {response.status_code}"
+
+
+def _decode_json(response: httpx.Response) -> Any:
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+    if response.is_error:
+        raise AudreyAPIError(response.status_code, _error_message(response, data), data)
+    return data
+
+
+def _validate(model_type: type[ModelT], data: Any) -> ModelT:
+    return model_type.model_validate(data)
+
+
+def _build_model_payload(
+    payload: BaseModel | Mapping[str, Any] | str,
+    model_type: type[ModelT],
+    field_name: str,
+    extra: dict[str, Any],
+) -> ModelT:
+    if isinstance(payload, model_type):
+        if extra:
+            raise TypeError(f"{model_type.__name__} payload cannot be combined with keyword overrides")
+        return payload
+    if isinstance(payload, Mapping):
+        if extra:
+            raise TypeError(f"Mapping payload cannot be combined with keyword overrides for {model_type.__name__}")
+        return model_type.model_validate(payload)
+    return model_type.model_validate({field_name: payload, **extra})
+
+
+def _optional_model_payload(
+    payload: BaseModel | Mapping[str, Any] | None,
+    model_type: type[ModelT],
+    extra: dict[str, Any],
+) -> ModelT | None:
+    if isinstance(payload, model_type):
+        if extra:
+            raise TypeError(f"{model_type.__name__} payload cannot be combined with keyword overrides")
+        return payload
+    if payload is None:
+        return model_type.model_validate(extra) if extra else None
+    if extra:
+        raise TypeError(f"Mapping payload cannot be combined with keyword overrides for {model_type.__name__}")
+    return model_type.model_validate(payload)
+
+
+class Audrey:
+    def __init__(
+        self,
+        base_url: str = DEFAULT_BASE_URL,
+        *,
+        api_key: str | None = None,
+        agent: str | None = None,
+        timeout: float | httpx.Timeout = DEFAULT_TIMEOUT,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        self._client = httpx.Client(
+            base_url=base_url.rstrip("/"),
+            timeout=timeout,
+            transport=transport,
+            headers=_build_headers(api_key, agent),
+        )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> Audrey:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.close()
+
+    def health(self) -> HealthResponse:
+        return _validate(HealthResponse, _decode_json(self._client.get("/health")))
+
+    def status(self) -> StatusResponse:
+        return _validate(StatusResponse, _decode_json(self._client.get("/status")))
+
+    def analytics(self) -> AnalyticsResponse:
+        return _validate(AnalyticsResponse, _decode_json(self._client.get("/analytics")))
+
+    def encode(self, payload: EncodeRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> str:
+        request = _build_model_payload(payload, EncodeRequest, "content", kwargs)
+        data = _decode_json(self._client.post("/encode", json=_dump_payload(request)))
+        return _validate(EncodeResponse, data).id
+
+    def recall(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any):
+        return self.recall_response(payload, **kwargs).results
+
+    def recall_response(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> RecallResponse:
+        request = _build_model_payload(payload, RecallRequest, "query", kwargs)
+        data = _decode_json(self._client.post("/recall", json=_dump_payload(request)))
+        return _validate(RecallResponse, data)
+
+    def dream(self, payload: DreamRequest | Mapping[str, Any] | None = None, /, **kwargs: Any) -> OperationResult:
+        request = _optional_model_payload(payload, DreamRequest, kwargs)
+        data = _decode_json(self._client.post("/dream", json=_dump_payload(request)))
+        return _validate(OperationResult, data)
+
+    def consolidate(
+        self,
+        payload: ConsolidateRequest | Mapping[str, Any] | None = None,
+        /,
+        **kwargs: Any,
+    ) -> OperationResult:
+        request = _optional_model_payload(payload, ConsolidateRequest, kwargs)
+        data = _decode_json(self._client.post("/consolidate", json=_dump_payload(request)))
+        return _validate(OperationResult, data)
+
+    def mark_used(self, memory_id: str) -> AckResponse:
+        request = MarkUsedRequest(id=memory_id)
+        data = _decode_json(self._client.post("/mark-used", json=_dump_payload(request)))
+        return _validate(AckResponse, data)
+
+    def forget(
+        self,
+        *,
+        id: str | None = None,
+        query: str | None = None,
+        purge: bool | None = None,
+        min_similarity: float | None = None,
+    ) -> ForgetResponse | None:
+        request = ForgetRequest(
+            id=id,
+            query=query,
+            purge=purge,
+            minSimilarity=min_similarity,
+        )
+        data = _decode_json(self._client.post("/forget", json=_dump_payload(request)))
+        if data is None:
+            return None
+        return _validate(ForgetResponse, data)
+
+    def snapshot(self) -> MemorySnapshot:
+        data = _decode_json(self._client.post("/snapshot"))
+        return _validate(MemorySnapshot, data)
+
+    def restore(self, snapshot: MemorySnapshot | Mapping[str, Any]) -> RestoreResponse:
+        request = snapshot if isinstance(snapshot, MemorySnapshot) else MemorySnapshot.model_validate(snapshot)
+        data = _decode_json(self._client.post("/restore", json=_dump_payload(request)))
+        return _validate(RestoreResponse, data)
+
+
+class AsyncAudrey:
+    def __init__(
+        self,
+        base_url: str = DEFAULT_BASE_URL,
+        *,
+        api_key: str | None = None,
+        agent: str | None = None,
+        timeout: float | httpx.Timeout = DEFAULT_TIMEOUT,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._client = httpx.AsyncClient(
+            base_url=base_url.rstrip("/"),
+            timeout=timeout,
+            transport=transport,
+            headers=_build_headers(api_key, agent),
+        )
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def __aenter__(self) -> AsyncAudrey:
+        return self
+
+    async def __aexit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        await self.aclose()
+
+    async def health(self) -> HealthResponse:
+        return _validate(HealthResponse, _decode_json(await self._client.get("/health")))
+
+    async def status(self) -> StatusResponse:
+        return _validate(StatusResponse, _decode_json(await self._client.get("/status")))
+
+    async def analytics(self) -> AnalyticsResponse:
+        return _validate(AnalyticsResponse, _decode_json(await self._client.get("/analytics")))
+
+    async def encode(self, payload: EncodeRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> str:
+        request = _build_model_payload(payload, EncodeRequest, "content", kwargs)
+        data = _decode_json(await self._client.post("/encode", json=_dump_payload(request)))
+        return _validate(EncodeResponse, data).id
+
+    async def recall(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any):
+        return (await self.recall_response(payload, **kwargs)).results
+
+    async def recall_response(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> RecallResponse:
+        request = _build_model_payload(payload, RecallRequest, "query", kwargs)
+        data = _decode_json(await self._client.post("/recall", json=_dump_payload(request)))
+        return _validate(RecallResponse, data)
+
+    async def dream(self, payload: DreamRequest | Mapping[str, Any] | None = None, /, **kwargs: Any) -> OperationResult:
+        request = _optional_model_payload(payload, DreamRequest, kwargs)
+        data = _decode_json(await self._client.post("/dream", json=_dump_payload(request)))
+        return _validate(OperationResult, data)
+
+    async def consolidate(
+        self,
+        payload: ConsolidateRequest | Mapping[str, Any] | None = None,
+        /,
+        **kwargs: Any,
+    ) -> OperationResult:
+        request = _optional_model_payload(payload, ConsolidateRequest, kwargs)
+        data = _decode_json(await self._client.post("/consolidate", json=_dump_payload(request)))
+        return _validate(OperationResult, data)
+
+    async def mark_used(self, memory_id: str) -> AckResponse:
+        request = MarkUsedRequest(id=memory_id)
+        data = _decode_json(await self._client.post("/mark-used", json=_dump_payload(request)))
+        return _validate(AckResponse, data)
+
+    async def forget(
+        self,
+        *,
+        id: str | None = None,
+        query: str | None = None,
+        purge: bool | None = None,
+        min_similarity: float | None = None,
+    ) -> ForgetResponse | None:
+        request = ForgetRequest(
+            id=id,
+            query=query,
+            purge=purge,
+            minSimilarity=min_similarity,
+        )
+        data = _decode_json(await self._client.post("/forget", json=_dump_payload(request)))
+        if data is None:
+            return None
+        return _validate(ForgetResponse, data)
+
+    async def snapshot(self) -> MemorySnapshot:
+        data = _decode_json(await self._client.post("/snapshot"))
+        return _validate(MemorySnapshot, data)
+
+    async def restore(self, snapshot: MemorySnapshot | Mapping[str, Any]) -> RestoreResponse:
+        request = snapshot if isinstance(snapshot, MemorySnapshot) else MemorySnapshot.model_validate(snapshot)
+        data = _decode_json(await self._client.post("/restore", json=_dump_payload(request)))
+        return _validate(RestoreResponse, data)
