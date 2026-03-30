@@ -1,6 +1,6 @@
 {
   "name": "audrey",
-  "version": "0.16.1",
+  "version": "0.17.0",
   "description": "Biological memory architecture for AI agents - encode, consolidate, and recall memories with confidence decay, contradiction detection, and causal graphs",
   "type": "module",
   "main": "src/index.js",
