@@ -44,6 +44,7 @@ import { detectResonance } from './affect.js';
  * @property {string} [before]
  * @property {Record<string, string>} [context]
  * @property {{ valence?: number, arousal?: number }} [mood]
+ * @property {'hybrid' | 'vector' | 'keyword'} [retrieval]
  *
  * @typedef {Object} RecallResult
  * @property {string} id
@@ -168,6 +169,12 @@ export class Audrey extends EventEmitter {
   _trackAsync(promise) {
     this._pending.add(promise);
     promise.finally(() => this._pending.delete(promise));
+  }
+
+  async waitForIdle() {
+    while (this._pending.size > 0) {
+      await Promise.allSettled([...this._pending]);
+    }
   }
 
   _emitValidation(id, params) {
