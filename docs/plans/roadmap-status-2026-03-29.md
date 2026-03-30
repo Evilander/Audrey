@@ -11,6 +11,7 @@ Treat this file as a status note, not the canonical execution plan.
 - FTS-backed keyword search and hybrid retrieval are already shipped.
 - TypeScript declarations are already shipped.
 - REST API, dashboard, hooks integration, benchmarking, and CI are already shipped.
+- Operation-level benchmark coverage for update, delete, merge, and abstain is now shipped.
 
 The roadmap should no longer treat those as future phases. The highest-value work now is production correctness, operator clarity, and benchmark credibility.
 
@@ -38,7 +39,7 @@ Original bug list status:
    The current README and some planning docs still contain mojibake artifacts that hurt first contact.
 
 2. Make benchmark claims externally reproducible.
-   Add first-party LoCoMo and LongMemEval adapters under `memorybench` or fold them into this repo in a reproducible way. This is now the top proof-stack requirement in `industry-standard-memory-plan-2026-03-29.md`.
+   The internal retrieval and operations suites now exist. The remaining top proof-stack requirement is a first-party LoCoMo and LongMemEval adapter under `memorybench` or folded into this repo in a reproducible way.
 
 3. Tighten restore and import contracts.
    Add explicit schema validation for snapshot versions and optional fields, then test malformed snapshots more aggressively.
