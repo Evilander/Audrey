@@ -19,8 +19,10 @@ describe('benchmark suite', () => {
 
     expect(summary.local.overall.length).toBeGreaterThanOrEqual(4);
     expect(summary.local.overall[0].system).toBe('Audrey');
+    expect(summary.local.suites.map(suite => suite.id)).toEqual(['retrieval', 'operations']);
     expect(summary.external.leaderboard[0].system).toBe('MIRIX');
     expect(summary.local.cases.some(testCase => testCase.id === 'procedural-learning')).toBe(true);
+    expect(summary.local.cases.some(testCase => testCase.id === 'operation-semantic-merge')).toBe(true);
   });
 
   it('writes JSON, HTML, and SVG artifacts', async () => {
@@ -34,6 +36,7 @@ describe('benchmark suite', () => {
     expect(existsSync(artifacts.html)).toBe(true);
     expect(existsSync(artifacts.localChart)).toBe(true);
     expect(existsSync(artifacts.externalChart)).toBe(true);
+    expect(artifacts.suiteCharts.some(chart => chart.id === 'operations')).toBe(true);
     expect(lines.join('\n')).toContain('Audrey benchmark complete.');
   });
 
@@ -44,7 +47,17 @@ describe('benchmark suite', () => {
     });
 
     expect(existsSync(artifacts.readmeAssets.localChart)).toBe(true);
+    expect(existsSync(artifacts.readmeAssets.operationsChart)).toBe(true);
     expect(existsSync(artifacts.readmeAssets.externalChart)).toBe(true);
+  });
+
+  it('can run only the operations suite', async () => {
+    const summary = await runBenchmarkSuite({ provider: 'mock', dimensions: 64, suite: 'operations' });
+
+    expect(summary.config.suites).toEqual(['operations']);
+    expect(summary.local.suites).toHaveLength(1);
+    expect(summary.local.suites[0].id).toBe('operations');
+    expect(summary.local.cases.every(testCase => testCase.suite === 'operations')).toBe(true);
   });
 
   it('enforces benchmark regression guardrails', async () => {

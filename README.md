@@ -44,9 +44,9 @@ Audrey models memory as a working system instead of a filing cabinet.
 - **Claude Code hooks integration** — automatic memory in every session (`npx audrey hooks install`)
 - JavaScript SDK for direct application use
 - **Git-friendly versioning** via JSON snapshots (`npx audrey snapshot` / `restore`)
-- **REST API server** — any language, any framework (`npx audrey serve`)
+- **REST API server** - any language, any framework (`npx audrey serve`)
 - Health checks via `npx audrey status --json`
-- Benchmark harness with SVG/HTML reports via `npm run bench:memory`
+- Benchmark harness with retrieval and lifecycle-operation tracks via `npm run bench:memory`
 - Regression gate for benchmark quality via `npm run bench:memory:check`
 - Optional local embeddings and optional hosted LLM providers
 - Strongest production fit today in financial services ops and healthcare ops
@@ -342,9 +342,10 @@ npm run bench:memory:check
 
 ## Benchmarking
 
-Audrey now ships with a memory benchmark harness built for two purposes:
+Audrey now ships with a memory benchmark harness built for three purposes:
 
 - measure Audrey against naive local baselines on LongMemEval-style memory abilities plus privacy and abstention checks
+- measure Audrey on lifecycle operations that other memory systems usually hand-wave: update, overwrite, delete, merge, and abstain
 - keep Audrey grounded against published LoCoMo results from leading memory systems
 
 Run it with:
@@ -363,6 +364,13 @@ npm run bench:memory:check
 
 That command fails if Audrey drops below its minimum local score, local pass rate, or required margin over the strongest naive baseline.
 
+For track-specific runs:
+
+```bash
+npm run bench:memory:retrieval
+npm run bench:memory:operations
+```
+
 For committed GitHub-friendly charts:
 
 ```bash
@@ -375,26 +383,49 @@ Local Audrey-vs-baseline results:
 
 ![Audrey local memory benchmark](docs/assets/benchmarks/local-benchmark.svg)
 
+Lifecycle operations benchmark:
+
+![Audrey memory operations benchmark](docs/assets/benchmarks/operations-benchmark.svg)
+
 Published comparison anchors from current LLM memory systems:
 
 ![Published LLM memory benchmark comparison](docs/assets/benchmarks/published-memory-standards.svg)
 
-**Audrey 93.8% with local MiniLM embeddings** (384d, offline-capable). Per-category breakdown:
+**Current deterministic CI snapshot** (`node benchmarks/run.js --provider mock --dimensions 64`):
+
+| Local track | Audrey | Best Baseline |
+|---|---|---|
+| Combined local benchmark | **100.0%** | 41.7% |
+| Retrieval capabilities | **100.0%** | 56.3% |
+| Memory operations | **100.0%** | 25.0% |
+
+Retrieval-family breakdown:
 
 | Category | Audrey | Vector Only | Best Baseline |
 |---|---|---|---|
 | Information Extraction | 100% | 100% | 100% |
-| Knowledge Updates | 100% | 0% | 50% |
+| Knowledge Updates | 100% | 50% | 50% |
 | Multi-Session Reasoning | 100% | 100% | 100% |
 | Temporal Reasoning | 100% | 100% | 100% |
-| Abstention | 50% | 50% | 50% |
+| Abstention | 100% | 50% | 50% |
+| Conflict Resolution | 100% | 50% | 50% |
+| Procedural Learning | 100% | 0% | 0% |
 | Privacy | 100% | 0% | 0% |
 
-Published comparison anchors from the field (different benchmarks and conditions — included for field context, not direct comparison):
+Operation-family breakdown:
+
+| Operation | Audrey | Vector Only | Best Baseline |
+|---|---|---|---|
+| Update / Overwrite | 100% | 50% | 50% |
+| Delete + Abstain | 100% | 0% | 50% |
+| Semantic Merge | 100% | 0% | 0% |
+| Procedural Merge | 100% | 0% | 0% |
+
+Published comparison anchors from the field (different benchmarks and conditions - included for field context, not direct comparison):
 
 | System | Benchmark | Score | What it represents |
 |---|---|---|---|
-| **Audrey** | Internal LongMemEval-style | **93.8%** | Consolidation, contradiction, abstention, privacy |
+| **Audrey** | Internal retrieval + operations benchmark | **100.0%** | Update, overwrite, delete, merge, abstention, consolidation, privacy |
 | MIRIX | Published LoCoMo | 85.4% | Typed multimodal memory |
 | Letta Filesystem | Published LoCoMo | 74.0% | Context-engineering |
 | Mem0 Graph Memory | Published LoCoMo | 68.5% | Graph memory |
@@ -423,6 +454,8 @@ npm ci
 npm test
 npm run pack:check
 npm run bench:memory
+npm run bench:memory:retrieval
+npm run bench:memory:operations
 npm run bench:memory:check
 npm run bench:memory:readme-assets
 ```
@@ -432,6 +465,8 @@ Current validated baseline:
 - `npm test`
 - `npm run pack:check`
 - `npm run bench:memory`
+- `npm run bench:memory:retrieval`
+- `npm run bench:memory:operations`
 - `npm run bench:memory:check`
 - `npm run bench:memory:readme-assets`
 
