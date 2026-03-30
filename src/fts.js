@@ -55,7 +55,7 @@ export function searchFTSEpisodes(db, query, limit = 30, agentFilter = null) {
   const agentClause = agentFilter ? 'AND e.agent = ?' : '';
   const params = agentFilter ? [query, agentFilter, limit] : [query, limit];
   return db.prepare(`
-    SELECT f.id, f.content, bm25(fts_episodes) AS rank
+    SELECT f.id, f.content, e.agent, bm25(fts_episodes) AS rank
     FROM fts_episodes f
     JOIN episodes e ON e.id = f.id
     WHERE fts_episodes MATCH ?
@@ -70,7 +70,7 @@ export function searchFTSSemantics(db, query, limit = 30, agentFilter = null) {
   const agentClause = agentFilter ? 'AND s.agent = ?' : '';
   const params = agentFilter ? [query, agentFilter, limit] : [query, limit];
   return db.prepare(`
-    SELECT f.id, f.content, bm25(fts_semantics) AS rank
+    SELECT f.id, f.content, s.agent, bm25(fts_semantics) AS rank
     FROM fts_semantics f
     JOIN semantics s ON s.id = f.id
     WHERE fts_semantics MATCH ?
@@ -85,7 +85,7 @@ export function searchFTSProcedures(db, query, limit = 30, agentFilter = null) {
   const agentClause = agentFilter ? 'AND p.agent = ?' : '';
   const params = agentFilter ? [query, agentFilter, limit] : [query, limit];
   return db.prepare(`
-    SELECT f.id, f.content, bm25(fts_procedures) AS rank
+    SELECT f.id, f.content, p.agent, bm25(fts_procedures) AS rank
     FROM fts_procedures f
     JOIN procedures p ON p.id = f.id
     WHERE fts_procedures MATCH ?

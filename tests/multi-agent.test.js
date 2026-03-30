@@ -77,4 +77,17 @@ describe('multi-agent memory', () => {
     expect(results.length).toBe(0);
     audreyC.close();
   });
+
+  it('keyword-only recall preserves agent attribution', async () => {
+    const results = await audreyA.recall('Alpha', {
+      limit: 10,
+      scope: 'agent',
+      retrieval: 'keyword',
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    for (const result of results) {
+      expect(result.agent).toBe('agent-alpha');
+    }
+  });
 });

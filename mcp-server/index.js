@@ -49,6 +49,13 @@ export async function initializeEmbeddingProvider(provider) {
   }
 }
 
+async function closeAudreyGracefully(audrey) {
+  if (audrey && typeof audrey.waitForIdle === 'function') {
+    await audrey.waitForIdle();
+  }
+  audrey?.close();
+}
+
 export const memoryEncodeToolSchema = {
   content: z.string()
     .max(MAX_MEMORY_CONTENT_LENGTH)
@@ -122,7 +129,7 @@ async function reembed() {
     const counts = await reembedAll(audrey.db, audrey.embeddingProvider, { dropAndRecreate: dimensionsChanged });
     console.log(`Done. Re-embedded: ${counts.episodes} episodes, ${counts.semantics} semantics, ${counts.procedures} procedures`);
   } finally {
-    audrey.close();
+    await closeAudreyGracefully(audrey);
   }
 }
 
@@ -170,7 +177,7 @@ async function dream() {
     );
     console.log('[audrey] Dream complete.');
   } finally {
-    audrey.close();
+    await closeAudreyGracefully(audrey);
   }
 }
 
@@ -276,7 +283,7 @@ async function greeting() {
 
     console.log(lines.join('\n'));
   } finally {
-    audrey.close();
+    await closeAudreyGracefully(audrey);
   }
 }
 
@@ -352,7 +359,7 @@ async function reflect() {
     );
     console.log('[audrey] Dream complete.');
   } finally {
-    audrey.close();
+    await closeAudreyGracefully(audrey);
   }
 }
 
@@ -430,7 +437,7 @@ async function recall() {
 
     console.log(JSON.stringify(output));
   } finally {
-    audrey.close();
+    await closeAudreyGracefully(audrey);
   }
 }
 
@@ -622,7 +629,7 @@ async function snapshot() {
     console.log('');
     console.log('To restore: npx audrey restore ' + outputPath);
   } finally {
-    audrey.close();
+    await closeAudreyGracefully(audrey);
   }
 }
 
@@ -685,7 +692,7 @@ async function restore() {
     console.log(`[audrey] Restored: ${restored.episodic} episodes, ${restored.semantic} semantics, ${restored.procedural} procedures`);
     console.log('[audrey] Restore complete.');
   } finally {
-    audrey.close();
+    await closeAudreyGracefully(audrey);
   }
 }
 
@@ -937,6 +944,25 @@ export function registerShutdownHandlers(processRef, audrey, logger = console.er
     }
     if (!closed) {
       closed = true;
+      if (typeof audrey?.waitForIdle === 'function') {
+        Promise.resolve(audrey.waitForIdle())
+          .catch(err => {
+            logger(`[audrey-mcp] shutdown wait error: ${err.message || String(err)}`);
+            exitCode = exitCode === 0 ? 1 : exitCode;
+          })
+          .finally(() => {
+            try {
+              audrey.close();
+            } catch (err) {
+              logger(`[audrey-mcp] shutdown error: ${err.message || String(err)}`);
+              exitCode = exitCode === 0 ? 1 : exitCode;
+            }
+            if (typeof processRef.exit === 'function') {
+              processRef.exit(exitCode);
+            }
+          });
+        return;
+      }
       try {
         audrey.close();
       } catch (err) {

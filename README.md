@@ -110,6 +110,7 @@ const memories = await brain.recall('stripe rate limits', {
 const dream = await brain.dream();
 const briefing = await brain.greeting({ context: 'debugging stripe' });
 
+await brain.waitForIdle();
 brain.close();
 ```
 
