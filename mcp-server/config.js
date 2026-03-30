@@ -1,8 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '0.16.1';
+const PACKAGE_JSON = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+);
+
+export const VERSION = PACKAGE_JSON.version;
 export const SERVER_NAME = 'audrey-memory';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
 export const MCP_ENTRYPOINT = fileURLToPath(new URL('./index.js', import.meta.url));
