@@ -46,6 +46,7 @@ Audrey models memory as a working system instead of a filing cabinet.
 - Python SDK package under `python/` for PyPI release as `audrey-memory`
 - **Git-friendly versioning** via JSON snapshots (`npx audrey snapshot` / `restore`)
 - **REST API server** - any language, any framework (`npx audrey serve`)
+- Docker image and Compose deployment for local or sidecar hosting
 - Health checks via `npx audrey status --json`
 - Benchmark harness with retrieval and lifecycle-operation tracks via `npm run bench:memory`
 - Regression gate for benchmark quality via `npm run bench:memory:check`
@@ -243,6 +244,45 @@ curl -X POST http://localhost:3487/encode \
 curl -X POST http://localhost:3487/recall \
   -H "Content-Type: application/json" \
   -d '{"query": "deploy failures", "limit": 5}'
+```
+
+## Docker
+
+Run Audrey as a containerized REST service with persistent local storage:
+
+```bash
+docker compose up -d --build
+```
+
+Default container behavior:
+
+- binds `3487` on the host
+- stores Audrey data in the named volume `audrey-data`
+- serves on `0.0.0.0` inside the container
+- defaults to `AUDREY_EMBEDDING_PROVIDER=local` with `AUDREY_DEVICE=cpu`
+
+Useful overrides:
+
+```bash
+AUDREY_API_KEY=secret docker compose up -d --build
+AUDREY_EMBEDDING_PROVIDER=mock AUDREY_LLM_PROVIDER=mock docker compose up -d --build
+AUDREY_PUBLISHED_PORT=8080 docker compose up -d --build
+```
+
+Smoke check:
+
+```bash
+curl http://localhost:3487/health
+curl -H "Authorization: Bearer secret" http://localhost:3487/health
+```
+
+Container helpers:
+
+```bash
+npm run docker:build
+npm run docker:up
+npm run docker:logs
+npm run docker:down
 ```
 
 ## Versioning
