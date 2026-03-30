@@ -54,6 +54,26 @@ jobs:
       - run: python -m unittest discover -s python/tests -v
       - run: python -m build --no-isolation python
 
+  docker-smoke:
+    name: Docker smoke on Ubuntu
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: docker build -t audrey:ci .
+      - run: docker run -d --name audrey-smoke -p 3487:3487 -e AUDREY_EMBEDDING_PROVIDER=mock -e AUDREY_LLM_PROVIDER=mock -e AUDREY_API_KEY=test-secret audrey:ci
+      - run: |
+          for i in $(seq 1 30); do
+            if curl -fsS -H "Authorization: Bearer test-secret" http://127.0.0.1:3487/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs audrey-smoke
+          exit 1
+      - run: docker rm -f audrey-smoke
+
   windows-smoke:
     name: Windows smoke on Node 20
     runs-on: windows-latest

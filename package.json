@@ -35,7 +35,11 @@
     "bench:memory:json": "node benchmarks/run.js --json",
     "bench:memory:check": "node benchmarks/run.js --check",
     "bench:memory:readme-assets": "node benchmarks/run.js --readme-assets-dir docs/assets/benchmarks",
-    "serve": "node mcp-server/index.js serve"
+    "serve": "node mcp-server/index.js serve",
+    "docker:build": "docker build -t audrey:local .",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f audrey"
   },
   "keywords": [
     "ai",
