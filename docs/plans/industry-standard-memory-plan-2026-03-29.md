@@ -3,6 +3,7 @@
 Audience: autonomous coding/research agents operating on this repository.
 
 Do not interpret this document as marketing copy. Interpret it as category-construction doctrine plus execution constraints.
+When this plan conflicts with older roadmap prose, this plan wins.
 
 ## 0. Prime Directive
 
