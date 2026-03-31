@@ -4,551 +4,226 @@
 [![npm version](https://img.shields.io/npm/v/audrey.svg)](https://www.npmjs.com/package/audrey)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Persistent memory for Claude Code and AI agents. One command to bootstrap, then every session remembers.
+Audrey is a persistent memory and continuity engine for Claude Code and AI agents.
+
+It gives an agent a local memory store, durable recall, consolidation, contradiction handling, a REST sidecar, MCP tools, and benchmark gates without adding external infrastructure.
+
+Requires Node.js 20+.
+
+## Quick Start
+
+### Claude Code
 
 ```bash
-npx audrey init               # local-offline preset: install MCP + hooks
-npx audrey init hosted-fast   # prefer hosted providers detected from env
+npx audrey init
+npx audrey doctor
 ```
 
-That is the fast path. Audrey can still be installed manually, but `init` is the intended first-run experience. Claude Code now wakes up knowing what happened yesterday, recalls relevant context per-prompt, and consolidates learnings when the session ends. No cloud, no config files, no infrastructure – one SQLite file.
+This uses the default `local-offline` preset:
 
-Audrey also works as a standalone SDK, MCP server, and REST API for any AI agent framework.
+- registers Audrey with Claude Code
+- installs hooks for automatic recall and reflection
+- uses local embeddings by default
+- stores memory in one local SQLite-backed data directory
 
-> **On `/dream`** — Anthropic recently shipped `/dream` for Claude Code memory maintenance. Audrey predates it and goes further: episodic-to-semantic consolidation, contradiction detection, confidence decay, emotional affect, causal reasoning, and source reliability weighting. `/dream` is a maintenance pass. Audrey is a cognitive memory architecture.
+### REST or Docker Sidecar
+
+```bash
+npx audrey init sidecar-prod
+docker compose up -d --build
+```
+
+Then verify:
+
+```bash
+npx audrey doctor
+curl http://localhost:3487/health
+```
 
 ## Why Audrey
 
-Most AI memory tools are storage wrappers. They save facts, retrieve facts, and keep everything forever. That leaves real production problems unsolved:
+- Local-first: memory lives in SQLite with `sqlite-vec`, not a hosted vector database.
+- Practical: MCP, CLI, REST, JavaScript, Python, and Docker are all first-class.
+- Durable: snapshot, restore, health checks, benchmark gates, and graceful shutdown are built in.
+- Structured: Audrey does more than save notes. It consolidates, decays, tracks contradictions, and supports procedural memory.
 
-- Old information stays weighted like new information.
-- Raw events never become reusable operating knowledge.
-- Conflicting facts quietly coexist.
-- Model-generated mistakes can get reinforced into false "truth."
+## What Ships
 
-Audrey models memory as a working system instead of a filing cabinet.
+- Claude Code MCP server with 13 memory tools
+- Automatic hook-based recall and reflection for Claude Code sessions
+- JavaScript SDK
+- Python SDK packaged as `audrey-memory`
+- REST API for sidecar deployment
+- Docker and Compose deployment path
+- Snapshot and restore for portable memory state
+- Machine-readable health and benchmark gates
+- Local benchmark harness with retrieval and lifecycle-operation tracks
 
-| Brain Structure | Audrey Component | What It Does |
+## Setup Presets
+
+`npx audrey init` supports four named presets:
+
+| Preset | Best For | Behavior |
 |---|---|---|
-| Hippocampus | Episodic Memory | Fast capture of raw events and observations |
-| Neocortex | Semantic Memory | Consolidated principles and patterns |
-| Cerebellum | Procedural Memory | Learned workflows and conditional behaviors |
-| Sleep Replay | Dream Cycle | Consolidates episodes into principles and applies decay |
-| Prefrontal Cortex | Validation Engine | Truth-checking and contradiction detection |
-| Amygdala | Affect System | Emotional encoding, arousal-salience coupling, and mood-congruent recall |
+| `local-offline` | Claude Code on one machine | Local embeddings, MCP install, hooks install |
+| `hosted-fast` | Claude Code with provider keys already present | Auto-picks hosted providers from env, MCP install, hooks install |
+| `ci-mock` | CI and smoke tests | Mock embedding + LLM providers, no Claude-specific setup |
+| `sidecar-prod` | REST API and Docker deployment | Sidecar-oriented defaults, no Claude-specific setup |
 
-## What You Get
-
-- Local SQLite-backed memory with `sqlite-vec`
-- MCP server for Claude Code with 13 memory tools
-- **Claude Code hooks integration** — automatic memory in every session (`npx audrey hooks install`)
-- JavaScript SDK for direct application use
-- Python SDK package under `python/` for PyPI release as `audrey-memory`
-- **Git-friendly versioning** via JSON snapshots (`npx audrey snapshot` / `restore`)
-- **REST API server** - any language, any framework (`npx audrey serve`)
-- Docker image and Compose deployment for local or sidecar hosting
-- Health checks via `npx audrey status --json`
-- Benchmark harness with retrieval and lifecycle-operation tracks via `npm run bench:memory`
-- Regression gate for benchmark quality via `npm run bench:memory:check`
-- Optional local embeddings and optional hosted LLM providers
-- Strongest production fit today in financial services ops and healthcare ops
-
-## Install
-
-### MCP Server for Claude Code
+Useful checks:
 
 ```bash
-npx audrey init               # local-offline preset: register MCP + install hooks
-npx audrey doctor             # verify providers, hooks, and memory health
-```
-
-Available setup presets:
-
-- `local-offline` -> local embeddings, no hosted keys required, installs Claude hooks
-- `hosted-fast` -> uses hosted providers detected from your environment, installs Claude hooks
-- `ci-mock` -> mock providers for smoke tests and CI
-- `sidecar-prod` -> REST or Docker sidecar defaults for operator-managed deployment
-
-If you want the old explicit flow, it still works:
-
-```bash
-npx audrey install
-npx audrey hooks install
-```
-
-Audrey auto-detects providers from your environment:
-
-- `GOOGLE_API_KEY` or `GEMINI_API_KEY` -> Gemini embeddings (3072d)
-- no embedding key -> local embeddings (384d, MiniLM, offline-capable)
-- `AUDREY_EMBEDDING_PROVIDER=openai` -> explicit OpenAI embeddings (1536d)
-- `ANTHROPIC_API_KEY` -> LLM-powered consolidation, contradiction detection, and reflection
-
-Quick checks:
-
-```bash
+npx audrey doctor
 npx audrey status
-npx audrey status --json
 npx audrey status --json --fail-on-unhealthy
 ```
 
-### SDKs
+## Use Audrey From Code
 
-```bash
-npm install audrey
-```
-
-Zero external infrastructure. One SQLite file.
-
-### Python SDK
-
-The Python client source ships in [`python/`](python) and is packaged for PyPI as `audrey-memory`.
-
-```bash
-cd python
-python -m pip install -e .
-```
-
-Use it against the Audrey REST API:
-
-```python
-from audrey_memory import Audrey
-
-brain = Audrey(base_url="http://127.0.0.1:3487", api_key="secret", agent="support-agent")
-memory_id = brain.encode("Stripe returns HTTP 429 above 100 req/s", source="direct-observation")
-results = brain.recall("stripe rate limits", limit=5)
-brain.close()
-```
-
-## Quick Start
+### JavaScript
 
 ```js
 import { Audrey } from 'audrey';
 
 const brain = new Audrey({
-  dataDir: './agent-memory',
+  dataDir: './audrey-data',
   agent: 'support-agent',
   embedding: { provider: 'local', dimensions: 384 },
 });
 
 await brain.encode({
-  content: 'Stripe API returned 429 above 100 req/s',
+  content: 'Stripe returns HTTP 429 above 100 req/s',
   source: 'direct-observation',
   tags: ['stripe', 'rate-limit'],
-  context: { task: 'debugging', domain: 'payments' },
-  affect: { valence: -0.4, arousal: 0.7, label: 'frustration' },
 });
 
-const memories = await brain.recall('stripe rate limits', {
-  limit: 5,
-  context: { task: 'debugging', domain: 'payments' },
-});
-
-const dream = await brain.dream();
-const briefing = await brain.greeting({ context: 'debugging stripe' });
+const memories = await brain.recall('stripe rate limit');
 
 await brain.waitForIdle();
 brain.close();
 ```
 
-## MCP Tools
+### Python
 
-Every Claude Code session gets these tools after `npx audrey install`:
+```bash
+pip install audrey-memory
+```
 
-- `memory_encode`
-- `memory_recall`
-- `memory_consolidate`
-- `memory_dream`
-- `memory_introspect`
-- `memory_resolve_truth`
-- `memory_export`
-- `memory_import`
-- `memory_forget`
-- `memory_decay`
-- `memory_status`
-- `memory_reflect`
-- `memory_greeting`
+```python
+from audrey_memory import Audrey
 
-## CLI
+brain = Audrey(
+    base_url="http://127.0.0.1:3487",
+    api_key="secret",
+    agent="support-agent",
+)
+
+memory_id = brain.encode(
+    "Stripe returns HTTP 429 above 100 req/s",
+    source="direct-observation",
+)
+results = brain.recall("stripe rate limit", limit=5)
+brain.close()
+```
+
+## Key Commands
 
 ```bash
 # Setup
-npx audrey init                 # Bootstrap Audrey with the default local-offline preset
-npx audrey init hosted-fast     # Hosted provider preset
-npx audrey init ci-mock         # Mock-provider preset for CI/smoke tests
-npx audrey init sidecar-prod    # REST/Docker sidecar preset
-npx audrey install              # Register MCP server with Claude Code
-npx audrey uninstall            # Remove MCP server registration
-npx audrey hooks install        # Wire Audrey into Claude Code hooks (automatic memory)
-npx audrey hooks uninstall      # Remove Audrey hooks
+npx audrey init
+npx audrey init hosted-fast
+npx audrey init ci-mock
+npx audrey init sidecar-prod
 
-# Health and monitoring
-npx audrey doctor               # Validate Node.js, SQLite, providers, hooks, and memory health
-npx audrey status               # Human-readable health report
-npx audrey status --json        # Machine-readable health output
-npx audrey status --json --fail-on-unhealthy  # CI gate
+# Claude Code integration
+npx audrey install
+npx audrey hooks install
+npx audrey hooks uninstall
+npx audrey uninstall
 
-# Session lifecycle (used by hooks automatically)
-npx audrey greeting             # Load identity, principles, mood
-npx audrey greeting "auth"      # With context-aware recall
-npx audrey recall "query"       # Semantic memory search (returns hook-compatible JSON)
-npx audrey reflect              # Consolidate learnings from stdin conversation + dream
-
-# Maintenance
-npx audrey dream                # Full consolidation + decay cycle
-npx audrey reembed              # Re-embed all memories after provider/dimension change
+# Health and maintenance
+npx audrey doctor
+npx audrey status
+npx audrey dream
+npx audrey reembed
 
 # Versioning
-npx audrey snapshot             # Export memories to timestamped JSON file
-npx audrey snapshot backup.json # Export to specific file
-npx audrey restore backup.json  # Restore from snapshot (re-embeds with current provider)
-npx audrey restore backup.json --force  # Overwrite existing memories
+npx audrey snapshot
+npx audrey restore backup.json --force
 
-# REST API server
-npx audrey serve                # Start HTTP server on port 3487
-npx audrey serve 8080           # Custom port
-```
-
-## Hooks Integration
-
-Audrey integrates directly into Claude Code's hook lifecycle for automatic, zero-config memory in every session:
-
-```bash
-npx audrey hooks install
-```
-
-This configures four hooks in `~/.claude/settings.json`:
-
-| Hook Event | Command | What Happens |
-|---|---|---|
-| **SessionStart** | `npx audrey greeting` | Loads identity, learned principles, current mood, and recent memories |
-| **UserPromptSubmit** | `npx audrey recall` | Semantic search on every prompt — injects relevant memories as context |
-| **Stop** | `npx audrey reflect` | Extracts lasting learnings from the conversation, then runs a dream cycle |
-| **PostCompact** | `npx audrey greeting` | Re-injects critical memories after context window compaction |
-
-With hooks installed, Claude Code sessions automatically wake up with context, recall relevant memories per-prompt, and consolidate learnings when the session ends. No manual tool calls needed.
-
-## REST API Server
-
-Turn Audrey into an HTTP service that any language or framework can use:
-
-```bash
-npx audrey serve           # Start on port 3487
-npx audrey serve 8080      # Custom port
-AUDREY_API_KEY=secret npx audrey serve  # With Bearer token auth
-```
-
-Endpoints:
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Liveness probe |
-| `GET` | `/status` | Memory stats (introspect) |
-| `POST` | `/encode` | Store a memory (`{ content, source, tags?, context?, affect? }`) |
-| `POST` | `/recall` | Semantic search (`{ query, limit?, context? }`) |
-| `POST` | `/dream` | Full consolidation + decay cycle |
-| `POST` | `/consolidate` | Run consolidation only |
-| `POST` | `/forget` | Forget by `{ id }` or `{ query }` |
-| `POST` | `/snapshot` | Export all memories as JSON |
-| `POST` | `/restore` | Wipe and reimport from snapshot |
-
-Example from any language:
-
-```bash
-# Store a memory
-curl -X POST http://localhost:3487/encode \
-  -H "Content-Type: application/json" \
-  -d '{"content": "The deploy failed due to OOM", "source": "direct-observation"}'
-
-# Search memories
-curl -X POST http://localhost:3487/recall \
-  -H "Content-Type: application/json" \
-  -d '{"query": "deploy failures", "limit": 5}'
-```
-
-## Docker
-
-Run Audrey as a containerized REST service with persistent local storage:
-
-```bash
+# Sidecar
+npx audrey serve
 docker compose up -d --build
 ```
 
-Default container behavior:
+## Benchmarks
 
-- binds `3487` on the host
-- stores Audrey data in the named volume `audrey-data`
-- serves on `0.0.0.0` inside the container
-- defaults to `AUDREY_EMBEDDING_PROVIDER=local` with `AUDREY_DEVICE=cpu`
-
-Useful overrides:
+Audrey ships with a benchmark harness and release gate:
 
 ```bash
-AUDREY_API_KEY=secret docker compose up -d --build
-AUDREY_EMBEDDING_PROVIDER=mock AUDREY_LLM_PROVIDER=mock docker compose up -d --build
-AUDREY_PUBLISHED_PORT=8080 docker compose up -d --build
+npm run bench:memory
+npm run bench:memory:check
 ```
 
-Smoke check:
+The benchmark suite measures:
 
-```bash
-curl http://localhost:3487/health
-curl -H "Authorization: Bearer secret" http://localhost:3487/health
-```
+- retrieval behavior
+- update and overwrite behavior
+- delete and abstain behavior
+- semantic and procedural merge behavior
 
-Container helpers:
+Current repo snapshot:
 
-```bash
-npm run docker:build
-npm run docker:up
-npm run docker:logs
-npm run docker:down
-```
+![Audrey local benchmark](docs/assets/benchmarks/local-benchmark.svg)
 
-## Versioning
+For detailed methodology, published comparison anchors, and generated reports, see [docs/benchmarking.md](docs/benchmarking.md).
 
-Audrey stores memories in SQLite with WAL mode, which isn't git-friendly. Instead, use JSON snapshots:
+## Production
 
-```bash
-# Save a checkpoint
-npx audrey snapshot
-
-# Commit it
-git add audrey-snapshot-*.json && git commit -m "memory checkpoint"
-
-# Restore on another machine or after a reset
-npx audrey restore audrey-snapshot-2026-03-24_15-30-00.json
-```
-
-Snapshots are human-readable, diffable, and provider-agnostic. Embeddings are re-generated on import, so you can switch providers (e.g., local to Gemini) and restore seamlessly.
-
-## Production Fit
-
-Audrey is strongest today in workflows where memory must stay local, reviewable, and durable:
-
-- **Financial services operations**: payments ops, fraud and dispute workflows, KYC/KYB review, internal policy assistants
-- **Healthcare operations**: care coordination, prior-auth workflows, intake and referral routing, internal staff knowledge assistants
-
-Audrey is a memory layer, not a compliance boundary. For regulated environments, pair it with application-level access control, encryption, retention, audit logging, and data-minimization rules.
+Audrey is strongest in workflows where memory must stay local, reviewable, and durable. It already fits well as a sidecar for internal agents in operational domains like financial services and healthcare operations, but it is a memory layer, not a compliance boundary.
 
 Production guide: [docs/production-readiness.md](docs/production-readiness.md)
 
-Industry demos:
+Examples:
 
 - [examples/fintech-ops-demo.js](examples/fintech-ops-demo.js)
 - [examples/healthcare-ops-demo.js](examples/healthcare-ops-demo.js)
+- [examples/stripe-demo.js](examples/stripe-demo.js)
 
-## Core Concepts
+## Environment
 
-### Memory Types
+Starter config:
 
-- **Episodic**: raw events and observations
-- **Semantic**: consolidated principles
-- **Procedural**: reusable workflows and actions
-- **Causal**: relationships that explain why something happened
+- [.env.example](.env.example)
+- [.env.docker.example](.env.docker.example)
 
-### Confidence
+Key environment variables:
 
-Audrey scores memories using source reliability, evidence agreement, recency decay, and retrieval reinforcement. That helps keep direct observations above guesses and keeps stale or weakly supported knowledge from dominating recall.
+- `AUDREY_DATA_DIR`
+- `AUDREY_EMBEDDING_PROVIDER`
+- `AUDREY_LLM_PROVIDER`
+- `AUDREY_DEVICE`
+- `AUDREY_API_KEY`
+- `AUDREY_HOST`
+- `AUDREY_PORT`
 
-### Dream Cycle
+## Documentation
 
-`brain.dream()` runs the full maintenance path:
-
-1. Consolidate related episodes into principles.
-2. Apply decay so low-value memories lose weight over time.
-3. Report memory health and current stats.
-
-### Contradiction Handling
-
-When evidence conflicts, Audrey tracks the contradiction instead of silently picking a winner. Resolutions can stay open, be marked resolved, or become context-dependent.
-
-## Configuration
-
-```js
-const brain = new Audrey({
-  dataDir: './audrey-data',
-  agent: 'my-agent',
-  embedding: {
-    provider: 'local', // mock | local | gemini | openai
-    dimensions: 384,
-    device: 'gpu',
-  },
-  llm: {
-    provider: 'anthropic', // mock | anthropic | openai
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  },
-  consolidation: {
-    minEpisodes: 3,
-  },
-  context: {
-    enabled: true,
-    weight: 0.3,
-  },
-  affect: {
-    enabled: true,
-    weight: 0.2,
-  },
-  decay: {
-    dormantThreshold: 0.1,
-  },
-});
-```
-
-## Operations
-
-Recommended production workflow:
-
-```bash
-# Health checks
-npx audrey status
-npx audrey status --json --fail-on-unhealthy
-
-# Scheduled maintenance
-npx audrey dream
-
-# Repair vector/index drift after provider or dimension changes
-npx audrey reembed
-
-# Version control your memories
-npx audrey snapshot
-npx audrey restore <file> --force
-
-# Run the benchmark harness
-npm run bench:memory
-
-# Fail CI if Audrey drops below benchmark guardrails
-npm run bench:memory:check
-```
-
-## Benchmarking
-
-Audrey now ships with a memory benchmark harness built for three purposes:
-
-- measure Audrey against naive local baselines on LongMemEval-style memory abilities plus privacy and abstention checks
-- measure Audrey on lifecycle operations that other memory systems usually hand-wave: update, overwrite, delete, merge, and abstain
-- keep Audrey grounded against published LoCoMo results from leading memory systems
-
-Run it with:
-
-```bash
-npm run bench:memory
-```
-
-Artifacts land in `benchmarks/output/` as JSON, SVG charts, and an HTML report.
-
-For CI and release gates:
-
-```bash
-npm run bench:memory:check
-```
-
-That command fails if Audrey drops below its minimum local score, local pass rate, or required margin over the strongest naive baseline.
-
-For track-specific runs:
-
-```bash
-npm run bench:memory:retrieval
-npm run bench:memory:operations
-```
-
-For committed GitHub-friendly charts:
-
-```bash
-npm run bench:memory:readme-assets
-```
-
-### README Snapshot
-
-Local Audrey-vs-baseline results:
-
-![Audrey local memory benchmark](docs/assets/benchmarks/local-benchmark.svg)
-
-Lifecycle operations benchmark:
-
-![Audrey memory operations benchmark](docs/assets/benchmarks/operations-benchmark.svg)
-
-Published comparison anchors from current LLM memory systems:
-
-![Published LLM memory benchmark comparison](docs/assets/benchmarks/published-memory-standards.svg)
-
-**Current deterministic CI snapshot** (`node benchmarks/run.js --provider mock --dimensions 64`):
-
-| Local track | Audrey | Best Baseline |
-|---|---|---|
-| Combined local benchmark | **100.0%** | 41.7% |
-| Retrieval capabilities | **100.0%** | 56.3% |
-| Memory operations | **100.0%** | 25.0% |
-
-Retrieval-family breakdown:
-
-| Category | Audrey | Vector Only | Best Baseline |
-|---|---|---|---|
-| Information Extraction | 100% | 100% | 100% |
-| Knowledge Updates | 100% | 50% | 50% |
-| Multi-Session Reasoning | 100% | 100% | 100% |
-| Temporal Reasoning | 100% | 100% | 100% |
-| Abstention | 100% | 50% | 50% |
-| Conflict Resolution | 100% | 50% | 50% |
-| Procedural Learning | 100% | 0% | 0% |
-| Privacy | 100% | 0% | 0% |
-
-Operation-family breakdown:
-
-| Operation | Audrey | Vector Only | Best Baseline |
-|---|---|---|---|
-| Update / Overwrite | 100% | 50% | 50% |
-| Delete + Abstain | 100% | 0% | 50% |
-| Semantic Merge | 100% | 0% | 0% |
-| Procedural Merge | 100% | 0% | 0% |
-
-Published comparison anchors from the field (different benchmarks and conditions - included for field context, not direct comparison):
-
-| System | Benchmark | Score | What it represents |
-|---|---|---|---|
-| **Audrey** | Internal retrieval + operations benchmark | **100.0%** | Update, overwrite, delete, merge, abstention, consolidation, privacy |
-| MIRIX | Published LoCoMo | 85.4% | Typed multimodal memory |
-| Letta Filesystem | Published LoCoMo | 74.0% | Context-engineering |
-| Mem0 Graph Memory | Published LoCoMo | 68.5% | Graph memory |
-| Mem0 | Published LoCoMo | 66.9% | Production baseline |
-
-Primary comparison sources:
-
-- [MIRIX paper](https://arxiv.org/abs/2507.07957)
-- [Mem0 paper](https://arxiv.org/abs/2504.19413)
-- [Letta benchmark write-up](https://www.letta.com/blog/benchmarking-ai-agent-memory)
-- [LongMemEval paper](https://arxiv.org/abs/2410.10813)
-
-Benchmark guide: [docs/benchmarking.md](docs/benchmarking.md)
-
-## Repository
-
-- Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Security policy: [SECURITY.md](SECURITY.md)
-- CI workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
-- Benchmarking guide: [docs/benchmarking.md](docs/benchmarking.md)
+- [docs/benchmarking.md](docs/benchmarking.md)
+- [docs/production-readiness.md](docs/production-readiness.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [SECURITY.md](SECURITY.md)
 
 ## Development
 
 ```bash
 npm ci
 npm test
-npm run pack:check
-npm run bench:memory
-npm run bench:memory:retrieval
-npm run bench:memory:operations
 npm run bench:memory:check
-npm run bench:memory:readme-assets
+npm run pack:check
+python -m unittest discover -s python/tests -v
+python -m build --no-isolation python
 ```
-
-Current validated baseline:
-
-- `npm test`
-- `npm run pack:check`
-- `npm run bench:memory`
-- `npm run bench:memory:retrieval`
-- `npm run bench:memory:operations`
-- `npm run bench:memory:check`
-- `npm run bench:memory:readme-assets`
 
 ## License
 

@@ -1,5 +1,8 @@
 node_modules/
+.npm-cache/
 audrey-data/
+.tmp/
+.tmp-vitest/
 *.db
 *.db-wal
 *.db-shm
