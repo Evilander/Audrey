@@ -11,7 +11,9 @@ import {
   VERSION,
   SERVER_NAME,
   buildAudreyConfig,
+  buildInitEnv,
   buildInstallArgs,
+  listInitPresets,
   resolveDataDir,
   resolveEmbeddingProvider,
   resolveLLMProvider,
@@ -426,10 +428,19 @@ async function recall() {
       process.exit(0);
     }
 
-    const lines = results.map(r => {
+    // Budget: cap total injected context to ~2000 chars (~500 tokens) to avoid bloating the prompt
+    const maxTotalChars = 2000;
+    const lines = [];
+    let totalChars = 0;
+    for (const r of results) {
       const type = r.type === 'semantic' ? 'principle' : r.type === 'procedural' ? 'procedure' : 'memory';
-      return `[${type}] ${r.content}`;
-    });
+      const maxContentChars = Math.min(r.content.length, maxTotalChars - totalChars - 20);
+      if (maxContentChars <= 0) break;
+      const content = r.content.length > maxContentChars ? r.content.slice(0, maxContentChars) + '...' : r.content;
+      const line = `[${type}] ${content}`;
+      lines.push(line);
+      totalChars += line.length;
+    }
 
     const output = {
       additionalContext: `Relevant memories from Audrey:\n\n${lines.join('\n\n')}`,
@@ -696,7 +707,16 @@ async function restore() {
   }
 }
 
-function install() {
+function hasClaudeCli(execFn = execFileSync) {
+  try {
+    execFn('claude', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function install(env = process.env) {
   try {
     execFileSync('claude', ['--version'], { stdio: 'ignore' });
   } catch {
@@ -704,9 +724,9 @@ function install() {
     process.exit(1);
   }
 
-  const dataDir = resolveDataDir(process.env);
-  const resolvedEmbedding = resolveEmbeddingProvider(process.env, process.env.AUDREY_EMBEDDING_PROVIDER);
-  const resolvedLlm = resolveLLMProvider(process.env, process.env.AUDREY_LLM_PROVIDER);
+  const dataDir = resolveDataDir(env);
+  const resolvedEmbedding = resolveEmbeddingProvider(env, env.AUDREY_EMBEDDING_PROVIDER);
+  const resolvedLlm = resolveLLMProvider(env, env.AUDREY_LLM_PROVIDER);
   if (resolvedEmbedding.provider === 'gemini') {
     console.log('Using Gemini embeddings (3072d)');
   } else if (resolvedEmbedding.provider === 'local') {
@@ -733,7 +753,7 @@ function install() {
     // Not registered yet.
   }
 
-  const args = buildInstallArgs(process.env);
+  const args = buildInstallArgs(env);
   try {
     execFileSync('claude', args, { stdio: 'inherit' });
   } catch {
@@ -787,6 +807,186 @@ REST API server (any language, any framework):
 Data stored in: ${dataDir}
 Verify: claude mcp list
 `);
+}
+
+export function resolveInitProfilePath(dataDir = resolveDataDir(process.env)) {
+  return resolve(dataDir, '..', 'init-profile.json');
+}
+
+function initPresetByName(name = 'local-offline') {
+  const preset = listInitPresets().find(entry => entry.name === name);
+  if (!preset) {
+    const available = listInitPresets()
+      .map(entry => `  ${entry.name.padEnd(14)} ${entry.description}`)
+      .join('\n');
+    throw new Error(`Unsupported init preset: ${name}\nAvailable presets:\n${available}`);
+  }
+  return preset;
+}
+
+function buildInitWarnings(presetName, initEnv, resolvedEmbedding, resolvedLlm, claudeAvailable, shouldInstall) {
+  const warnings = [];
+
+  if (presetName === 'hosted-fast' && resolvedEmbedding.provider === 'local') {
+    warnings.push('No hosted embedding key detected; falling back to local embeddings.');
+  }
+
+  if (presetName === 'hosted-fast' && !resolvedLlm) {
+    warnings.push('No hosted LLM key detected; consolidation and contradiction handling will use heuristics.');
+  }
+
+  if (presetName === 'sidecar-prod' && !initEnv.AUDREY_API_KEY) {
+    warnings.push('AUDREY_API_KEY is not set; configure one before exposing Audrey beyond localhost.');
+  }
+
+  if (shouldInstall && !claudeAvailable) {
+    warnings.push('Claude Code CLI was not found; MCP registration and hooks were skipped.');
+  }
+
+  return warnings;
+}
+
+function buildInitNextSteps({ preset, profile, installedMcp, installedHooks, claudeAvailable, shouldInstall }) {
+  const steps = ['npx audrey doctor'];
+
+  if (preset.surface === 'claude') {
+    if (installedMcp) {
+      steps.push('claude mcp list');
+    } else if (shouldInstall && !claudeAvailable) {
+      steps.push('Install Claude Code, then rerun: npx audrey init ' + preset.name);
+    } else {
+      steps.push('npx audrey install');
+    }
+
+    if (!installedHooks && preset.installHooks) {
+      steps.push('npx audrey hooks install');
+    }
+  }
+
+  if (preset.name === 'ci-mock') {
+    steps.push('AUDREY_EMBEDDING_PROVIDER=mock AUDREY_LLM_PROVIDER=mock npx audrey serve');
+  }
+
+  if (preset.name === 'sidecar-prod') {
+    steps.push('docker compose up -d --build');
+    steps.push(`AUDREY_API_KEY=${profile.apiKeyConfigured ? '[configured]' : 'set-me'} npx audrey serve`);
+  }
+
+  return steps;
+}
+
+function formatProviderSummary(label, config) {
+  if (!config) return `${label}: disabled`;
+  const suffix = config.provider === 'local' && config.device
+    ? ` (${config.dimensions}d, device=${config.device})`
+    : config.dimensions
+      ? ` (${config.dimensions}d)`
+      : '';
+  return `${label}: ${config.provider}${suffix}`;
+}
+
+export function runInitCommand({
+  argv = process.argv,
+  env = process.env,
+  out = console.log,
+  installFn = install,
+  hooksInstallFn = hooksInstall,
+  execFn = execFileSync,
+  writeFile = writeFileSync,
+  mkdir = mkdirSync,
+} = {}) {
+  const args = argv.slice(3);
+  const presetArg = args.find(arg => !arg.startsWith('-')) || 'local-offline';
+  const dryRun = args.includes('--dry-run');
+  const noHooks = args.includes('--no-hooks');
+  const noInstall = args.includes('--no-install');
+
+  const preset = initPresetByName(presetArg);
+  const initEnv = buildInitEnv(env, preset.name);
+  const dataDir = resolveDataDir(initEnv);
+  const profilePath = resolveInitProfilePath(dataDir);
+  const claudeAvailable = hasClaudeCli(execFn);
+  const shouldInstall = preset.surface === 'claude' && !noInstall;
+  const installedMcp = shouldInstall && claudeAvailable && !dryRun;
+  const installedHooks = installedMcp && preset.installHooks && !noHooks;
+  const embedding = resolveEmbeddingProvider(initEnv, initEnv.AUDREY_EMBEDDING_PROVIDER);
+  const llm = resolveLLMProvider(initEnv, initEnv.AUDREY_LLM_PROVIDER);
+  const warnings = buildInitWarnings(preset.name, initEnv, embedding, llm, claudeAvailable, shouldInstall);
+
+  const profile = {
+    version: VERSION,
+    preset: preset.name,
+    description: preset.description,
+    surface: preset.surface,
+    createdAt: new Date().toISOString(),
+    dataDir,
+    profilePath,
+    claudeAvailable,
+    mcpRegistered: installedMcp,
+    hooksInstalled: installedHooks,
+    dryRun,
+    apiKeyConfigured: Boolean(initEnv.AUDREY_API_KEY),
+    embedding,
+    llm: llm ? { provider: llm.provider } : null,
+    recommendedNextSteps: [],
+    warnings,
+  };
+
+  profile.recommendedNextSteps = buildInitNextSteps({
+    preset,
+    profile,
+    installedMcp,
+    installedHooks,
+    claudeAvailable,
+    shouldInstall,
+  });
+
+  if (!dryRun) {
+    mkdir(dataDir, { recursive: true });
+    mkdir(resolve(dataDir, '..'), { recursive: true });
+    writeFile(profilePath, JSON.stringify(profile, null, 2) + '\n');
+    if (installedMcp) {
+      installFn(initEnv);
+    }
+    if (installedHooks) {
+      hooksInstallFn();
+    }
+  }
+
+  out(`[audrey] Init preset: ${preset.name}`);
+  out(`  ${preset.description}`);
+  out(`  Data directory: ${dataDir}`);
+  out(`  Profile: ${profilePath}${dryRun ? ' (dry run)' : ''}`);
+  out(`  ${formatProviderSummary('Embeddings', embedding)}`);
+  out(`  ${formatProviderSummary('LLM', llm)}`);
+  out(`  Claude Code CLI: ${claudeAvailable ? 'available' : 'not found'}`);
+  if (preset.surface === 'claude') {
+    out(`  MCP registration: ${installedMcp ? 'installed' : shouldInstall ? 'skipped' : 'not requested'}`);
+    out(`  Hooks: ${installedHooks ? 'installed' : preset.installHooks && !noHooks ? 'skipped' : 'not requested'}`);
+  }
+
+  if (warnings.length > 0) {
+    out('');
+    out('Warnings:');
+    for (const warning of warnings) {
+      out(`  - ${warning}`);
+    }
+  }
+
+  out('');
+  out('Next steps:');
+  for (const step of profile.recommendedNextSteps) {
+    out(`  - ${step}`);
+  }
+
+  return {
+    preset: preset.name,
+    profile,
+    installedMcp,
+    installedHooks,
+    dryRun,
+    warnings,
+  };
 }
 
 function uninstall() {
@@ -1180,8 +1380,224 @@ async function main() {
 
 const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
+async function doctor() {
+  const checks = [];
+  const pass = (name, detail) => checks.push({ name, status: 'pass', detail });
+  const warn = (name, detail) => checks.push({ name, status: 'warn', detail });
+  const fail = (name, detail) => checks.push({ name, status: 'fail', detail });
+
+  // 1. Node.js version
+  const nodeVersion = process.version;
+  const major = parseInt(nodeVersion.slice(1), 10);
+  if (major >= 20) {
+    pass('Node.js', `${nodeVersion} (>= 20 required)`);
+  } else {
+    fail('Node.js', `${nodeVersion} — Audrey requires Node.js >= 20`);
+  }
+
+  // 2. Data directory
+  const dataDir = resolveDataDir(process.env);
+  if (existsSync(dataDir)) {
+    pass('Data directory', `${dataDir} (exists)`);
+  } else {
+    warn('Data directory', `${dataDir} (will be created on first use)`);
+  }
+
+  // 3. SQLite access
+  try {
+    const { createDatabase, closeDatabase: closeDb } = await import('../src/db.js');
+    const tmpDir = join(dataDir, '.doctor-check');
+    mkdirSync(tmpDir, { recursive: true });
+    const { db } = createDatabase(tmpDir, { dimensions: 8 });
+    closeDb(db);
+    const { rmSync } = await import('node:fs');
+    rmSync(tmpDir, { recursive: true, force: true });
+    pass('SQLite', 'better-sqlite3 + sqlite-vec loaded successfully');
+  } catch (err) {
+    fail('SQLite', `Failed: ${err.message}`);
+  }
+
+  // 4. Embedding provider
+  const embedding = resolveEmbeddingProvider(process.env, process.env.AUDREY_EMBEDDING_PROVIDER);
+  if (embedding.provider === 'local') {
+    pass('Embeddings', `local (${embedding.dimensions}d, device=${embedding.device || 'gpu'}) — offline-capable`);
+  } else if (embedding.provider === 'gemini') {
+    pass('Embeddings', `gemini (${embedding.dimensions}d) — GOOGLE_API_KEY detected`);
+  } else if (embedding.provider === 'openai') {
+    if (process.env.OPENAI_API_KEY) {
+      pass('Embeddings', `openai (${embedding.dimensions}d) — OPENAI_API_KEY detected`);
+    } else {
+      fail('Embeddings', 'openai selected but OPENAI_API_KEY not set');
+    }
+  } else {
+    warn('Embeddings', `mock (${embedding.dimensions}d) — not suitable for production`);
+  }
+
+  // 5. LLM provider
+  const llm = resolveLLMProvider(process.env, process.env.AUDREY_LLM_PROVIDER);
+  if (llm?.provider === 'anthropic') {
+    pass('LLM', 'anthropic — consolidation and contradiction detection enabled');
+  } else if (llm?.provider === 'openai') {
+    pass('LLM', 'openai — consolidation and contradiction detection enabled');
+  } else {
+    warn('LLM', 'none — consolidation will use heuristics only (set ANTHROPIC_API_KEY for LLM-powered features)');
+  }
+
+  // 6. MCP registration
+  try {
+    const claudeJsonPath = join(homedir(), '.claude.json');
+    if (existsSync(claudeJsonPath)) {
+      const claudeConfig = JSON.parse(readFileSync(claudeJsonPath, 'utf-8'));
+      if (SERVER_NAME in (claudeConfig.mcpServers || {})) {
+        pass('MCP registration', `"${SERVER_NAME}" registered in Claude Code`);
+      } else {
+        warn('MCP registration', `Not registered — run "npx audrey install"`);
+      }
+    } else {
+      warn('MCP registration', 'Claude Code config not found — install Claude Code first');
+    }
+  } catch {
+    warn('MCP registration', 'Could not read Claude Code config');
+  }
+
+  // 7. Hooks
+  try {
+    const settingsPath = join(homedir(), '.claude', 'settings.json');
+    if (existsSync(settingsPath)) {
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      const hasAudreyHooks = Object.values(settings.hooks || {}).some(entries =>
+        entries.some(entry => entry.hooks?.some(h => h.command?.includes('npx audrey')))
+      );
+      if (hasAudreyHooks) {
+        pass('Hooks', 'Audrey hooks installed in Claude Code settings');
+      } else {
+        warn('Hooks', 'Not installed — run "npx audrey hooks install" for automatic memory');
+      }
+    } else {
+      warn('Hooks', 'Claude Code settings not found');
+    }
+  } catch {
+    warn('Hooks', 'Could not read Claude Code settings');
+  }
+
+  // 8. Memory health (if data exists)
+  if (existsSync(dataDir)) {
+    try {
+      const storedDims = readStoredDimensions(dataDir);
+      const dims = storedDims || 8;
+      const audrey = new Audrey({ dataDir, agent: 'doctor', embedding: { provider: 'mock', dimensions: dims } });
+      const health = audrey.memoryStatus();
+      const stats = audrey.introspect();
+      audrey.close();
+
+      if (health.healthy) {
+        pass('Memory health', `${stats.episodic} episodic, ${stats.semantic} semantic, ${stats.procedural} procedural — healthy`);
+      } else {
+        warn('Memory health', `Index drift detected — run "npx audrey reembed"`);
+      }
+
+      if (storedDims && storedDims !== embedding.dimensions) {
+        warn('Dimension match', `Stored: ${storedDims}d, current provider: ${embedding.dimensions}d — run "npx audrey reembed" to realign`);
+      } else if (storedDims) {
+        pass('Dimension match', `${storedDims}d (stored matches provider)`);
+      }
+    } catch (err) {
+      fail('Memory health', `Could not read database: ${err.message}`);
+    }
+  }
+
+  // Print results
+  console.log(`\nAudrey v${VERSION} — Doctor\n`);
+  let hasFailure = false;
+  for (const check of checks) {
+    const icon = check.status === 'pass' ? '+' : check.status === 'warn' ? '~' : 'X';
+    const label = check.status === 'pass' ? 'OK' : check.status === 'warn' ? 'WARN' : 'FAIL';
+    console.log(`  [${icon}] ${label.padEnd(4)} ${check.name}: ${check.detail}`);
+    if (check.status === 'fail') hasFailure = true;
+  }
+  console.log('');
+
+  if (hasFailure) {
+    console.log('Some checks failed. Fix the issues above and run "npx audrey doctor" again.');
+    process.exit(1);
+  } else {
+    const warns = checks.filter(c => c.status === 'warn').length;
+    if (warns > 0) {
+      console.log(`All critical checks passed. ${warns} warning(s) — see above for optional improvements.`);
+    } else {
+      console.log('All checks passed. Audrey is ready.');
+    }
+  }
+}
+
+function showHelp() {
+  console.log(`Audrey v${VERSION} – Persistent memory for AI agents
+
+Usage: npx audrey <command> [options]
+
+Setup:
+  init [preset] [--no-hooks] [--no-install] [--dry-run]
+                       Bootstrap Audrey with a named setup preset
+  install              Register MCP server with Claude Code
+  uninstall            Remove MCP server registration
+  hooks install        Wire automatic memory into Claude Code session lifecycle
+  hooks uninstall      Remove Audrey hooks from settings
+
+Health & Monitoring:
+  doctor               Validate Node.js, SQLite, providers, hooks, memory health
+  status               Human-readable health report
+  status --json        Machine-readable health output
+  status --json --fail-on-unhealthy   CI gate
+
+Session Lifecycle (used by hooks automatically):
+  greeting [context]   Load identity, principles, mood
+  recall [query]       Semantic memory search
+  reflect              Consolidate learnings from stdin conversation + dream
+
+Maintenance:
+  dream                Full consolidation + decay cycle
+  reembed              Re-embed all memories after provider/dimension change
+
+Versioning:
+  snapshot [file]      Export memories to timestamped JSON file
+  restore <file>       Restore from snapshot (--force to overwrite)
+
+Server:
+  serve [port]         Start REST API server (default: 3487)
+  dashboard [port]     Start server and open memory dashboard
+
+Init presets:
+  local-offline        Claude Code with local embeddings, no hosted keys required
+  hosted-fast          Claude Code with hosted providers detected from env
+  ci-mock              Mock providers for CI and smoke tests
+  sidecar-prod         REST or Docker sidecar with operator-friendly defaults
+
+Options:
+  --help, -h           Show this help message
+  --version, -v        Show version number
+
+Documentation: https://github.com/Evilander/Audrey
+`);
+}
+
 if (isDirectRun) {
-  if (subcommand === 'install') {
+  if (subcommand === '--help' || subcommand === '-h' || subcommand === 'help') {
+    showHelp();
+  } else if (subcommand === '--version' || subcommand === '-v' || subcommand === 'version') {
+    console.log(VERSION);
+  } else if (subcommand === 'doctor') {
+    doctor().catch(err => {
+      console.error('[audrey] doctor failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'init') {
+    try {
+      runInitCommand();
+    } catch (err) {
+      console.error('[audrey] init failed:', err.message || err);
+      process.exit(1);
+    }
+  } else if (subcommand === 'install') {
     install();
   } else if (subcommand === 'uninstall') {
     uninstall();
@@ -1256,7 +1672,12 @@ if (isDirectRun) {
     });
   } else if (subcommand === 'status') {
     status();
+  } else if (subcommand) {
+    console.error(`Unknown command: ${subcommand}\n`);
+    showHelp();
+    process.exit(1);
   } else {
+    // No subcommand: start MCP server (for Claude Code to invoke via stdio)
     main().catch(err => {
       console.error('[audrey-mcp] fatal:', err);
       process.exit(1);

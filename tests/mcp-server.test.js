@@ -4,7 +4,16 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { Audrey } from '../src/index.js';
 import { readStoredDimensions } from '../src/db.js';
-import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, MCP_ENTRYPOINT, SERVER_NAME, VERSION } from '../mcp-server/config.js';
+import {
+  buildAudreyConfig,
+  buildInitEnv,
+  buildInstallArgs,
+  DEFAULT_DATA_DIR,
+  listInitPresets,
+  MCP_ENTRYPOINT,
+  SERVER_NAME,
+  VERSION,
+} from '../mcp-server/config.js';
 import {
   MAX_MEMORY_CONTENT_LENGTH,
   buildHooksConfig,
@@ -17,7 +26,9 @@ import {
   memoryRecallToolSchema,
   registerShutdownHandlers,
   registerDreamTool,
+  resolveInitProfilePath,
   resolveSnapshotPath,
+  runInitCommand,
   runStatusCommand,
   validateForgetSelection,
 } from '../mcp-server/index.js';
@@ -184,6 +195,191 @@ describe('MCP CLI: buildInstallArgs', () => {
     const nameIdx = args.indexOf(SERVER_NAME);
     const firstEnvIdx = args.indexOf('-e');
     expect(nameIdx).toBeLessThan(firstEnvIdx);
+  });
+});
+
+describe('MCP CLI: init presets', () => {
+  const envBackup = {};
+  const envKeys = [
+    'AUDREY_DATA_DIR', 'AUDREY_AGENT', 'AUDREY_EMBEDDING_PROVIDER',
+    'AUDREY_LLM_PROVIDER', 'AUDREY_DEVICE', 'GOOGLE_API_KEY',
+    'GEMINI_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
+    'AUDREY_HOST', 'AUDREY_PORT', 'AUDREY_API_KEY',
+  ];
+
+  beforeEach(() => {
+    for (const key of envKeys) {
+      envBackup[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of envKeys) {
+      if (envBackup[key] !== undefined) process.env[key] = envBackup[key];
+      else delete process.env[key];
+    }
+  });
+
+  it('lists the supported init presets', () => {
+    expect(listInitPresets().map(p => p.name)).toEqual([
+      'local-offline',
+      'hosted-fast',
+      'ci-mock',
+      'sidecar-prod',
+    ]);
+  });
+
+  it('builds a local-offline init env without hosted providers', () => {
+    const initEnv = buildInitEnv({
+      GOOGLE_API_KEY: 'google-test',
+      ANTHROPIC_API_KEY: 'anthropic-test',
+      AUDREY_DEVICE: 'cpu',
+    }, 'local-offline');
+
+    expect(initEnv.AUDREY_EMBEDDING_PROVIDER).toBe('local');
+    expect(initEnv.AUDREY_DEVICE).toBe('cpu');
+    expect(initEnv.GOOGLE_API_KEY).toBeUndefined();
+    expect(initEnv.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(initEnv.AUDREY_AGENT).toBe('claude-code');
+  });
+
+  it('builds a hosted-fast env using detected hosted providers', () => {
+    const initEnv = buildInitEnv({
+      GOOGLE_API_KEY: 'google-test',
+      ANTHROPIC_API_KEY: 'anthropic-test',
+    }, 'hosted-fast');
+
+    expect(initEnv.AUDREY_EMBEDDING_PROVIDER).toBe('gemini');
+    expect(initEnv.AUDREY_LLM_PROVIDER).toBe('anthropic');
+    expect(initEnv.AUDREY_AGENT).toBe('claude-code');
+  });
+
+  it('builds a ci-mock env with mock providers', () => {
+    const initEnv = buildInitEnv({
+      OPENAI_API_KEY: 'openai-test',
+      ANTHROPIC_API_KEY: 'anthropic-test',
+    }, 'ci-mock');
+
+    expect(initEnv.AUDREY_EMBEDDING_PROVIDER).toBe('mock');
+    expect(initEnv.AUDREY_LLM_PROVIDER).toBe('mock');
+    expect(initEnv.OPENAI_API_KEY).toBeUndefined();
+    expect(initEnv.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(initEnv.AUDREY_AGENT).toBe('audrey-ci');
+  });
+
+  it('builds a sidecar-prod env with serving defaults', () => {
+    const initEnv = buildInitEnv({}, 'sidecar-prod');
+
+    expect(initEnv.AUDREY_AGENT).toBe('audrey-sidecar');
+    expect(initEnv.AUDREY_HOST).toBe('0.0.0.0');
+    expect(initEnv.AUDREY_PORT).toBe('3487');
+    expect(initEnv.AUDREY_EMBEDDING_PROVIDER).toBe('local');
+  });
+});
+
+describe('MCP CLI: init command', () => {
+  it('resolves the init profile path next to the data directory', () => {
+    expect(resolveInitProfilePath('/tmp/audrey/data')).toBe(path.resolve('/tmp/audrey/init-profile.json'));
+  });
+
+  it('bootstraps the common Claude path and writes a profile', () => {
+    const lines = [];
+    const installFn = vi.fn();
+    const hooksInstallFn = vi.fn();
+    const writeFile = vi.fn();
+    const mkdir = vi.fn();
+    const execFn = vi.fn();
+
+    const result = runInitCommand({
+      argv: ['node', 'mcp-server/index.js', 'init', 'local-offline'],
+      env: { AUDREY_DATA_DIR: '/tmp/audrey-data', AUDREY_DEVICE: 'cpu' },
+      out: line => lines.push(line),
+      installFn,
+      hooksInstallFn,
+      execFn,
+      writeFile,
+      mkdir,
+    });
+
+    expect(result.preset).toBe('local-offline');
+    expect(result.installedMcp).toBe(true);
+    expect(result.installedHooks).toBe(true);
+    expect(installFn).toHaveBeenCalledOnce();
+    expect(hooksInstallFn).toHaveBeenCalledOnce();
+    expect(writeFile).toHaveBeenCalledOnce();
+    expect(mkdir).toHaveBeenCalled();
+    expect(lines.join('\n')).toContain('Init preset: local-offline');
+    expect(lines.join('\n')).toContain('npx audrey doctor');
+
+    const profile = JSON.parse(writeFile.mock.calls[0][1]);
+    expect(profile.preset).toBe('local-offline');
+    expect(profile.embedding.provider).toBe('local');
+    expect(profile.hooksInstalled).toBe(true);
+  });
+
+  it('supports dry runs without side effects', () => {
+    const installFn = vi.fn();
+    const hooksInstallFn = vi.fn();
+    const writeFile = vi.fn();
+    const mkdir = vi.fn();
+    const execFn = vi.fn(() => {
+      throw new Error('missing claude');
+    });
+
+    const result = runInitCommand({
+      argv: ['node', 'mcp-server/index.js', 'init', 'hosted-fast', '--dry-run'],
+      env: { AUDREY_DATA_DIR: '/tmp/audrey-data' },
+      installFn,
+      hooksInstallFn,
+      execFn,
+      writeFile,
+      mkdir,
+    });
+
+    expect(result.dryRun).toBe(true);
+    expect(result.installedMcp).toBe(false);
+    expect(installFn).not.toHaveBeenCalled();
+    expect(hooksInstallFn).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(mkdir).not.toHaveBeenCalled();
+  });
+
+  it('skips hooks when requested', () => {
+    const hooksInstallFn = vi.fn();
+
+    const result = runInitCommand({
+      argv: ['node', 'mcp-server/index.js', 'init', 'local-offline', '--no-hooks'],
+      env: { AUDREY_DATA_DIR: '/tmp/audrey-data' },
+      installFn: vi.fn(),
+      hooksInstallFn,
+      execFn: vi.fn(),
+      writeFile: vi.fn(),
+      mkdir: vi.fn(),
+    });
+
+    expect(result.installedHooks).toBe(false);
+    expect(hooksInstallFn).not.toHaveBeenCalled();
+  });
+
+  it('does not attempt Claude registration for sidecar-prod', () => {
+    const installFn = vi.fn();
+
+    const result = runInitCommand({
+      argv: ['node', 'mcp-server/index.js', 'init', 'sidecar-prod'],
+      env: { AUDREY_DATA_DIR: '/tmp/audrey-data' },
+      installFn,
+      hooksInstallFn: vi.fn(),
+      execFn: vi.fn(() => {
+        throw new Error('missing claude');
+      }),
+      writeFile: vi.fn(),
+      mkdir: vi.fn(),
+    });
+
+    expect(result.installedMcp).toBe(false);
+    expect(result.profile.surface).toBe('sidecar');
+    expect(installFn).not.toHaveBeenCalled();
   });
 });
 

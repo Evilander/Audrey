@@ -4,14 +4,14 @@
 [![npm version](https://img.shields.io/npm/v/audrey.svg)](https://www.npmjs.com/package/audrey)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Persistent memory for Claude Code and AI agents. Two commands, every session remembers.
+Persistent memory for Claude Code and AI agents. One command to bootstrap, then every session remembers.
 
 ```bash
-npx audrey install          # 13 MCP memory tools
-npx audrey hooks install    # automatic memory in every session
+npx audrey init               # local-offline preset: install MCP + hooks
+npx audrey init hosted-fast   # prefer hosted providers detected from env
 ```
 
-That's it. Claude Code now wakes up knowing what happened yesterday, recalls relevant context per-prompt, and consolidates learnings when the session ends. No cloud, no config files, no infrastructure — one SQLite file.
+That is the fast path. Audrey can still be installed manually, but `init` is the intended first-run experience. Claude Code now wakes up knowing what happened yesterday, recalls relevant context per-prompt, and consolidates learnings when the session ends. No cloud, no config files, no infrastructure – one SQLite file.
 
 Audrey also works as a standalone SDK, MCP server, and REST API for any AI agent framework.
 
@@ -58,8 +58,22 @@ Audrey models memory as a working system instead of a filing cabinet.
 ### MCP Server for Claude Code
 
 ```bash
-npx audrey install          # Register 13 MCP memory tools
-npx audrey hooks install    # Wire automatic memory into session lifecycle
+npx audrey init               # local-offline preset: register MCP + install hooks
+npx audrey doctor             # verify providers, hooks, and memory health
+```
+
+Available setup presets:
+
+- `local-offline` -> local embeddings, no hosted keys required, installs Claude hooks
+- `hosted-fast` -> uses hosted providers detected from your environment, installs Claude hooks
+- `ci-mock` -> mock providers for smoke tests and CI
+- `sidecar-prod` -> REST or Docker sidecar defaults for operator-managed deployment
+
+If you want the old explicit flow, it still works:
+
+```bash
+npx audrey install
+npx audrey hooks install
 ```
 
 Audrey auto-detects providers from your environment:
@@ -158,12 +172,17 @@ Every Claude Code session gets these tools after `npx audrey install`:
 
 ```bash
 # Setup
+npx audrey init                 # Bootstrap Audrey with the default local-offline preset
+npx audrey init hosted-fast     # Hosted provider preset
+npx audrey init ci-mock         # Mock-provider preset for CI/smoke tests
+npx audrey init sidecar-prod    # REST/Docker sidecar preset
 npx audrey install              # Register MCP server with Claude Code
 npx audrey uninstall            # Remove MCP server registration
 npx audrey hooks install        # Wire Audrey into Claude Code hooks (automatic memory)
 npx audrey hooks uninstall      # Remove Audrey hooks
 
 # Health and monitoring
+npx audrey doctor               # Validate Node.js, SQLite, providers, hooks, and memory health
 npx audrey status               # Human-readable health report
 npx audrey status --json        # Machine-readable health output
 npx audrey status --json --fail-on-unhealthy  # CI gate
