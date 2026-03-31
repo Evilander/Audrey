@@ -2,6 +2,8 @@
 
 Audrey is ready to be the memory layer inside a production agent system, but it is not a complete regulated-platform package by itself. Treat it as stateful infrastructure: pin providers, isolate tenants, monitor health, and wrap it with the controls your environment requires.
 
+First contact should now go through `npx audrey init sidecar-prod` for the sidecar path or `npx audrey init` for the default Claude Code path, then `npx audrey doctor` before exposing Audrey to real traffic.
+
 ## Best Vertical Fit
 
 ### 1. Financial Services Operations
@@ -100,6 +102,7 @@ That keeps Audrey focused on memory integrity while the host system owns complia
 Audrey now ships with a first-party container path for the REST API:
 
 ```bash
+npx audrey init sidecar-prod
 docker compose up -d --build
 ```
 
