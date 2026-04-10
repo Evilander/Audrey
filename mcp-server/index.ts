@@ -135,6 +135,19 @@ interface StatusReport {
 // CLI subcommands
 // ---------------------------------------------------------------------------
 
+async function serveHttp(): Promise<void> {
+  const { startServer } = await import('../src/server.js');
+  const config = buildAudreyConfig();
+  const port = parseInt(process.env.AUDREY_PORT || '7437', 10);
+  const apiKey = process.env.AUDREY_API_KEY;
+
+  const server = await startServer({ port, config, apiKey });
+  console.error(`[audrey-http] v${VERSION} serving on port ${server.port}`);
+  if (apiKey) {
+    console.error('[audrey-http] API key authentication enabled');
+  }
+}
+
 async function reembed(): Promise<void> {
   const dataDir = resolveDataDir(process.env);
   const explicit = process.env['AUDREY_EMBEDDING_PROVIDER'];
@@ -876,6 +889,11 @@ if (isDirectRun) {
   } else if (subcommand === 'reflect') {
     reflect().catch(err => {
       console.error('[audrey] reflect failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'serve') {
+    serveHttp().catch(err => {
+      console.error('[audrey] serve failed:', err);
       process.exit(1);
     });
   } else if (subcommand === 'status') {
