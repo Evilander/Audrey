@@ -5,7 +5,7 @@
 // Run: node examples/stripe-demo.js
 // No external dependencies required (uses mock embeddings).
 
-import { Audrey } from '../src/index.js';
+import { Audrey } from '../dist/src/index.js';
 
 async function demo() {
   console.log('=== Audrey Demo: Stripe Rate Limit Learning ===\n');
