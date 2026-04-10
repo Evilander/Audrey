@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { forgetMemory, forgetByQuery, purgeMemories } from '../src/forget.js';
-import { encodeEpisode } from '../src/encode.js';
-import { recall } from '../src/recall.js';
-import { createDatabase, closeDatabase } from '../src/db.js';
-import { MockEmbeddingProvider } from '../src/embedding.js';
-import { generateId } from '../src/ulid.js';
+import { forgetMemory, forgetByQuery, purgeMemories } from '../dist/src/forget.js';
+import { encodeEpisode } from '../dist/src/encode.js';
+import { recall } from '../dist/src/recall.js';
+import { createDatabase, closeDatabase } from '../dist/src/db.js';
+import { MockEmbeddingProvider } from '../dist/src/embedding.js';
+import { generateId } from '../dist/src/ulid.js';
 import { existsSync, rmSync } from 'node:fs';
 
 const TEST_DIR = './test-forget-data';

@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createDatabase, closeDatabase } from '../src/db.js';
-import { createEmbeddingProvider } from '../src/embedding.js';
-import { reembedAll } from '../src/migrate.js';
+import { createDatabase, closeDatabase } from '../dist/src/db.js';
+import { createEmbeddingProvider } from '../dist/src/embedding.js';
+import { reembedAll } from '../dist/src/migrate.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MockEmbeddingProvider } from '../src/embedding.js';
-import { encodeEpisode } from '../src/encode.js';
+import { MockEmbeddingProvider } from '../dist/src/embedding.js';
+import { encodeEpisode } from '../dist/src/encode.js';
 
 const TEST_DIR = './test-migrate-data';
 

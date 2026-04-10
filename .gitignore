@@ -8,3 +8,4 @@ CLAUDE.md
 .worktrees/
 benchmarks/output/
 benchmarks/.tmp/
+dist/

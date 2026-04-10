@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { recall, recallStream } from '../src/recall.js';
-import { encodeEpisode } from '../src/encode.js';
-import { createDatabase, closeDatabase } from '../src/db.js';
-import { MockEmbeddingProvider } from '../src/embedding.js';
-import { generateId } from '../src/ulid.js';
+import { recall, recallStream } from '../dist/src/recall.js';
+import { encodeEpisode } from '../dist/src/encode.js';
+import { createDatabase, closeDatabase } from '../dist/src/db.js';
+import { MockEmbeddingProvider } from '../dist/src/embedding.js';
+import { generateId } from '../dist/src/ulid.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-recall-data';

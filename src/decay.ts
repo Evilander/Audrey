@@ -1,13 +1,35 @@
+import Database from 'better-sqlite3';
+import type { DecayResult, HalfLives } from './types.js';
 import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier } from './confidence.js';
 import { interferenceModifier } from './interference.js';
 import { daysBetween } from './utils.js';
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {{ dormantThreshold?: number }} [options]
- * @returns {{ totalEvaluated: number, transitionedToDormant: number, timestamp: string }}
- */
-export function applyDecay(db, { dormantThreshold = 0.1, halfLives } = {}) {
+interface DecaySemanticRow {
+  id: string;
+  supporting_count: number;
+  contradicting_count: number;
+  created_at: string;
+  last_reinforced_at: string | null;
+  retrieval_count: number;
+  interference_count: number;
+  salience: number;
+}
+
+interface DecayProceduralRow {
+  id: string;
+  success_count: number;
+  failure_count: number;
+  created_at: string;
+  last_reinforced_at: string | null;
+  retrieval_count: number;
+  interference_count: number;
+  salience: number;
+}
+
+export function applyDecay(
+  db: Database.Database,
+  { dormantThreshold = 0.1, halfLives }: { dormantThreshold?: number; halfLives?: Partial<HalfLives> } = {},
+): DecayResult {
   const now = new Date();
   let totalEvaluated = 0;
   let transitionedToDormant = 0;
@@ -16,7 +38,7 @@ export function applyDecay(db, { dormantThreshold = 0.1, halfLives } = {}) {
     SELECT id, supporting_count, contradicting_count, created_at,
            last_reinforced_at, retrieval_count, interference_count, salience
     FROM semantics WHERE state = 'active'
-  `).all();
+  `).all() as DecaySemanticRow[];
 
   const markDormantSem = db.prepare('UPDATE semantics SET state = ? WHERE id = ?');
 
@@ -50,7 +72,7 @@ export function applyDecay(db, { dormantThreshold = 0.1, halfLives } = {}) {
     SELECT id, success_count, failure_count, created_at,
            last_reinforced_at, retrieval_count, interference_count, salience
     FROM procedures WHERE state = 'active'
-  `).all();
+  `).all() as DecayProceduralRow[];
 
   const markDormantProc = db.prepare('UPDATE procedures SET state = ? WHERE id = ?');
 

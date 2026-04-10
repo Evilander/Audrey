@@ -1,3 +1,14 @@
+import Database from 'better-sqlite3';
+import type {
+  ConfidenceConfig,
+  EmbeddingProvider,
+  EpisodeRow,
+  MemoryType,
+  ProceduralRow,
+  RecallOptions,
+  RecallResult,
+  SemanticRow,
+} from './types.js';
 import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier, sourceReliability } from './confidence.js';
 import { interferenceModifier } from './interference.js';
 import { contextMatchRatio, contextModifier } from './context.js';
@@ -13,7 +24,30 @@ const STOPWORDS = new Set([
 
 const IDENTIFIER_TERMS = new Set(['account', 'api', 'credential', 'id', 'identifier', 'key', 'number', 'password', 'secret', 'ssn', 'token']);
 
-function tokenize(text) {
+interface CountRow {
+  c: number;
+}
+
+interface EpisodeWithSimilarity extends EpisodeRow {
+  similarity: number;
+}
+
+interface SemanticWithSimilarity extends SemanticRow {
+  similarity: number;
+}
+
+interface ProceduralWithSimilarity extends ProceduralRow {
+  similarity: number;
+}
+
+interface RecallFilters {
+  tags?: string[];
+  sources?: string[];
+  after?: string;
+  before?: string;
+}
+
+function tokenize(text: string): string[] {
   return String(text || '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
@@ -22,11 +56,11 @@ function tokenize(text) {
     .filter(Boolean);
 }
 
-function significantTokens(text) {
+function significantTokens(text: string): string[] {
   return tokenize(text).filter(token => !STOPWORDS.has(token));
 }
 
-function lexicalCoverage(query, content) {
+function lexicalCoverage(query: string, content: string): number {
   const queryTokens = significantTokens(query);
   if (queryTokens.length === 0) return 1;
   const contentTokens = new Set(significantTokens(content));
@@ -37,14 +71,14 @@ function lexicalCoverage(query, content) {
   return matched / queryTokens.length;
 }
 
-function hasIdentifierIntent(query) {
+function hasIdentifierIntent(query: string): boolean {
   const normalized = String(query || '').toLowerCase();
   const asksForValue = /\b(find|give|lookup|show|tell|what|which)\b/.test(normalized);
   const mentionsIdentifier = /\b(account number|api key|credential|id|identifier|key|number|passport number|password|secret|ssn|token)\b/.test(normalized);
   return asksForValue && mentionsIdentifier;
 }
 
-function hasIdentifierEvidence(content) {
+function hasIdentifierEvidence(content: string): boolean {
   const tokens = significantTokens(content);
   if (tokens.some(token => IDENTIFIER_TERMS.has(token))) {
     return true;
@@ -52,7 +86,7 @@ function hasIdentifierEvidence(content) {
   return /(?:\b\d{4,}\b|sk-[a-z0-9_-]+)/i.test(content);
 }
 
-function adjustedScore(query, entry) {
+function adjustedScore(query: string, entry: RecallResult): { score: number; coverage: number } {
   const coverage = lexicalCoverage(query, entry.content);
   let score = entry.score;
 
@@ -63,7 +97,7 @@ function adjustedScore(query, entry) {
   return { score, coverage };
 }
 
-function overlapRatio(contentA, contentB) {
+function overlapRatio(contentA: string, contentB: string): number {
   const tokensA = significantTokens(contentA);
   const tokensB = significantTokens(contentB);
   if (tokensA.length === 0 || tokensB.length === 0) return 0;
@@ -75,14 +109,14 @@ function overlapRatio(contentA, contentB) {
   return matched / Math.min(tokensA.length, tokensB.length);
 }
 
-function reliabilityForRecallSource(source) {
+function reliabilityForRecallSource(source: string): number {
   if (source === 'consolidation') {
     return sourceReliability('tool-result');
   }
   return sourceReliability(source);
 }
 
-function shouldSuppressDuplicate(existing, candidate) {
+function shouldSuppressDuplicate(existing: RecallResult, candidate: RecallResult): boolean {
   const overlap = overlapRatio(existing.content, candidate.content);
   if (overlap < 0.5) return false;
   if (existing.type !== candidate.type) return false;
@@ -93,7 +127,7 @@ function shouldSuppressDuplicate(existing, candidate) {
   return existing.score >= candidate.score * 0.95;
 }
 
-function applyResultGuards(query, results, limit) {
+function applyResultGuards(query: string, results: RecallResult[], limit: number): RecallResult[] {
   const identifierIntent = hasIdentifierIntent(query);
   const rescored = results
     .map(entry => {
@@ -103,7 +137,7 @@ function applyResultGuards(query, results, limit) {
     .filter(entry => !identifierIntent || entry.score > 0.05)
     .sort((a, b) => b.score - a.score);
 
-  const accepted = [];
+  const accepted: RecallResult[] = [];
   for (const candidate of rescored) {
     if (accepted.some(existing => shouldSuppressDuplicate(existing, candidate))) {
       continue;
@@ -115,7 +149,7 @@ function applyResultGuards(query, results, limit) {
   return accepted;
 }
 
-function computeEpisodicConfidence(ep, now, confidenceConfig = {}) {
+function computeEpisodicConfidence(ep: EpisodeWithSimilarity, now: Date, confidenceConfig: Partial<ConfidenceConfig> = {}): number {
   const ageDays = daysBetween(ep.created_at, now);
   const halfLives = confidenceConfig.halfLives || DEFAULT_HALF_LIVES;
   let confidence = computeConfidence({
@@ -133,7 +167,7 @@ function computeEpisodicConfidence(ep, now, confidenceConfig = {}) {
   return Math.max(0, Math.min(1, confidence));
 }
 
-function computeSemanticConfidence(sem, now, confidenceConfig = {}) {
+function computeSemanticConfidence(sem: SemanticWithSimilarity, now: Date, confidenceConfig: Partial<ConfidenceConfig> = {}): number {
   const ageDays = daysBetween(sem.created_at, now);
   const daysSinceRetrieval = sem.last_reinforced_at
     ? daysBetween(sem.last_reinforced_at, now)
@@ -155,7 +189,7 @@ function computeSemanticConfidence(sem, now, confidenceConfig = {}) {
   return Math.max(0, Math.min(1, confidence));
 }
 
-function computeProceduralConfidence(proc, now, confidenceConfig = {}) {
+function computeProceduralConfidence(proc: ProceduralWithSimilarity, now: Date, confidenceConfig: Partial<ConfidenceConfig> = {}): number {
   const ageDays = daysBetween(proc.created_at, now);
   const daysSinceRetrieval = proc.last_reinforced_at
     ? daysBetween(proc.last_reinforced_at, now)
@@ -177,8 +211,15 @@ function computeProceduralConfidence(proc, now, confidenceConfig = {}) {
   return Math.max(0, Math.min(1, confidence));
 }
 
-function buildEpisodicEntry(ep, confidence, score, includeProvenance, contextMatch, moodCongruence) {
-  const entry = {
+function buildEpisodicEntry(
+  ep: EpisodeWithSimilarity,
+  confidence: number,
+  score: number,
+  includeProvenance: boolean,
+  contextMatch?: number,
+  moodCongruence?: number,
+): RecallResult {
+  const entry: RecallResult = {
     id: ep.id,
     content: ep.content,
     type: 'episodic',
@@ -204,8 +245,13 @@ function buildEpisodicEntry(ep, confidence, score, includeProvenance, contextMat
   return entry;
 }
 
-function buildSemanticEntry(sem, confidence, score, includeProvenance) {
-  const entry = {
+function buildSemanticEntry(
+  sem: SemanticWithSimilarity,
+  confidence: number,
+  score: number,
+  includeProvenance: boolean,
+): RecallResult {
+  const entry: RecallResult = {
     id: sem.id,
     content: sem.content,
     type: 'semantic',
@@ -217,7 +263,7 @@ function buildSemanticEntry(sem, confidence, score, includeProvenance) {
   };
   if (includeProvenance) {
     entry.provenance = {
-      evidenceEpisodeIds: safeJsonParse(sem.evidence_episode_ids, []),
+      evidenceEpisodeIds: safeJsonParse<string[]>(sem.evidence_episode_ids, []),
       evidenceCount: sem.evidence_count || 0,
       supportingCount: sem.supporting_count || 0,
       contradictingCount: sem.contradicting_count || 0,
@@ -227,8 +273,13 @@ function buildSemanticEntry(sem, confidence, score, includeProvenance) {
   return entry;
 }
 
-function buildProceduralEntry(proc, confidence, score, includeProvenance) {
-  const entry = {
+function buildProceduralEntry(
+  proc: ProceduralWithSimilarity,
+  confidence: number,
+  score: number,
+  includeProvenance: boolean,
+): RecallResult {
+  const entry: RecallResult = {
     id: proc.id,
     content: proc.content,
     type: 'procedural',
@@ -240,7 +291,7 @@ function buildProceduralEntry(proc, confidence, score, includeProvenance) {
   };
   if (includeProvenance) {
     entry.provenance = {
-      evidenceEpisodeIds: safeJsonParse(proc.evidence_episode_ids, []),
+      evidenceEpisodeIds: safeJsonParse<string[]>(proc.evidence_episode_ids, []),
       successCount: proc.success_count || 0,
       failureCount: proc.failure_count || 0,
       triggerConditions: proc.trigger_conditions || null,
@@ -249,24 +300,34 @@ function buildProceduralEntry(proc, confidence, score, includeProvenance) {
   return entry;
 }
 
-function stateClause(includeDormant) {
+function stateClause(includeDormant: boolean): string {
   return includeDormant
     ? "AND (v.state = 'active' OR v.state = 'context_dependent' OR v.state = 'dormant')"
     : "AND (v.state = 'active' OR v.state = 'context_dependent')";
 }
 
-function matchesDateFilters(createdAt, filters) {
+function matchesDateFilters(createdAt: string, filters: RecallFilters): boolean {
   if (filters.after && createdAt <= filters.after) return false;
   if (filters.before && createdAt >= filters.before) return false;
   return true;
 }
 
-function safeKForTable(db, table, candidateK) {
-  const rowCount = db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get().c;
+function safeKForTable(db: Database.Database, table: string, candidateK: number): number {
+  const rowCount = (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as CountRow).c;
   return rowCount > 0 ? Math.min(candidateK, rowCount) : 0;
 }
 
-function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters = {}, includePrivate = false) {
+function knnEpisodic(
+  db: Database.Database,
+  queryBuffer: Buffer,
+  candidateK: number,
+  now: Date,
+  minConfidence: number,
+  includeProvenance: boolean,
+  confidenceConfig: Partial<ConfidenceConfig>,
+  filters: RecallFilters = {},
+  includePrivate: boolean = false,
+): RecallResult[] {
   const safeK = safeKForTable(db, 'vec_episodes', candidateK);
   if (safeK === 0) return [];
   const privateClause = includePrivate ? '' : 'AND e."private" = 0';
@@ -278,29 +339,29 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
       AND k = ?
       AND e.superseded_by IS NULL
       ${privateClause}
-  `).all(queryBuffer, safeK);
+  `).all(queryBuffer, safeK) as EpisodeWithSimilarity[];
 
-  const results = [];
+  const results: RecallResult[] = [];
   for (const row of rows) {
     if (!matchesDateFilters(row.created_at, filters)) continue;
     if (filters.tags?.length) {
-      const rowTags = safeJsonParse(row.tags, []);
+      const rowTags = safeJsonParse<string[]>(row.tags, []);
       if (!filters.tags.some(t => rowTags.includes(t))) continue;
     }
     if (filters.sources?.length && !filters.sources.includes(row.source)) continue;
     let confidence = computeEpisodicConfidence(row, now, confidenceConfig);
 
-    let ctxMatch;
+    let ctxMatch: number | undefined;
     if (confidenceConfig?.retrievalContext) {
-      const encodingCtx = safeJsonParse(row.context, {});
+      const encodingCtx = safeJsonParse<Record<string, string>>(row.context, {});
       ctxMatch = contextMatchRatio(encodingCtx, confidenceConfig.retrievalContext);
       confidence *= contextModifier(encodingCtx, confidenceConfig.retrievalContext, confidenceConfig.contextWeight);
       confidence = Math.max(0, Math.min(1, confidence));
     }
 
-    let moodMatch;
+    let moodMatch: number | undefined;
     if (confidenceConfig?.retrievalMood) {
-      const encodingAffect = safeJsonParse(row.affect, {});
+      const encodingAffect = safeJsonParse<{ valence?: number; arousal?: number }>(row.affect, {});
       moodMatch = affectSimilarity(encodingAffect, confidenceConfig.retrievalMood);
       confidence *= moodCongruenceModifier(encodingAffect, confidenceConfig.retrievalMood, confidenceConfig.affectWeight);
       confidence = Math.max(0, Math.min(1, confidence));
@@ -313,7 +374,17 @@ function knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includePro
   return results;
 }
 
-function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}) {
+function knnSemantic(
+  db: Database.Database,
+  queryBuffer: Buffer,
+  candidateK: number,
+  now: Date,
+  minConfidence: number,
+  includeProvenance: boolean,
+  includeDormant: boolean,
+  confidenceConfig: Partial<ConfidenceConfig>,
+  filters: RecallFilters = {},
+): { results: RecallResult[]; matchedIds: string[] } {
   const safeK = safeKForTable(db, 'vec_semantics', candidateK);
   if (safeK === 0) return { results: [], matchedIds: [] };
   const rows = db.prepare(`
@@ -323,10 +394,10 @@ function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includePro
     WHERE v.embedding MATCH ?
       AND k = ?
       ${stateClause(includeDormant)}
-  `).all(queryBuffer, safeK);
+  `).all(queryBuffer, safeK) as SemanticWithSimilarity[];
 
-  const results = [];
-  const matchedIds = [];
+  const results: RecallResult[] = [];
+  const matchedIds: string[] = [];
   for (const row of rows) {
     if (!matchesDateFilters(row.created_at, filters)) continue;
     const confidence = computeSemanticConfidence(row, now, confidenceConfig);
@@ -338,7 +409,17 @@ function knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includePro
   return { results, matchedIds };
 }
 
-function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters = {}) {
+function knnProcedural(
+  db: Database.Database,
+  queryBuffer: Buffer,
+  candidateK: number,
+  now: Date,
+  minConfidence: number,
+  includeProvenance: boolean,
+  includeDormant: boolean,
+  confidenceConfig: Partial<ConfidenceConfig>,
+  filters: RecallFilters = {},
+): { results: RecallResult[]; matchedIds: string[] } {
   const safeK = safeKForTable(db, 'vec_procedures', candidateK);
   if (safeK === 0) return { results: [], matchedIds: [] };
   const rows = db.prepare(`
@@ -348,10 +429,10 @@ function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeP
     WHERE v.embedding MATCH ?
       AND k = ?
       ${stateClause(includeDormant)}
-  `).all(queryBuffer, safeK);
+  `).all(queryBuffer, safeK) as ProceduralWithSimilarity[];
 
-  const results = [];
-  const matchedIds = [];
+  const results: RecallResult[] = [];
+  const matchedIds: string[] = [];
   for (const row of rows) {
     if (!matchesDateFilters(row.created_at, filters)) continue;
     const confidence = computeProceduralConfidence(row, now, confidenceConfig);
@@ -363,14 +444,12 @@ function knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeP
   return { results, matchedIds };
 }
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
- * @param {string} query
- * @param {{ minConfidence?: number, types?: string[], limit?: number, includeProvenance?: boolean, includeDormant?: boolean, tags?: string[], sources?: string[], after?: string, before?: string }} [options]
- * @returns {AsyncGenerator<{ id: string, content: string, type: string, confidence: number, score: number, source: string, createdAt: string }>}
- */
-export async function* recallStream(db, embeddingProvider, query, options = {}) {
+export async function* recallStream(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  query: string,
+  options: RecallOptions & { confidenceConfig?: ConfidenceConfig } = {},
+): AsyncGenerator<RecallResult> {
   const {
     minConfidence = 0,
     types,
@@ -387,17 +466,17 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
 
   const queryVector = await embeddingProvider.embed(query);
   const queryBuffer = embeddingProvider.vectorToBuffer(queryVector);
-  const searchTypes = types || ['episodic', 'semantic', 'procedural'];
+  const searchTypes: MemoryType[] = types || ['episodic', 'semantic', 'procedural'];
   const now = new Date();
   const hasFilters = tags?.length || sources?.length || after || before;
   const candidateK = hasFilters ? limit * 5 : limit * 3;
-  const filters = { tags, sources, after, before };
+  const filters: RecallFilters = { tags, sources, after, before };
 
-  const allResults = [];
+  const allResults: RecallResult[] = [];
 
   if (searchTypes.includes('episodic')) {
     try {
-      const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig, filters, includePrivate);
+      const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig || {}, filters, includePrivate);
       allResults.push(...episodic);
     } catch {
       // A broken episodic index should not block semantic/procedural recall.
@@ -407,7 +486,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   if (searchTypes.includes('semantic')) {
     try {
       const { results: semResults, matchedIds: semIds } =
-        knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters);
+        knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig || {}, filters);
       allResults.push(...semResults);
 
       if (semIds.length > 0) {
@@ -425,7 +504,7 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   if (searchTypes.includes('procedural')) {
     try {
       const { results: procResults, matchedIds: procIds } =
-        knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig, filters);
+        knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig || {}, filters);
       allResults.push(...procResults);
 
       if (procIds.length > 0) {
@@ -446,15 +525,13 @@ export async function* recallStream(db, embeddingProvider, query, options = {}) 
   }
 }
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
- * @param {string} query
- * @param {{ minConfidence?: number, types?: string[], limit?: number, includeProvenance?: boolean, includeDormant?: boolean, tags?: string[], sources?: string[], after?: string, before?: string }} [options]
- * @returns {Promise<Array<{ id: string, content: string, type: string, confidence: number, score: number, source: string, createdAt: string }>>}
- */
-export async function recall(db, embeddingProvider, query, options = {}) {
-  const results = [];
+export async function recall(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  query: string,
+  options: RecallOptions & { confidenceConfig?: ConfidenceConfig } = {},
+): Promise<RecallResult[]> {
+  const results: RecallResult[] = [];
   for await (const entry of recallStream(db, embeddingProvider, query, options)) {
     results.push(entry);
   }

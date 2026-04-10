@@ -1,35 +1,44 @@
 {
   "name": "audrey",
-  "version": "0.16.1",
+  "version": "0.18.0",
   "description": "Biological memory architecture for AI agents - encode, consolidate, and recall memories with confidence decay, contradiction detection, and causal graphs",
   "type": "module",
-  "main": "src/index.js",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
   "exports": {
-    ".": "./src/index.js",
-    "./mcp": "./mcp-server/index.js"
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp-server/index.d.ts",
+      "default": "./dist/mcp-server/index.js"
+    }
   },
   "bin": {
-    "audrey": "mcp-server/index.js",
-    "audrey-mcp": "mcp-server/index.js"
+    "audrey": "dist/mcp-server/index.js",
+    "audrey-mcp": "dist/mcp-server/index.js"
   },
   "files": [
-    "src/",
-    "mcp-server/",
-    "benchmarks/*.js",
+    "dist/",
     "docs/production-readiness.md",
     "docs/benchmarking.md",
-    "examples/",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "build": "tsc",
+    "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "pretest": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "prepack": "npm run build",
     "pack:check": "npm pack --dry-run",
     "bench:memory": "node benchmarks/run.js",
     "bench:memory:json": "node benchmarks/run.js --json",
     "bench:memory:check": "node benchmarks/run.js --check",
-    "bench:memory:readme-assets": "node benchmarks/run.js --readme-assets-dir docs/assets/benchmarks"
+    "bench:memory:readme-assets": "node benchmarks/run.js --readme-assets-dir docs/assets/benchmarks",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "ai",
@@ -82,6 +91,9 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.2",
     "vitest": "^4.0.18"
   }
 }

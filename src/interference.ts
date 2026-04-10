@@ -1,13 +1,29 @@
-export function interferenceModifier(interferenceCount, weight = 0.1) {
+import Database from 'better-sqlite3';
+import type { EmbeddingProvider, InterferenceConfig } from './types.js';
+
+export interface InterferenceHit {
+  id: string;
+  type: 'semantic' | 'procedural';
+  newCount: number;
+  similarity: number;
+}
+
+export function interferenceModifier(interferenceCount: number, weight: number = 0.1): number {
   return 1 / (1 + weight * interferenceCount);
 }
 
-export async function applyInterference(db, embeddingProvider, episodeId, { content }, config = {}) {
+export async function applyInterference(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  episodeId: string,
+  params: { content: string },
+  config: InterferenceConfig = {},
+): Promise<InterferenceHit[]> {
   const { enabled = true, k = 5, threshold = 0.6, weight = 0.1 } = config;
 
   if (!enabled) return [];
 
-  const vector = await embeddingProvider.embed(content);
+  const vector = await embeddingProvider.embed(params.content);
   const buffer = embeddingProvider.vectorToBuffer(vector);
 
   const semanticHits = db.prepare(`
@@ -17,7 +33,7 @@ export async function applyInterference(db, embeddingProvider, episodeId, { cont
     WHERE v.embedding MATCH ?
       AND k = ?
       AND (v.state = 'active' OR v.state = 'context_dependent')
-  `).all(buffer, k);
+  `).all(buffer, k) as Array<{ id: string; interference_count: number; similarity: number }>;
 
   const proceduralHits = db.prepare(`
     SELECT p.id, p.interference_count, (1.0 - v.distance) AS similarity
@@ -26,9 +42,9 @@ export async function applyInterference(db, embeddingProvider, episodeId, { cont
     WHERE v.embedding MATCH ?
       AND k = ?
       AND (v.state = 'active' OR v.state = 'context_dependent')
-  `).all(buffer, k);
+  `).all(buffer, k) as Array<{ id: string; interference_count: number; similarity: number }>;
 
-  const affected = [];
+  const affected: InterferenceHit[] = [];
 
   const updateSemantic = db.prepare('UPDATE semantics SET interference_count = ? WHERE id = ?');
   const updateProcedural = db.prepare('UPDATE procedures SET interference_count = ? WHERE id = ?');

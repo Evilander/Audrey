@@ -1,5 +1,6 @@
-/** @type {Record<string, number>} */
-export const DEFAULT_SOURCE_RELIABILITY = {
+import type { ConfidenceWeights, HalfLives, SourceReliabilityMap, ComputeConfidenceParams } from './types.js';
+
+export const DEFAULT_SOURCE_RELIABILITY: SourceReliabilityMap = {
   'direct-observation': 0.95,
   'told-by-user': 0.90,
   'tool-result': 0.85,
@@ -7,30 +8,22 @@ export const DEFAULT_SOURCE_RELIABILITY = {
   'model-generated': 0.40,
 };
 
-/** @type {{ source: number, evidence: number, recency: number, retrieval: number }} */
-export const DEFAULT_WEIGHTS = {
+export const DEFAULT_WEIGHTS: ConfidenceWeights = {
   source: 0.30,
   evidence: 0.35,
   recency: 0.20,
   retrieval: 0.15,
 };
 
-/** @type {{ episodic: number, semantic: number, procedural: number }} */
-export const DEFAULT_HALF_LIVES = {
+export const DEFAULT_HALF_LIVES: HalfLives = {
   episodic: 7,
   semantic: 30,
   procedural: 90,
 };
 
-/** @type {number} */
-export const MODEL_GENERATED_CONFIDENCE_CAP = 0.6;
+export const MODEL_GENERATED_CONFIDENCE_CAP: number = 0.6;
 
-/**
- * @param {string} sourceType
- * @param {Record<string, number>} [customReliability]
- * @returns {number}
- */
-export function sourceReliability(sourceType, customReliability) {
+export function sourceReliability(sourceType: string, customReliability?: SourceReliabilityMap): number {
   const table = customReliability || DEFAULT_SOURCE_RELIABILITY;
   const value = table[sourceType];
   if (value === undefined) {
@@ -39,33 +32,18 @@ export function sourceReliability(sourceType, customReliability) {
   return value;
 }
 
-/**
- * @param {number} supportingCount
- * @param {number} contradictingCount
- * @returns {number}
- */
-export function evidenceAgreement(supportingCount, contradictingCount) {
+export function evidenceAgreement(supportingCount: number, contradictingCount: number): number {
   const total = supportingCount + contradictingCount;
   if (total === 0) return 1.0;
   return supportingCount / total;
 }
 
-/**
- * @param {number} ageDays
- * @param {number} halfLifeDays
- * @returns {number}
- */
-export function recencyDecay(ageDays, halfLifeDays) {
+export function recencyDecay(ageDays: number, halfLifeDays: number): number {
   const lambda = Math.LN2 / halfLifeDays;
   return Math.exp(-lambda * ageDays);
 }
 
-/**
- * @param {number} retrievalCount
- * @param {number} daysSinceRetrieval
- * @returns {number}
- */
-export function retrievalReinforcement(retrievalCount, daysSinceRetrieval) {
+export function retrievalReinforcement(retrievalCount: number, daysSinceRetrieval: number): number {
   if (retrievalCount === 0) return 0;
   const lambdaRet = Math.LN2 / 14;
   const baseReinforcement = 0.3 * Math.log(1 + retrievalCount);
@@ -74,24 +52,11 @@ export function retrievalReinforcement(retrievalCount, daysSinceRetrieval) {
   return Math.min(1.0, baseReinforcement * recencyWeight + spacedBonus);
 }
 
-export function salienceModifier(salience) {
+export function salienceModifier(salience?: number | null): number {
   const s = salience ?? 0.5;
   return 0.5 + s;
 }
 
-/**
- * @param {object} params
- * @param {string} params.sourceType
- * @param {number} params.supportingCount
- * @param {number} params.contradictingCount
- * @param {number} params.ageDays
- * @param {number} params.halfLifeDays
- * @param {number} params.retrievalCount
- * @param {number} params.daysSinceRetrieval
- * @param {{ source: number, evidence: number, recency: number, retrieval: number }} [params.weights]
- * @param {Record<string, number>} [params.customSourceReliability]
- * @returns {number}
- */
 export function computeConfidence({
   sourceType,
   supportingCount,
@@ -102,7 +67,7 @@ export function computeConfidence({
   daysSinceRetrieval,
   weights,
   customSourceReliability,
-}) {
+}: ComputeConfidenceParams): number {
   const w = weights || DEFAULT_WEIGHTS;
 
   const s = sourceReliability(sourceType, customSourceReliability);
