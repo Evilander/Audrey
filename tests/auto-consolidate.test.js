@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { Audrey } from '../src/index.js';
+import { Audrey } from '../dist/src/index.js';
 import { existsSync, rmSync } from 'node:fs';
 
 const TEST_DIR = './test-auto-consolidate';

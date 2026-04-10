@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { validateMemory, createContradiction, reopenContradiction } from '../src/validate.js';
-import { createDatabase, closeDatabase } from '../src/db.js';
-import { MockEmbeddingProvider } from '../src/embedding.js';
-import { MockLLMProvider } from '../src/llm.js';
+import { validateMemory, createContradiction, reopenContradiction } from '../dist/src/validate.js';
+import { createDatabase, closeDatabase } from '../dist/src/db.js';
+import { MockEmbeddingProvider } from '../dist/src/embedding.js';
+import { MockLLMProvider } from '../dist/src/llm.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-validate-data';

@@ -4,7 +4,7 @@ import {
   buildContradictionDetectionPrompt,
   buildCausalArticulationPrompt,
   buildContextResolutionPrompt,
-} from '../src/prompts.js';
+} from '../dist/src/prompts.js';
 
 describe('buildPrincipleExtractionPrompt', () => {
   it('returns a messages array with system and user roles', () => {
@@ -93,7 +93,7 @@ describe('buildContextResolutionPrompt', () => {
   });
 });
 
-import { buildReflectionPrompt } from '../src/prompts.js';
+import { buildReflectionPrompt } from '../dist/src/prompts.js';
 
 describe('buildReflectionPrompt', () => {
   it('returns array of 2 messages: system and user', () => {

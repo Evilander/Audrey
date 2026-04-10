@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { rollbackConsolidation, getConsolidationHistory } from '../src/rollback.js';
-import { encodeEpisode } from '../src/encode.js';
-import { runConsolidation } from '../src/consolidate.js';
-import { createDatabase, closeDatabase } from '../src/db.js';
-import { MockEmbeddingProvider } from '../src/embedding.js';
+import { rollbackConsolidation, getConsolidationHistory } from '../dist/src/rollback.js';
+import { encodeEpisode } from '../dist/src/encode.js';
+import { runConsolidation } from '../dist/src/consolidate.js';
+import { createDatabase, closeDatabase } from '../dist/src/db.js';
+import { MockEmbeddingProvider } from '../dist/src/embedding.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-rollback-data';
