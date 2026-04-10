@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateId, generateDeterministicId } from '../src/ulid.js';
+import { generateId, generateDeterministicId } from '../dist/src/ulid.js';
 
 describe('ULID generation', () => {
   it('generates a 26-character ULID string', () => {

@@ -1,23 +1,50 @@
+import Database from 'better-sqlite3';
+import type {
+  ConsolidationOptions,
+  ConsolidationResult,
+  EmbeddingProvider,
+  EpisodeRow,
+  ExtractedPrinciple,
+  LLMProvider,
+} from './types.js';
 import { generateId } from './ulid.js';
 import { buildPrincipleExtractionPrompt } from './prompts.js';
 
-function clusterViaKNN(db, episodes, similarityThreshold, minClusterSize) {
+interface VecEmbeddingRow {
+  embedding: Buffer;
+}
+
+interface KnnRow {
+  id: string;
+  distance: number;
+}
+
+interface CountRow {
+  count: number;
+}
+
+function clusterViaKNN(
+  db: Database.Database,
+  episodes: EpisodeRow[],
+  similarityThreshold: number,
+  minClusterSize: number,
+): EpisodeRow[][] {
   const n = episodes.length;
   const k = Math.min(50, n);
-  const idToIndex = new Map(episodes.map((ep, i) => [ep.id, i]));
+  const idToIndex = new Map<string, number>(episodes.map((ep, i) => [ep.id, i]));
 
-  const parent = new Array(n);
+  const parent = new Array<number>(n);
   for (let i = 0; i < n; i++) parent[i] = i;
 
-  function find(x) {
+  function find(x: number): number {
     while (parent[x] !== x) {
-      parent[x] = parent[parent[x]];
-      x = parent[x];
+      parent[x] = parent[parent[x]!]!;
+      x = parent[x]!;
     }
     return x;
   }
 
-  function union(a, b) {
+  function union(a: number, b: number): void {
     const ra = find(a);
     const rb = find(b);
     if (ra !== rb) parent[ra] = rb;
@@ -31,11 +58,11 @@ function clusterViaKNN(db, episodes, similarityThreshold, minClusterSize) {
   `);
 
   for (let i = 0; i < n; i++) {
-    const ep = episodes[i];
-    const vecRow = getEmbedding.get(ep.id);
+    const ep = episodes[i]!;
+    const vecRow = getEmbedding.get(ep.id) as VecEmbeddingRow | undefined;
     if (!vecRow) continue;
 
-    const neighbors = knnQuery.all(vecRow.embedding, k);
+    const neighbors = knnQuery.all(vecRow.embedding, k) as KnnRow[];
     for (const neighbor of neighbors) {
       if (neighbor.id === ep.id) continue;
       const j = idToIndex.get(neighbor.id);
@@ -47,14 +74,14 @@ function clusterViaKNN(db, episodes, similarityThreshold, minClusterSize) {
     }
   }
 
-  const groups = new Map();
+  const groups = new Map<number, EpisodeRow[]>();
   for (let i = 0; i < n; i++) {
     const root = find(i);
     if (!groups.has(root)) groups.set(root, []);
-    groups.get(root).push(episodes[i]);
+    groups.get(root)!.push(episodes[i]!);
   }
 
-  const clusters = [];
+  const clusters: EpisodeRow[][] = [];
   for (const group of groups.values()) {
     if (group.length >= minClusterSize) {
       clusters.push(group);
@@ -63,13 +90,11 @@ function clusterViaKNN(db, episodes, similarityThreshold, minClusterSize) {
   return clusters;
 }
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
- * @param {{ similarityThreshold?: number, minClusterSize?: number }} [options]
- * @returns {Array<Array<Object>>}
- */
-export function clusterEpisodes(db, embeddingProvider, options = {}) {
+export function clusterEpisodes(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  options: { similarityThreshold?: number; minClusterSize?: number } = {},
+): EpisodeRow[][] {
   const {
     similarityThreshold = 0.85,
     minClusterSize = 3,
@@ -77,14 +102,14 @@ export function clusterEpisodes(db, embeddingProvider, options = {}) {
 
   const episodes = db.prepare(
     'SELECT * FROM episodes WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL'
-  ).all();
+  ).all() as EpisodeRow[];
 
   if (episodes.length === 0) return [];
 
   return clusterViaKNN(db, episodes, similarityThreshold, minClusterSize);
 }
 
-function defaultExtractPrinciple(episodes) {
+function defaultExtractPrinciple(episodes: EpisodeRow[]): ExtractedPrinciple {
   const uniqueContents = [...new Set(episodes.map(e => e.content))];
   return {
     content: `Recurring pattern: ${uniqueContents.join('; ')}`,
@@ -92,22 +117,30 @@ function defaultExtractPrinciple(episodes) {
   };
 }
 
-async function llmExtractPrinciple(llmProvider, episodes) {
+async function llmExtractPrinciple(llmProvider: LLMProvider, episodes: EpisodeRow[]): Promise<ExtractedPrinciple> {
   const messages = buildPrincipleExtractionPrompt(episodes);
-  return llmProvider.json(messages);
+  return llmProvider.json(messages) as Promise<ExtractedPrinciple>;
 }
 
-function inClause(ids) {
+function inClause(ids: string[]): string {
   return ids.map(() => '?').join(',');
 }
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
- * @param {{ similarityThreshold?: number, minClusterSize?: number, extractPrinciple?: function, llmProvider?: Object }} [options]
- * @returns {Promise<{ runId: string, episodesEvaluated: number, clustersFound: number, principlesExtracted: number }>}
- */
-export async function runConsolidation(db, embeddingProvider, options = {}) {
+interface PreparedCluster {
+  principle: ExtractedPrinciple;
+  clusterIds: string[];
+  sourceTypeDiversity: number;
+  embeddingBuffer: Buffer;
+  memoryId: string;
+  createdAt: string;
+  maxSalience: number;
+}
+
+export async function runConsolidation(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  options: ConsolidationOptions = {},
+): Promise<ConsolidationResult> {
   const {
     similarityThreshold = 0.85,
     minClusterSize = 3,
@@ -128,15 +161,15 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
   try {
     const clusters = clusterEpisodes(db, embeddingProvider, { similarityThreshold, minClusterSize });
 
-    const episodesEvaluated = db.prepare(
+    const episodesEvaluated = (db.prepare(
       'SELECT COUNT(*) as count FROM episodes WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL'
-    ).get().count;
+    ).get() as CountRow).count;
 
-    const allInputIds = [];
-    const allOutputIds = [];
+    const allInputIds: string[] = [];
+    const allOutputIds: string[] = [];
     let principlesExtracted = 0;
     let proceduresExtracted = 0;
-    const preparedClusters = [];
+    const preparedClusters: PreparedCluster[] = [];
     const insertProcedure = db.prepare(`
       INSERT INTO procedures (
         id, content, embedding, state, trigger_conditions,
@@ -169,7 +202,7 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
     `);
 
     for (const cluster of clusters) {
-      let principle;
+      let principle: ExtractedPrinciple;
       if (extractPrinciple) {
         principle = await extractPrinciple(cluster);
       } else if (llmProvider) {
@@ -193,17 +226,17 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
       });
     }
 
-    db.exec('BEGIN IMMEDIATE');
+    db.prepare('BEGIN IMMEDIATE').run();
     try {
       for (const prepared of preparedClusters) {
         const placeholders = inClause(prepared.clusterIds);
-        const eligibleCount = db.prepare(`
+        const eligibleCount = (db.prepare(`
           SELECT COUNT(*) AS count
           FROM episodes
           WHERE id IN (${placeholders})
             AND consolidated = 0
             AND superseded_by IS NULL
-        `).get(...prepared.clusterIds).count;
+        `).get(...prepared.clusterIds) as CountRow).count;
 
         if (eligibleCount !== prepared.clusterIds.length) {
           continue;
@@ -259,10 +292,10 @@ export async function runConsolidation(db, embeddingProvider, options = {}) {
         generateId(), runId, minClusterSize, similarityThreshold,
         episodesEvaluated, clusters.length, principlesExtracted, completedAt,
       );
-      db.exec('COMMIT');
+      db.prepare('COMMIT').run();
     } catch (err) {
       if (db.inTransaction) {
-        db.exec('ROLLBACK');
+        db.prepare('ROLLBACK').run();
       }
       throw err;
     }

@@ -1,12 +1,9 @@
+import type { ChatMessage, EpisodeRow } from './types.js';
 import { safeJsonParse } from './utils.js';
 
-/**
- * @param {Object[]} episodes
- * @returns {import('./llm.js').ChatMessage[]}
- */
-export function buildPrincipleExtractionPrompt(episodes) {
+export function buildPrincipleExtractionPrompt(episodes: EpisodeRow[]): ChatMessage[] {
   const episodeList = episodes.map((ep, i) => {
-    const tags = safeJsonParse(ep.tags, []);
+    const tags = safeJsonParse<string[]>(ep.tags, []);
     return `Episode ${i + 1}:
 - Content: ${ep.content}
 - Source: ${ep.source}
@@ -51,12 +48,7 @@ Rules:
   ];
 }
 
-/**
- * @param {string} newContent
- * @param {string} existingContent
- * @returns {import('./llm.js').ChatMessage[]}
- */
-export function buildContradictionDetectionPrompt(newContent, existingContent) {
+export function buildContradictionDetectionPrompt(newContent: string, existingContent: string): ChatMessage[] {
   return [
     {
       role: 'system',
@@ -87,12 +79,10 @@ EXISTING CLAIM: ${existingContent}`,
   ];
 }
 
-/**
- * @param {{ content: string, source: string }} cause
- * @param {{ content: string, source: string }} effect
- * @returns {import('./llm.js').ChatMessage[]}
- */
-export function buildCausalArticulationPrompt(cause, effect) {
+export function buildCausalArticulationPrompt(
+  cause: { content: string; source: string },
+  effect: { content: string; source: string },
+): ChatMessage[] {
   return [
     {
       role: 'system',
@@ -125,13 +115,7 @@ EFFECT: ${effect.content} (source: ${effect.source})`,
   ];
 }
 
-/**
- * @param {string} claimA
- * @param {string} claimB
- * @param {string} [context]
- * @returns {import('./llm.js').ChatMessage[]}
- */
-export function buildContextResolutionPrompt(claimA, claimB, context) {
+export function buildContextResolutionPrompt(claimA: string, claimB: string, context?: string): ChatMessage[] {
   const contextSection = context
     ? `\n\nADDITIONAL CONTEXT: ${context}`
     : '';
@@ -164,11 +148,7 @@ CLAIM B: ${claimB}${contextSection}`,
   ];
 }
 
-/**
- * @param {{ role: string, content: string }[]} turns
- * @returns {import('./llm.js').ChatMessage[]}
- */
-export function buildReflectionPrompt(turns) {
+export function buildReflectionPrompt(turns: { role: string; content: string }[]): ChatMessage[] {
   const transcript = turns.map(t => `${t.role.toUpperCase()}: ${t.content}`).join('\n\n');
 
   return [

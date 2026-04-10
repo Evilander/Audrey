@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { addCausalLink, getCausalChain, articulateCausalLink } from '../src/causal.js';
-import { createDatabase, closeDatabase } from '../src/db.js';
-import { MockLLMProvider } from '../src/llm.js';
+import { addCausalLink, getCausalChain, articulateCausalLink } from '../dist/src/causal.js';
+import { createDatabase, closeDatabase } from '../dist/src/db.js';
+import { MockLLMProvider } from '../dist/src/llm.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-causal-data';

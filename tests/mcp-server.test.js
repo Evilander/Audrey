@@ -1,9 +1,9 @@
 ﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { z } from 'zod';
 import { EventEmitter } from 'node:events';
-import { Audrey } from '../src/index.js';
-import { readStoredDimensions } from '../src/db.js';
-import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, MCP_ENTRYPOINT, SERVER_NAME, VERSION } from '../mcp-server/config.js';
+import { Audrey } from '../dist/src/index.js';
+import { readStoredDimensions } from '../dist/src/db.js';
+import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, MCP_ENTRYPOINT, SERVER_NAME, VERSION } from '../dist/mcp-server/config.js';
 import {
   MAX_MEMORY_CONTENT_LENGTH,
   buildStatusReport,
@@ -17,14 +17,14 @@ import {
   registerDreamTool,
   runStatusCommand,
   validateForgetSelection,
-} from '../mcp-server/index.js';
+} from '../dist/mcp-server/index.js';
 import { existsSync, rmSync } from 'node:fs';
 
 const TEST_DIR = './test-mcp-server';
 
 describe('MCP config', () => {
-  it('VERSION is 0.16.1', () => {
-    expect(VERSION).toBe('0.16.1');
+  it('VERSION is 0.18.0', () => {
+    expect(VERSION).toBe('0.18.0');
   });
 });
 

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { runConsolidation, clusterEpisodes } from '../src/consolidate.js';
-import { encodeEpisode } from '../src/encode.js';
-import { createDatabase, closeDatabase } from '../src/db.js';
-import { MockEmbeddingProvider } from '../src/embedding.js';
-import { MockLLMProvider } from '../src/llm.js';
+import { runConsolidation, clusterEpisodes } from '../dist/src/consolidate.js';
+import { encodeEpisode } from '../dist/src/encode.js';
+import { createDatabase, closeDatabase } from '../dist/src/db.js';
+import { MockEmbeddingProvider } from '../dist/src/embedding.js';
+import { MockLLMProvider } from '../dist/src/llm.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-consolidate-data';

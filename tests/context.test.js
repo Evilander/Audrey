@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { contextMatchRatio, contextModifier } from '../src/context.js';
+import { contextMatchRatio, contextModifier } from '../dist/src/context.js';
 
 describe('contextMatchRatio', () => {
   it('returns 0 when encodingContext is null', () => {

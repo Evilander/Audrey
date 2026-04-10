@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { Audrey } from '../src/audrey.js';
-import { MockLLMProvider } from '../src/llm.js';
-import * as AudreySDK from '../src/index.js';
+import { Audrey } from '../dist/src/audrey.js';
+import { MockLLMProvider } from '../dist/src/llm.js';
+import * as AudreySDK from '../dist/src/index.js';
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

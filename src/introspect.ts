@@ -1,10 +1,30 @@
-import { safeJsonParse } from './utils.js';
+import Database from 'better-sqlite3';
+import type { IntrospectResult } from './types.js';
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @returns {{ episodic: number, semantic: number, procedural: number, causalLinks: number, dormant: number, contradictions: { open: number, resolved: number, context_dependent: number, reopened: number }, lastConsolidation: string|null, totalConsolidationRuns: number }}
- */
-export function introspect(db) {
+interface CountsRow {
+  episodic: number;
+  semantic: number;
+  procedural: number;
+  causal_links: number;
+  dormant: number;
+}
+
+interface ContradictionCountsRow {
+  open: number | null;
+  resolved: number | null;
+  context_dependent: number | null;
+  reopened: number | null;
+}
+
+interface CompletedAtRow {
+  completed_at: string;
+}
+
+interface CountRow {
+  count: number;
+}
+
+export function introspect(db: Database.Database): IntrospectResult {
   const counts = db.prepare(`
     SELECT
       (SELECT COUNT(*) FROM episodes) as episodic,
@@ -13,7 +33,7 @@ export function introspect(db) {
       (SELECT COUNT(*) FROM causal_links) as causal_links,
       (SELECT COUNT(*) FROM semantics WHERE state = 'dormant')
         + (SELECT COUNT(*) FROM procedures WHERE state = 'dormant') as dormant
-  `).get();
+  `).get() as CountsRow;
 
   const contradictions = db.prepare(`
     SELECT
@@ -22,13 +42,13 @@ export function introspect(db) {
       SUM(CASE WHEN state = 'context_dependent' THEN 1 ELSE 0 END) as context_dependent,
       SUM(CASE WHEN state = 'reopened' THEN 1 ELSE 0 END) as reopened
     FROM contradictions
-  `).get();
+  `).get() as ContradictionCountsRow | undefined;
 
   const lastRun = db.prepare(`
     SELECT completed_at FROM consolidation_runs
     WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 1
-  `).get();
-  const totalRuns = db.prepare('SELECT COUNT(*) as count FROM consolidation_runs').get().count;
+  `).get() as CompletedAtRow | undefined;
+  const totalRuns = (db.prepare('SELECT COUNT(*) as count FROM consolidation_runs').get() as CountRow).count;
 
   return {
     episodic: counts.episodic,

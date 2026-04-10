@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { createDatabase, closeDatabase } from '../src/db.js';
+import { createDatabase, closeDatabase } from '../dist/src/db.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

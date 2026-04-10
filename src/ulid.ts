@@ -3,16 +3,11 @@ import { createHash } from 'node:crypto';
 
 const monotonic = monotonicFactory();
 
-/** @returns {string} */
-export function generateId() {
+export function generateId(): string {
   return monotonic();
 }
 
-/**
- * @param {...*} parts
- * @returns {string}
- */
-export function generateDeterministicId(...parts) {
+export function generateDeterministicId(...parts: unknown[]): string {
   const input = JSON.stringify(parts);
   return createHash('sha256').update(input).digest('hex').slice(0, 26);
 }

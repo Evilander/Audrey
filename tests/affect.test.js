@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { arousalSalienceBoost, affectSimilarity, moodCongruenceModifier, detectResonance } from '../src/affect.js';
-import { createDatabase, closeDatabase } from '../src/db.js';
-import { createEmbeddingProvider } from '../src/embedding.js';
-import { encodeEpisode } from '../src/encode.js';
+import { arousalSalienceBoost, affectSimilarity, moodCongruenceModifier, detectResonance } from '../dist/src/affect.js';
+import { createDatabase, closeDatabase } from '../dist/src/db.js';
+import { createEmbeddingProvider } from '../dist/src/embedding.js';
+import { encodeEpisode } from '../dist/src/encode.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

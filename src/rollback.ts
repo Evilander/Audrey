@@ -1,29 +1,25 @@
+import Database from 'better-sqlite3';
+import type { ConsolidationRunRow } from './types.js';
 import { safeJsonParse } from './utils.js';
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @returns {Array<{ id: string, checkpoint_cursor: string|null, input_episode_ids: string, output_memory_ids: string, started_at: string, completed_at: string|null, status: string }>}
- */
-export function getConsolidationHistory(db) {
+export function getConsolidationHistory(db: Database.Database): ConsolidationRunRow[] {
   return db.prepare(`
     SELECT id, checkpoint_cursor, input_episode_ids, output_memory_ids,
            started_at, completed_at, status
     FROM consolidation_runs ORDER BY started_at DESC
-  `).all();
+  `).all() as ConsolidationRunRow[];
 }
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {string} runId
- * @returns {{ rolledBackMemories: number, restoredEpisodes: number }}
- */
-export function rollbackConsolidation(db, runId) {
-  const run = db.prepare('SELECT * FROM consolidation_runs WHERE id = ?').get(runId);
+export function rollbackConsolidation(
+  db: Database.Database,
+  runId: string,
+): { rolledBackMemories: number; restoredEpisodes: number } {
+  const run = db.prepare('SELECT * FROM consolidation_runs WHERE id = ?').get(runId) as ConsolidationRunRow | undefined;
   if (!run) throw new Error(`Consolidation run not found: ${runId}`);
   if (run.status === 'rolled_back') throw new Error(`Run already rolled back: ${runId}`);
 
-  const outputIds = safeJsonParse(run.output_memory_ids, []);
-  const inputIds = safeJsonParse(run.input_episode_ids, []);
+  const outputIds = safeJsonParse<string[]>(run.output_memory_ids, []);
+  const inputIds = safeJsonParse<string[]>(run.input_episode_ids, []);
 
   const doRollback = db.transaction(() => {
     const markSemantics = db.prepare('UPDATE semantics SET state = ? WHERE id = ?');
