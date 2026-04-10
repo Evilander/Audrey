@@ -9,3 +9,6 @@ CLAUDE.md
 benchmarks/output/
 benchmarks/.tmp/
 dist/
+__pycache__/
+*.pyc
+.pytest_cache/
