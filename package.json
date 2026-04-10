@@ -13,6 +13,10 @@
     "./mcp": {
       "types": "./dist/mcp-server/index.d.ts",
       "default": "./dist/mcp-server/index.js"
+    },
+    "./server": {
+      "types": "./dist/src/server.d.ts",
+      "default": "./dist/src/server.js"
     }
   },
   "bin": {
