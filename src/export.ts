@@ -5,7 +5,7 @@ import { join, dirname } from 'node:path';
 import { safeJsonParse } from './utils.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const pkg = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8')) as { version: string };
+const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8')) as { version: string };
 
 interface ExportedEpisode {
   id: string;
