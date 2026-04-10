@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Audrey } from '../src/index.js';
 import { readStoredDimensions } from '../src/db.js';
+import type { AudreyConfig, EmbeddingProvider, IntrospectResult, MemoryStatusResult } from '../src/types.js';
 import {
   VERSION,
   SERVER_NAME,
@@ -17,18 +18,29 @@ import {
   resolveLLMProvider,
 } from './config.js';
 
-const VALID_SOURCES = ['direct-observation', 'told-by-user', 'tool-result', 'inference', 'model-generated'];
-const VALID_TYPES = ['episodic', 'semantic', 'procedural'];
+const VALID_SOURCES = {
+  'direct-observation': 'direct-observation',
+  'told-by-user': 'told-by-user',
+  'tool-result': 'tool-result',
+  'inference': 'inference',
+  'model-generated': 'model-generated',
+} as const;
+
+const VALID_TYPES = {
+  'episodic': 'episodic',
+  'semantic': 'semantic',
+  'procedural': 'procedural',
+} as const;
 
 export const MAX_MEMORY_CONTENT_LENGTH = 50_000;
 
 const subcommand = process.argv[2];
 
-function isNonEmptyText(value) {
+function isNonEmptyText(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-export function validateMemoryContent(content) {
+export function validateMemoryContent(content: string): void {
   if (!isNonEmptyText(content)) {
     throw new Error('content must be a non-empty string');
   }
@@ -37,13 +49,13 @@ export function validateMemoryContent(content) {
   }
 }
 
-export function validateForgetSelection(id, query) {
+export function validateForgetSelection(id?: string, query?: string): void {
   if ((id && query) || (!id && !query)) {
     throw new Error('Provide exactly one of id or query');
   }
 }
 
-export async function initializeEmbeddingProvider(provider) {
+export async function initializeEmbeddingProvider(provider: EmbeddingProvider): Promise<void> {
   if (provider && typeof provider.ready === 'function') {
     await provider.ready();
   }
@@ -57,7 +69,7 @@ export const memoryEncodeToolSchema = {
   source: z.enum(VALID_SOURCES).describe('Source type of the memory'),
   tags: z.array(z.string()).optional().describe('Optional tags for categorization'),
   salience: z.number().min(0).max(1).optional().describe('Importance weight 0-1'),
-  context: z.record(z.string()).optional().describe('Situational context as key-value pairs (e.g., {task: "debugging", domain: "payments"})'),
+  context: z.record(z.string(), z.string()).optional().describe('Situational context as key-value pairs (e.g., {task: "debugging", domain: "payments"})'),
   affect: z.object({
     valence: z.number().min(-1).max(1).describe('Emotional valence: -1 (very negative) to 1 (very positive)'),
     arousal: z.number().min(0).max(1).optional().describe('Emotional arousal: 0 (calm) to 1 (highly activated)'),
@@ -75,7 +87,7 @@ export const memoryRecallToolSchema = {
   sources: z.array(z.enum(VALID_SOURCES)).optional().describe('Only return episodic memories from these sources'),
   after: z.string().optional().describe('Only return memories created after this ISO date'),
   before: z.string().optional().describe('Only return memories created before this ISO date'),
-  context: z.record(z.string()).optional().describe('Retrieval context - memories encoded in matching context get boosted'),
+  context: z.record(z.string(), z.string()).optional().describe('Retrieval context - memories encoded in matching context get boosted'),
   mood: z.object({
     valence: z.number().min(-1).max(1).describe('Current emotional valence: -1 (negative) to 1 (positive)'),
     arousal: z.number().min(0).max(1).optional().describe('Current arousal: 0 (calm) to 1 (activated)'),
@@ -92,7 +104,7 @@ export const memoryImportToolSchema = {
     contradictions: z.array(z.any()).optional(),
     consolidationRuns: z.array(z.any()).optional(),
     consolidationMetrics: z.array(z.any()).optional(),
-    config: z.record(z.string()).optional(),
+    config: z.record(z.string(), z.string()).optional(),
   }).passthrough().describe('A snapshot from memory_export'),
 };
 
@@ -103,9 +115,29 @@ export const memoryForgetToolSchema = {
   purge: z.boolean().optional().describe('Hard-delete the memory permanently (default false, soft-delete)'),
 };
 
-async function reembed() {
+// ---------------------------------------------------------------------------
+// Local interface for status reporting
+// ---------------------------------------------------------------------------
+
+interface StatusReport {
+  generatedAt: string;
+  registered: boolean;
+  dataDir: string;
+  exists: boolean;
+  storedDimensions: number | null;
+  stats: IntrospectResult | null;
+  health: MemoryStatusResult | null;
+  lastConsolidation: string | null;
+  error: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// CLI subcommands
+// ---------------------------------------------------------------------------
+
+async function reembed(): Promise<void> {
   const dataDir = resolveDataDir(process.env);
-  const explicit = process.env.AUDREY_EMBEDDING_PROVIDER;
+  const explicit = process.env['AUDREY_EMBEDDING_PROVIDER'];
   const embedding = resolveEmbeddingProvider(process.env, explicit);
   const storedDims = readStoredDimensions(dataDir);
   const dimensionsChanged = storedDims !== null && storedDims !== embedding.dimensions;
@@ -126,20 +158,20 @@ async function reembed() {
   }
 }
 
-async function dream() {
+async function dream(): Promise<void> {
   const dataDir = resolveDataDir(process.env);
-  const explicit = process.env.AUDREY_EMBEDDING_PROVIDER;
+  const explicit = process.env['AUDREY_EMBEDDING_PROVIDER'];
   const embedding = resolveEmbeddingProvider(process.env, explicit);
   const storedDims = readStoredDimensions(dataDir);
 
-  const config = {
+  const config: AudreyConfig = {
     dataDir,
     agent: 'dream',
     embedding,
   };
 
-  const llm = resolveLLMProvider(process.env, process.env.AUDREY_LLM_PROVIDER);
-  if (llm) config.llm = llm;
+  const llm = resolveLLMProvider(process.env, process.env['AUDREY_LLM_PROVIDER']);
+  if (llm) config.llm = llm as AudreyConfig['llm'];
 
   const audrey = new Audrey(config);
   try {
@@ -174,7 +206,7 @@ async function dream() {
   }
 }
 
-async function greeting() {
+async function greeting(): Promise<void> {
   const dataDir = resolveDataDir(process.env);
   const contextArg = process.argv[3] || undefined;
 
@@ -184,7 +216,7 @@ async function greeting() {
   }
 
   const storedDimensions = readStoredDimensions(dataDir);
-  const resolvedEmbedding = resolveEmbeddingProvider(process.env, process.env.AUDREY_EMBEDDING_PROVIDER);
+  const resolvedEmbedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
   const canUseResolvedEmbedding = Boolean(contextArg)
     && storedDimensions !== null
     && storedDimensions === resolvedEmbedding.dimensions;
@@ -194,7 +226,7 @@ async function greeting() {
     agent: 'greeting',
     embedding: canUseResolvedEmbedding
       ? resolvedEmbedding
-      : { provider: 'mock', dimensions },
+      : { provider: 'mock' as const, dimensions },
   });
 
   try {
@@ -204,7 +236,7 @@ async function greeting() {
     const result = await audrey.greeting({ context: canUseResolvedEmbedding ? contextArg : undefined });
     const health = audrey.memoryStatus();
 
-    const lines = [];
+    const lines: string[] = [];
     lines.push(`[Audrey v${VERSION}] Memory briefing`);
     lines.push('');
 
@@ -266,9 +298,9 @@ async function greeting() {
     }
 
     // Contextual recall
-    if (result.contextual?.length > 0) {
+    if ((result.contextual?.length ?? 0) > 0) {
       lines.push(`Context-relevant memories (query: "${contextArg}"):`);
-      for (const c of result.contextual) {
+      for (const c of result.contextual!) {
         lines.push(`  - [${c.type}] ${c.content.slice(0, 200)}`);
       }
       lines.push('');
@@ -280,7 +312,7 @@ async function greeting() {
   }
 }
 
-function timeSince(isoDate) {
+function timeSince(isoDate: string): string {
   const ms = Date.now() - new Date(isoDate).getTime();
   const mins = Math.floor(ms / 60000);
   if (mins < 60) return `${mins}m ago`;
@@ -290,35 +322,35 @@ function timeSince(isoDate) {
   return `${days}d ago`;
 }
 
-async function reflect() {
+async function reflect(): Promise<void> {
   const dataDir = resolveDataDir(process.env);
-  const explicit = process.env.AUDREY_EMBEDDING_PROVIDER;
+  const explicit = process.env['AUDREY_EMBEDDING_PROVIDER'];
   const embedding = resolveEmbeddingProvider(process.env, explicit);
 
-  const config = {
+  const config: AudreyConfig = {
     dataDir,
     agent: 'reflect',
     embedding,
   };
 
-  const llm = resolveLLMProvider(process.env, process.env.AUDREY_LLM_PROVIDER);
-  if (llm) config.llm = llm;
+  const llm = resolveLLMProvider(process.env, process.env['AUDREY_LLM_PROVIDER']);
+  if (llm) config.llm = llm as AudreyConfig['llm'];
 
   const audrey = new Audrey(config);
   try {
     await initializeEmbeddingProvider(audrey.embeddingProvider);
 
     // Read conversation turns from stdin if available
-    let turns = null;
+    let turns: unknown[] | null = null;
     if (!process.stdin.isTTY) {
-      const chunks = [];
+      const chunks: Buffer[] = [];
       for await (const chunk of process.stdin) {
-        chunks.push(chunk);
+        chunks.push(chunk as Buffer);
       }
       const raw = Buffer.concat(chunks).toString('utf-8').trim();
       if (raw) {
         try {
-          turns = JSON.parse(raw);
+          turns = JSON.parse(raw) as unknown[];
         } catch {
           console.error('[audrey] Could not parse stdin as JSON turns, skipping reflect.');
         }
@@ -327,7 +359,7 @@ async function reflect() {
 
     if (turns && Array.isArray(turns) && turns.length > 0) {
       console.log(`[audrey] Reflecting on ${turns.length} conversation turns...`);
-      const reflectResult = await audrey.reflect(turns);
+      const reflectResult = await audrey.reflect(turns as Array<{ role: string; content: string }>);
       if (reflectResult.skipped) {
         console.log(`[audrey] Reflect skipped: ${reflectResult.skipped}`);
       } else {
@@ -356,7 +388,7 @@ async function reflect() {
   }
 }
 
-function install() {
+function install(): void {
   try {
     execFileSync('claude', ['--version'], { stdio: 'ignore' });
   } catch {
@@ -365,8 +397,8 @@ function install() {
   }
 
   const dataDir = resolveDataDir(process.env);
-  const resolvedEmbedding = resolveEmbeddingProvider(process.env, process.env.AUDREY_EMBEDDING_PROVIDER);
-  const resolvedLlm = resolveLLMProvider(process.env, process.env.AUDREY_LLM_PROVIDER);
+  const resolvedEmbedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
+  const resolvedLlm = resolveLLMProvider(process.env, process.env['AUDREY_LLM_PROVIDER']);
   if (resolvedEmbedding.provider === 'gemini') {
     console.log('Using Gemini embeddings (3072d)');
   } else if (resolvedEmbedding.provider === 'local') {
@@ -435,7 +467,7 @@ Verify: claude mcp list
 `);
 }
 
-function uninstall() {
+function uninstall(): void {
   try {
     execFileSync('claude', ['--version'], { stdio: 'ignore' });
   } catch {
@@ -452,23 +484,23 @@ function uninstall() {
   }
 }
 
-function cliHasFlag(flag, argv = process.argv) {
+function cliHasFlag(flag: string, argv: string[] = process.argv): boolean {
   return Array.isArray(argv) && argv.includes(flag);
 }
 
 export function buildStatusReport({
   dataDir = resolveDataDir(process.env),
   claudeJsonPath = join(homedir(), '.claude.json'),
-} = {}) {
+}: { dataDir?: string; claudeJsonPath?: string } = {}): StatusReport {
   let registered = false;
   try {
-    const claudeConfig = JSON.parse(readFileSync(claudeJsonPath, 'utf-8'));
+    const claudeConfig = JSON.parse(readFileSync(claudeJsonPath, 'utf-8')) as { mcpServers?: Record<string, unknown> };
     registered = SERVER_NAME in (claudeConfig.mcpServers || {});
   } catch {
     // Ignore unreadable config.
   }
 
-  const report = {
+  const report: StatusReport = {
     generatedAt: new Date().toISOString(),
     registered,
     dataDir,
@@ -494,22 +526,22 @@ export function buildStatusReport({
     });
     report.stats = audrey.introspect();
     report.health = audrey.memoryStatus();
-    report.lastConsolidation = audrey.db.prepare(`
+    report.lastConsolidation = (audrey.db.prepare(`
       SELECT completed_at FROM consolidation_runs
       WHERE status = 'completed'
       ORDER BY completed_at DESC
       LIMIT 1
-    `).get()?.completed_at || 'never';
+    `).get() as { completed_at?: string } | undefined)?.completed_at ?? 'never';
     audrey.close();
   } catch (err) {
-    report.error = err.message || String(err);
+    report.error = (err as Error).message || String(err);
   }
 
   return report;
 }
 
-export function formatStatusReport(report) {
-  const lines = [];
+export function formatStatusReport(report: StatusReport): string {
+  const lines: string[] = [];
   lines.push(`Registration: ${report.registered ? 'active' : 'not registered'}`);
 
   if (!report.exists) {
@@ -525,21 +557,21 @@ export function formatStatusReport(report) {
   lines.push(`Data directory: ${report.dataDir}`);
   lines.push(`Stored dimensions: ${report.storedDimensions ?? 'unknown'}`);
   lines.push(
-    `Memories: ${report.stats.episodic} episodic, ${report.stats.semantic} semantic, ${report.stats.procedural} procedural`
+    `Memories: ${report.stats!.episodic} episodic, ${report.stats!.semantic} semantic, ${report.stats!.procedural} procedural`
   );
   lines.push(
-    `Index sync: ${report.health.vec_episodes}/${report.health.searchable_episodes} episodic, `
-    + `${report.health.vec_semantics}/${report.health.searchable_semantics} semantic, `
-    + `${report.health.vec_procedures}/${report.health.searchable_procedures} procedural`
+    `Index sync: ${report.health!.vec_episodes}/${report.health!.searchable_episodes} episodic, `
+    + `${report.health!.vec_semantics}/${report.health!.searchable_semantics} semantic, `
+    + `${report.health!.vec_procedures}/${report.health!.searchable_procedures} procedural`
   );
   lines.push(
-    `Health: ${report.health.healthy ? 'healthy' : 'unhealthy'}`
-    + `${report.health.reembed_recommended ? ' (re-embed recommended)' : ''}`
+    `Health: ${report.health!.healthy ? 'healthy' : 'unhealthy'}`
+    + `${report.health!.reembed_recommended ? ' (re-embed recommended)' : ''}`
   );
-  lines.push(`Dormant: ${report.stats.dormant}`);
-  lines.push(`Causal links: ${report.stats.causalLinks}`);
-  lines.push(`Contradictions: ${report.stats.contradictions.open} open, ${report.stats.contradictions.resolved} resolved`);
-  lines.push(`Consolidation runs: ${report.stats.totalConsolidationRuns}`);
+  lines.push(`Dormant: ${report.stats!.dormant}`);
+  lines.push(`Causal links: ${report.stats!.causalLinks}`);
+  lines.push(`Contradictions: ${report.stats!.contradictions.open} open, ${report.stats!.contradictions.resolved} resolved`);
+  lines.push(`Consolidation runs: ${report.stats!.totalConsolidationRuns}`);
   lines.push(`Last consolidation: ${report.lastConsolidation}`);
 
   return lines.join('\n');
@@ -550,7 +582,12 @@ export function runStatusCommand({
   dataDir = resolveDataDir(process.env),
   claudeJsonPath = join(homedir(), '.claude.json'),
   out = console.log,
-} = {}) {
+}: {
+  argv?: string[];
+  dataDir?: string;
+  claudeJsonPath?: string;
+  out?: (...args: unknown[]) => void;
+} = {}): { report: StatusReport; exitCode: number } {
   const report = buildStatusReport({ dataDir, claudeJsonPath });
   if (cliHasFlag('--json', argv)) {
     out(JSON.stringify(report, null, 2));
@@ -566,25 +603,29 @@ export function runStatusCommand({
   return { report, exitCode };
 }
 
-function status() {
+function status(): void {
   const { exitCode } = runStatusCommand();
   if (exitCode !== 0) {
     process.exitCode = exitCode;
   }
 }
 
-function toolResult(data) {
-  return { content: [{ type: 'text', text: JSON.stringify(data) }] };
+function toolResult(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(data) }] };
 }
 
-function toolError(err) {
-  return { isError: true, content: [{ type: 'text', text: `Error: ${err.message || String(err)}` }] };
+function toolError(err: unknown): { isError: boolean; content: Array<{ type: 'text'; text: string }> } {
+  return { isError: true, content: [{ type: 'text' as const, text: `Error: ${(err as Error).message || String(err)}` }] };
 }
 
-export function registerShutdownHandlers(processRef, audrey, logger = console.error) {
+export function registerShutdownHandlers(
+  processRef: NodeJS.Process,
+  audrey: Audrey,
+  logger: (...args: unknown[]) => void = console.error,
+): (message?: string, exitCode?: number) => void {
   let closed = false;
 
-  const shutdown = (message, exitCode = 0) => {
+  const shutdown = (message?: string, exitCode = 0): void => {
     if (message) {
       logger(message);
     }
@@ -593,7 +634,7 @@ export function registerShutdownHandlers(processRef, audrey, logger = console.er
       try {
         audrey.close();
       } catch (err) {
-        logger(`[audrey-mcp] shutdown error: ${err.message || String(err)}`);
+        logger(`[audrey-mcp] shutdown error: ${(err as Error).message || String(err)}`);
         exitCode = exitCode === 0 ? 1 : exitCode;
       }
     }
@@ -605,19 +646,20 @@ export function registerShutdownHandlers(processRef, audrey, logger = console.er
   processRef.once('SIGINT', () => shutdown('[audrey-mcp] received SIGINT, shutting down'));
   processRef.once('SIGTERM', () => shutdown('[audrey-mcp] received SIGTERM, shutting down'));
   processRef.once('SIGHUP', () => shutdown('[audrey-mcp] received SIGHUP, shutting down'));
-  processRef.once('uncaughtException', err => {
+  processRef.once('uncaughtException', (err: Error) => {
     logger('[audrey-mcp] uncaught exception:', err);
-    shutdown(null, 1);
+    shutdown(undefined, 1);
   });
-  processRef.once('unhandledRejection', reason => {
+  processRef.once('unhandledRejection', (reason: unknown) => {
     logger('[audrey-mcp] unhandled rejection:', reason);
-    shutdown(null, 1);
+    shutdown(undefined, 1);
   });
 
   return shutdown;
 }
 
-export function registerDreamTool(server, audrey) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function registerDreamTool(server: any, audrey: Audrey): void {
   server.tool(
     'memory_dream',
     {
@@ -625,7 +667,11 @@ export function registerDreamTool(server, audrey) {
       similarity_threshold: z.number().optional().describe('Similarity threshold for clustering (default 0.85)'),
       dormant_threshold: z.number().min(0).max(1).optional().describe('Confidence below which memories go dormant (default 0.1)'),
     },
-    async ({ min_cluster_size, similarity_threshold, dormant_threshold }) => {
+    async ({ min_cluster_size, similarity_threshold, dormant_threshold }: {
+      min_cluster_size?: number;
+      similarity_threshold?: number;
+      dormant_threshold?: number;
+    }) => {
       try {
         const result = await audrey.dream({
           minClusterSize: min_cluster_size,
@@ -640,15 +686,15 @@ export function registerDreamTool(server, audrey) {
   );
 }
 
-async function main() {
+async function main(): Promise<void> {
   const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
   const config = buildAudreyConfig();
   const audrey = new Audrey(config);
 
-  const embLabel = config.embedding.provider === 'mock'
+  const embLabel = config.embedding?.provider === 'mock'
     ? 'mock embeddings - set OPENAI_API_KEY for real semantic search'
-    : `${config.embedding.provider} embeddings (${config.embedding.dimensions}d)`;
+    : `${config.embedding?.provider} embeddings (${config.embedding?.dimensions}d)`;
   console.error(`[audrey-mcp] v${VERSION} started - agent=${config.agent} dataDir=${config.dataDir} (${embLabel})`);
 
   const server = new McpServer({
@@ -728,7 +774,7 @@ async function main() {
 
   server.tool('memory_import', memoryImportToolSchema, async ({ snapshot }) => {
     try {
-      await audrey.import(snapshot);
+      await audrey.import(snapshot as Parameters<typeof audrey.import>[0]);
       return toolResult({ imported: true, stats: audrey.introspect() });
     } catch (err) {
       return toolError(err);
@@ -742,7 +788,7 @@ async function main() {
       if (id) {
         result = audrey.forget(id, { purge: purge ?? false });
       } else {
-        result = await audrey.forgetByQuery(query, {
+        result = await audrey.forgetByQuery(query!, {
           minSimilarity: min_similarity ?? 0.9,
           purge: purge ?? false,
         });
