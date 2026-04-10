@@ -23,8 +23,8 @@ import { existsSync, rmSync } from 'node:fs';
 const TEST_DIR = './test-mcp-server';
 
 describe('MCP config', () => {
-  it('VERSION is 0.19.0', () => {
-    expect(VERSION).toBe('0.19.0');
+  it('VERSION is 0.20.0', () => {
+    expect(VERSION).toBe('0.20.0');
   });
 });
 
