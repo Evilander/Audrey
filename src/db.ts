@@ -132,7 +132,37 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_consolidation_status ON consolidation_runs(status);
 `;
 
-export function createVec0Tables(db, dimensions) {
+interface ConfigRow {
+  value: string;
+}
+
+interface CountRow {
+  c: number;
+}
+
+interface MigrationRow {
+  id: string;
+  embedding: Buffer;
+  source?: string;
+  consolidated?: number;
+  state?: string;
+}
+
+interface PragmaColumn {
+  name: string;
+}
+
+interface MigrateTableOptions {
+  source: string;
+  target: string;
+  selectCols: string;
+  insertCols: string;
+  placeholders: string;
+  transform: (row: MigrationRow) => unknown[];
+  dimensions?: number;
+}
+
+export function createVec0Tables(db: Database.Database, dimensions: number): void {
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(
       id text primary key,
@@ -157,17 +187,17 @@ export function createVec0Tables(db, dimensions) {
   `);
 }
 
-export function dropVec0Tables(db) {
+export function dropVec0Tables(db: Database.Database): void {
   db.exec('DROP TABLE IF EXISTS vec_episodes');
   db.exec('DROP TABLE IF EXISTS vec_semantics');
   db.exec('DROP TABLE IF EXISTS vec_procedures');
 }
 
-function migrateTable(db, { source, target, selectCols, insertCols, placeholders, transform, dimensions }) {
-  const count = db.prepare(`SELECT COUNT(*) as c FROM ${target}`).get().c;
+function migrateTable(db: Database.Database, { source, target, selectCols, insertCols, placeholders, transform, dimensions }: MigrateTableOptions): void {
+  const count = (db.prepare(`SELECT COUNT(*) as c FROM ${target}`).get() as CountRow).c;
   if (count > 0) return;
 
-  const rows = db.prepare(`SELECT ${selectCols} FROM ${source} WHERE embedding IS NOT NULL`).all();
+  const rows = db.prepare(`SELECT ${selectCols} FROM ${source} WHERE embedding IS NOT NULL`).all() as MigrationRow[];
   if (rows.length === 0) return;
 
   const expectedBytes = dimensions ? dimensions * 4 : null;
@@ -181,7 +211,7 @@ function migrateTable(db, { source, target, selectCols, insertCols, placeholders
   tx();
 }
 
-function migrateEmbeddingsToVec0(db, dimensions) {
+function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): void {
   migrateTable(db, {
     source: 'episodes',
     target: 'vec_episodes',
@@ -213,22 +243,31 @@ function migrateEmbeddingsToVec0(db, dimensions) {
   });
 }
 
-function getEmbeddingSyncCounts(db) {
+interface EmbeddingSyncCounts {
+  episodes: number;
+  vecEpisodes: number;
+  semantics: number;
+  vecSemantics: number;
+  procedures: number;
+  vecProcedures: number;
+}
+
+function getEmbeddingSyncCounts(db: Database.Database): EmbeddingSyncCounts {
   let vecEpisodes = 0;
   let vecSemantics = 0;
   let vecProcedures = 0;
 
   try {
-    vecEpisodes = db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get().c;
-    vecSemantics = db.prepare('SELECT COUNT(*) as c FROM vec_semantics').get().c;
-    vecProcedures = db.prepare('SELECT COUNT(*) as c FROM vec_procedures').get().c;
+    vecEpisodes = (db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get() as CountRow).c;
+    vecSemantics = (db.prepare('SELECT COUNT(*) as c FROM vec_semantics').get() as CountRow).c;
+    vecProcedures = (db.prepare('SELECT COUNT(*) as c FROM vec_procedures').get() as CountRow).c;
   } catch {
     // vec tables may not exist yet
   }
 
-  const episodes = db.prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL').get().c;
-  const semantics = db.prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL').get().c;
-  const procedures = db.prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL').get().c;
+  const episodes = (db.prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL').get() as CountRow).c;
+  const semantics = (db.prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL').get() as CountRow).c;
+  const procedures = (db.prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL').get() as CountRow).c;
 
   return {
     episodes,
@@ -240,8 +279,8 @@ function getEmbeddingSyncCounts(db) {
   };
 }
 
-function addColumnIfMissing(db, table, column, definition) {
-  const columns = db.pragma(`table_info(${table})`);
+function addColumnIfMissing(db: Database.Database, table: string, column: string, definition: string): void {
+  const columns = db.pragma(`table_info(${table})`) as PragmaColumn[];
   const exists = columns.some(col => col.name === column);
   if (!exists) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -250,7 +289,7 @@ function addColumnIfMissing(db, table, column, definition) {
 
 const SCHEMA_VERSION = 7;
 
-const MIGRATIONS = [
+const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
   { version: 1, up(db) { addColumnIfMissing(db, 'episodes', 'context', "TEXT DEFAULT '{}'"); } },
   { version: 2, up(db) { addColumnIfMissing(db, 'episodes', 'affect', "TEXT DEFAULT '{}'"); } },
   { version: 3, up(db) { addColumnIfMissing(db, 'semantics', 'interference_count', 'INTEGER DEFAULT 0'); } },
@@ -260,8 +299,8 @@ const MIGRATIONS = [
   { version: 7, up(db) { addColumnIfMissing(db, 'episodes', 'private', 'INTEGER DEFAULT 0'); } },
 ];
 
-function runMigrations(db) {
-  const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get();
+function runMigrations(db: Database.Database): void {
+  const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get() as ConfigRow | undefined;
   const currentVersion = row ? Number(row.value) : 0;
 
   if (currentVersion >= SCHEMA_VERSION) return;
@@ -277,12 +316,10 @@ function runMigrations(db) {
   ).run(String(SCHEMA_VERSION));
 }
 
-/**
- * @param {string} dataDir
- * @param {{ dimensions?: number }} [options]
- * @returns {{ db: import('better-sqlite3').Database, migrated: boolean }}
- */
-export function createDatabase(dataDir, options = {}) {
+export function createDatabase(
+  dataDir: string,
+  options: { dimensions?: number } = {},
+): { db: Database.Database; migrated: boolean } {
   let { dimensions } = options;
   let migrated = false;
 
@@ -296,7 +333,7 @@ export function createDatabase(dataDir, options = {}) {
   runMigrations(db);
 
   if (dimensions == null) {
-    const stored = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get();
+    const stored = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as ConfigRow | undefined;
     if (stored) {
       dimensions = parseInt(stored.value, 10);
     }
@@ -311,7 +348,7 @@ export function createDatabase(dataDir, options = {}) {
 
     const existing = db.prepare(
       "SELECT value FROM audrey_config WHERE key = 'dimensions'"
-    ).get();
+    ).get() as ConfigRow | undefined;
 
     if (existing) {
       const storedDims = parseInt(existing.value, 10);
@@ -338,8 +375,6 @@ export function createDatabase(dataDir, options = {}) {
         || sync.semantics !== sync.vecSemantics
         || sync.procedures !== sync.vecProcedures
       ) {
-        // Legacy blobs exist but could not be copied cleanly into vec0.
-        // Mark the store for lazy re-embedding so the next encode/recall repairs it.
         migrated = true;
       }
     }
@@ -348,22 +383,22 @@ export function createDatabase(dataDir, options = {}) {
   return { db, migrated };
 }
 
-export function readStoredDimensions(dataDir) {
+export function readStoredDimensions(dataDir: string): number | null {
   const dbPath = join(dataDir, 'audrey.db');
   if (!existsSync(dbPath)) return null;
   const db = new Database(dbPath, { readonly: true });
   try {
-    const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get();
+    const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as ConfigRow | undefined;
     return row ? parseInt(row.value, 10) : null;
-  } catch (err) {
-    if (err.message?.includes('no such table')) return null;
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message?.includes('no such table')) return null;
     throw err;
   } finally {
     db.close();
   }
 }
 
-export function closeDatabase(db) {
+export function closeDatabase(db: Database.Database): void {
   if (db && db.open) {
     db.close();
   }
