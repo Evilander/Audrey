@@ -1,4 +1,8 @@
 export { Audrey } from './audrey.js';
+export { startServer } from './server.js';
+export type { ServerOptions } from './server.js';
+export { createApp } from './routes.js';
+export type { AppOptions } from './routes.js';
 export { computeConfidence, sourceReliability, salienceModifier, DEFAULT_SOURCE_RELIABILITY, DEFAULT_WEIGHTS, DEFAULT_HALF_LIVES } from './confidence.js';
 export {
   createEmbeddingProvider,
