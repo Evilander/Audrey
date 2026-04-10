@@ -1,25 +1,36 @@
+import Database from 'better-sqlite3';
+import type { Affect, CausalParams, EmbeddingProvider, SourceType } from './types.js';
 import { generateId } from './ulid.js';
 import { sourceReliability } from './confidence.js';
 import { arousalSalienceBoost } from './affect.js';
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
- * @param {{ content: string, source: string, salience?: number, causal?: { trigger?: string, consequence?: string }, tags?: string[], supersedes?: string, context?: object, affect?: object, arousalWeight?: number, private?: boolean }} params
- * @returns {Promise<string>}
- */
-export async function encodeEpisode(db, embeddingProvider, {
-  content,
-  source,
-  salience = 0.5,
-  causal,
-  tags,
-  supersedes,
-  context = {},
-  affect = {},
-  arousalWeight = 0.3,
-  private: isPrivate = false,
-}) {
+export async function encodeEpisode(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  {
+    content,
+    source,
+    salience = 0.5,
+    causal,
+    tags,
+    supersedes,
+    context = {},
+    affect = {},
+    arousalWeight = 0.3,
+    private: isPrivate = false,
+  }: {
+    content: string;
+    source: SourceType;
+    salience?: number;
+    causal?: CausalParams;
+    tags?: string[];
+    supersedes?: string;
+    context?: Record<string, string>;
+    affect?: Partial<Affect>;
+    arousalWeight?: number;
+    private?: boolean;
+  },
+): Promise<string> {
   if (!content || typeof content !== 'string') throw new Error('content must be a non-empty string');
   if (salience < 0 || salience > 1) throw new Error('salience must be between 0 and 1');
   if (tags && !Array.isArray(tags)) throw new Error('tags must be an array');

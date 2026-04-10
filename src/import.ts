@@ -1,8 +1,15 @@
-function jsonOrNull(value) {
+import Database from 'better-sqlite3';
+import type { EmbeddingProvider } from './types.js';
+
+interface CountRow {
+  c: number;
+}
+
+function jsonOrNull(value: unknown): string | null {
   return value == null ? null : JSON.stringify(value);
 }
 
-function isDatabaseEmpty(db) {
+function isDatabaseEmpty(db: Database.Database): boolean {
   const tables = [
     'episodes',
     'semantics',
@@ -13,30 +20,31 @@ function isDatabaseEmpty(db) {
     'consolidation_metrics',
   ];
 
-  return tables.every(table => db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get().c === 0);
+  return tables.every(table => (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as CountRow).c === 0);
 }
 
-export async function importMemories(db, embeddingProvider, snapshot) {
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export async function importMemories(db: Database.Database, embeddingProvider: EmbeddingProvider, snapshot: any): Promise<void> {
   if (!isDatabaseEmpty(db)) {
     throw new Error('Cannot import into a database that is not empty');
   }
 
-  const episodes = snapshot.episodes || [];
-  const semantics = snapshot.semantics || [];
-  const procedures = snapshot.procedures || [];
-  const causalLinks = snapshot.causalLinks || [];
-  const contradictions = snapshot.contradictions || [];
-  const consolidationRuns = snapshot.consolidationRuns || [];
-  const consolidationMetrics = snapshot.consolidationMetrics || [];
+  const episodes: any[] = snapshot.episodes || [];
+  const semantics: any[] = snapshot.semantics || [];
+  const procedures: any[] = snapshot.procedures || [];
+  const causalLinks: any[] = snapshot.causalLinks || [];
+  const contradictions: any[] = snapshot.contradictions || [];
+  const consolidationRuns: any[] = snapshot.consolidationRuns || [];
+  const consolidationMetrics: any[] = snapshot.consolidationMetrics || [];
 
   const episodeVectors = episodes.length > 0
-    ? await embeddingProvider.embedBatch(episodes.map(ep => ep.content))
+    ? await embeddingProvider.embedBatch(episodes.map((ep: any) => ep.content as string))
     : [];
   const semanticVectors = semantics.length > 0
-    ? await embeddingProvider.embedBatch(semantics.map(sem => sem.content))
+    ? await embeddingProvider.embedBatch(semantics.map((sem: any) => sem.content as string))
     : [];
   const procedureVectors = procedures.length > 0
-    ? await embeddingProvider.embedBatch(procedures.map(proc => proc.content))
+    ? await embeddingProvider.embedBatch(procedures.map((proc: any) => proc.content as string))
     : [];
 
   const insertEpisode = db.prepare(`
@@ -101,8 +109,8 @@ export async function importMemories(db, embeddingProvider, snapshot) {
 
   const writeImport = db.transaction(() => {
     for (let i = 0; i < episodes.length; i++) {
-      const ep = episodes[i];
-      const embeddingBuffer = embeddingProvider.vectorToBuffer(episodeVectors[i]);
+      const ep = episodes[i]!;
+      const embeddingBuffer = embeddingProvider.vectorToBuffer(episodeVectors[i]!);
       insertEpisode.run(
         ep.id,
         ep.content,
@@ -127,8 +135,8 @@ export async function importMemories(db, embeddingProvider, snapshot) {
     }
 
     for (let i = 0; i < semantics.length; i++) {
-      const sem = semantics[i];
-      const embeddingBuffer = embeddingProvider.vectorToBuffer(semanticVectors[i]);
+      const sem = semantics[i]!;
+      const embeddingBuffer = embeddingProvider.vectorToBuffer(semanticVectors[i]!);
       insertSemantic.run(
         sem.id,
         sem.content,
@@ -156,8 +164,8 @@ export async function importMemories(db, embeddingProvider, snapshot) {
     }
 
     for (let i = 0; i < procedures.length; i++) {
-      const proc = procedures[i];
-      const embeddingBuffer = embeddingProvider.vectorToBuffer(procedureVectors[i]);
+      const proc = procedures[i]!;
+      const embeddingBuffer = embeddingProvider.vectorToBuffer(procedureVectors[i]!);
       insertProcedure.run(
         proc.id,
         proc.content,
@@ -235,7 +243,7 @@ export async function importMemories(db, embeddingProvider, snapshot) {
       );
     }
 
-    for (const [key, value] of Object.entries(snapshot.config || {})) {
+    for (const [key, value] of Object.entries((snapshot.config || {}) as Record<string, unknown>)) {
       if (key === 'dimensions') continue;
       upsertConfig.run(key, String(value));
     }
@@ -243,3 +251,4 @@ export async function importMemories(db, embeddingProvider, snapshot) {
 
   writeImport();
 }
+/* eslint-enable @typescript-eslint/no-explicit-any */

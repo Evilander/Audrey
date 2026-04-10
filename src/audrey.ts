@@ -1,4 +1,30 @@
 import { EventEmitter } from 'node:events';
+import Database from 'better-sqlite3';
+import type {
+  AudreyConfig,
+  ConfidenceConfig,
+  ConsolidationOptions,
+  ConsolidationResult,
+  DecayResult,
+  DreamResult,
+  EmbeddingProvider,
+  EncodeParams,
+  ForgetResult,
+  GreetingOptions,
+  GreetingResult,
+  HalfLives,
+  IntrospectResult,
+  LLMProvider,
+  MemoryStatusResult,
+  PurgeResult,
+  RecallOptions,
+  RecallResult,
+  ReembedCounts,
+  ReflectResult,
+  TruthResolution,
+  ConsolidationRunRow,
+  Affect,
+} from './types.js';
 import { createDatabase, closeDatabase } from './db.js';
 import { createEmbeddingProvider } from './embedding.js';
 import { createLLMProvider } from './llm.js';
@@ -18,75 +44,81 @@ import { reembedAll } from './migrate.js';
 import { applyInterference } from './interference.js';
 import { detectResonance } from './affect.js';
 
-/**
- * @typedef {'direct-observation' | 'told-by-user' | 'tool-result' | 'inference' | 'model-generated'} SourceType
- * @typedef {'episodic' | 'semantic' | 'procedural'} MemoryType
- *
- * @typedef {Object} EncodeParams
- * @property {string} content
- * @property {SourceType} source
- * @property {number} [salience]
- * @property {{ trigger?: string, consequence?: string }} [causal]
- * @property {string[]} [tags]
- * @property {string} [supersedes]
- * @property {Record<string, string>} [context]
- * @property {{ valence?: number, arousal?: number, label?: string }} [affect]
- *
- * @typedef {Object} RecallOptions
- * @property {number} [minConfidence]
- * @property {MemoryType[]} [types]
- * @property {number} [limit]
- * @property {boolean} [includeProvenance]
- * @property {boolean} [includeDormant]
- * @property {string[]} [tags]
- * @property {string[]} [sources]
- * @property {string} [after]
- * @property {string} [before]
- * @property {Record<string, string>} [context]
- * @property {{ valence?: number, arousal?: number }} [mood]
- *
- * @typedef {Object} RecallResult
- * @property {string} id
- * @property {string} content
- * @property {MemoryType} type
- * @property {number} confidence
- * @property {number} score
- * @property {string} source
- * @property {string} createdAt
- *
- * @typedef {Object} ConsolidationResult
- * @property {string} runId
- * @property {number} episodesEvaluated
- * @property {number} clustersFound
- * @property {number} principlesExtracted
- * @property {string} status
- *
- * @typedef {Object} IntrospectResult
- * @property {number} episodic
- * @property {number} semantic
- * @property {number} procedural
- * @property {number} causalLinks
- * @property {number} dormant
- * @property {{ open: number, resolved: number, context_dependent: number, reopened: number }} contradictions
- * @property {string | null} lastConsolidation
- * @property {number} totalConsolidationRuns
- *
- * @typedef {Object} TruthResolution
- * @property {'a_wins' | 'b_wins' | 'context_dependent'} resolution
- * @property {Object} [conditions]
- * @property {string} explanation
- *
- * @typedef {Object} AudreyConfig
- * @property {string} [dataDir]
- * @property {string} [agent]
- * @property {{ provider: 'mock' | 'openai', dimensions?: number, apiKey?: string }} [embedding]
- * @property {{ provider: 'mock' | 'anthropic' | 'openai', apiKey?: string, model?: string }} [llm]
- * @property {{ minEpisodes?: number }} [consolidation]
- * @property {{ dormantThreshold?: number }} [decay]
- */
+interface ConfigRow {
+  value: string;
+}
+
+interface CountRow {
+  c: number;
+}
+
+interface ContentRow {
+  content: string;
+}
+
+interface StatusRow {
+  status: string;
+}
+
+interface AffectRow {
+  affect: string;
+}
+
+interface GreetingEpisodeRow {
+  id: string;
+  content: string;
+  source: string;
+  tags: string | null;
+  salience: number;
+  created_at: string;
+}
+
+interface GreetingPrincipleRow {
+  id: string;
+  content: string;
+  salience: number;
+  created_at: string;
+}
+
+interface GreetingIdentityRow {
+  id: string;
+  content: string;
+  tags: string | null;
+  salience: number;
+  created_at: string;
+}
+
+interface GreetingUnresolvedRow {
+  id: string;
+  content: string;
+  tags: string | null;
+  salience: number;
+  created_at: string;
+}
 
 export class Audrey extends EventEmitter {
-  /** @param {AudreyConfig} [config] */
+  agent: string;
+  dataDir: string;
+  embeddingProvider: EmbeddingProvider;
+  db: Database.Database;
+  llmProvider: LLMProvider | null;
+  confidenceConfig: ConfidenceConfig;
+  consolidationConfig: { minEpisodes: number };
+  decayConfig: { dormantThreshold: number };
+  interferenceConfig: { enabled: boolean; k: number; threshold: number; weight: number };
+  contextConfig: { enabled: boolean; weight: number };
+  affectConfig: {
+    enabled: boolean;
+    weight: number;
+    arousalWeight: number;
+    resonance: { enabled: boolean; k: number; threshold: number; affectThreshold: number };
+  };
+  autoReflect: boolean;
+
+  private _migrationPending: boolean;
+  private _autoConsolidateTimer: ReturnType<typeof setInterval> | null;
+  private _closed: boolean;
+
   constructor({
     dataDir = './audrey-data',
     agent = 'default',
@@ -99,7 +131,7 @@ export class Audrey extends EventEmitter {
     context = {},
     affect = {},
     autoReflect = false,
-  } = {}) {
+  }: AudreyConfig = {}) {
     super();
 
     const dormantThreshold = decay.dormantThreshold ?? 0.1;
@@ -157,14 +189,14 @@ export class Audrey extends EventEmitter {
     this.autoReflect = autoReflect;
   }
 
-  async _ensureMigrated() {
+  async _ensureMigrated(): Promise<void> {
     if (!this._migrationPending) return;
     const counts = await reembedAll(this.db, this.embeddingProvider);
     this._migrationPending = false;
     this.emit('migration', counts);
   }
 
-  _emitValidation(id, params) {
+  _emitValidation(id: string, params: EncodeParams): void {
     validateMemory(this.db, this.embeddingProvider, { id, ...params }, {
       llmProvider: this.llmProvider,
     })
@@ -188,11 +220,7 @@ export class Audrey extends EventEmitter {
       .catch(err => this.emit('error', err));
   }
 
-  /**
-   * @param {EncodeParams} params
-   * @returns {Promise<string>}
-   */
-  async encode(params) {
+  async encode(params: EncodeParams): Promise<string> {
     await this._ensureMigrated();
     const encodeParams = { ...params, arousalWeight: this.affectConfig.arousalWeight };
     const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams);
@@ -219,20 +247,19 @@ export class Audrey extends EventEmitter {
     return id;
   }
 
-
-  async reflect(turns) {
+  async reflect(turns: { role: string; content: string }[]): Promise<ReflectResult> {
     if (!this.llmProvider) return { encoded: 0, memories: [], skipped: 'no llm provider' };
 
     const prompt = buildReflectionPrompt(turns);
-    let raw;
+    let raw: string;
     try {
-      raw = await this.llmProvider.chat(prompt);
+      raw = await this.llmProvider.chat!(prompt as unknown as string) as string;
     } catch (err) {
       this.emit('error', err);
       return { encoded: 0, memories: [], skipped: 'llm error' };
     }
 
-    let parsed;
+    let parsed: { memories?: Array<{ content?: string; source?: string; salience?: number; tags?: string[]; private?: boolean; affect?: Affect }> };
     try {
       parsed = JSON.parse(raw);
     } catch {
@@ -246,7 +273,7 @@ export class Audrey extends EventEmitter {
       try {
         await this.encode({
           content: mem.content,
-          source: mem.source,
+          source: mem.source as EncodeParams['source'],
           salience: mem.salience,
           tags: mem.tags,
           private: mem.private ?? false,
@@ -258,16 +285,12 @@ export class Audrey extends EventEmitter {
       }
     }
 
-    return { encoded, memories };
+    return { encoded, memories: memories as ReflectResult['memories'] };
   }
 
-  /**
-   * @param {EncodeParams[]} paramsList
-   * @returns {Promise<string[]>}
-   */
-  async encodeBatch(paramsList) {
+  async encodeBatch(paramsList: EncodeParams[]): Promise<string[]> {
     await this._ensureMigrated();
-    const ids = [];
+    const ids: string[] = [];
     for (const params of paramsList) {
       const id = await encodeEpisode(this.db, this.embeddingProvider, params);
       ids.push(id);
@@ -275,18 +298,13 @@ export class Audrey extends EventEmitter {
     }
 
     for (let i = 0; i < ids.length; i++) {
-      this._emitValidation(ids[i], paramsList[i]);
+      this._emitValidation(ids[i]!, paramsList[i]!);
     }
 
     return ids;
   }
 
-  /**
-   * @param {string} query
-   * @param {RecallOptions} [options]
-   * @returns {Promise<RecallResult[]>}
-   */
-  async recall(query, options = {}) {
+  async recall(query: string, options: RecallOptions = {}): Promise<RecallResult[]> {
     await this._ensureMigrated();
     return recallFn(this.db, this.embeddingProvider, query, {
       ...options,
@@ -294,12 +312,7 @@ export class Audrey extends EventEmitter {
     });
   }
 
-  /**
-   * @param {string} query
-   * @param {RecallOptions} [options]
-   * @returns {AsyncGenerator<RecallResult>}
-   */
-  async *recallStream(query, options = {}) {
+  async *recallStream(query: string, options: RecallOptions = {}): AsyncGenerator<RecallResult> {
     await this._ensureMigrated();
     yield* recallStreamFn(this.db, this.embeddingProvider, query, {
       ...options,
@@ -307,8 +320,8 @@ export class Audrey extends EventEmitter {
     });
   }
 
-  _recallConfig(options) {
-    let config = options.confidenceConfig ?? this.confidenceConfig;
+  _recallConfig(options: RecallOptions): ConfidenceConfig {
+    let config: ConfidenceConfig = options.confidenceConfig ?? this.confidenceConfig;
     if (this.contextConfig.enabled && options.context) {
       config = { ...config, retrievalContext: options.context };
     }
@@ -318,29 +331,21 @@ export class Audrey extends EventEmitter {
     return config;
   }
 
-  /**
-   * @param {{ minClusterSize?: number, similarityThreshold?: number, extractPrinciple?: Function, llmProvider?: import('./llm.js').LLMProvider }} [options]
-   * @returns {Promise<ConsolidationResult>}
-   */
-  async consolidate(options = {}) {
+  async consolidate(options: Partial<ConsolidationOptions> = {}): Promise<ConsolidationResult & { status: string }> {
     await this._ensureMigrated();
     const result = await runConsolidation(this.db, this.embeddingProvider, {
       minClusterSize: options.minClusterSize || this.consolidationConfig.minEpisodes,
       similarityThreshold: options.similarityThreshold || 0.80,
       extractPrinciple: options.extractPrinciple,
-      llmProvider: options.llmProvider || this.llmProvider,
+      llmProvider: options.llmProvider || this.llmProvider || undefined,
     });
-    const run = this.db.prepare('SELECT status FROM consolidation_runs WHERE id = ?').get(result.runId);
+    const run = db_prepare_get_status(this.db, result.runId);
     const output = { ...result, status: run?.status || 'completed' };
     this.emit('consolidation', output);
     return output;
   }
 
-  /**
-   * @param {{ dormantThreshold?: number }} [options]
-   * @returns {{ totalEvaluated: number, transitionedToDormant: number, timestamp: string }}
-   */
-  decay(options = {}) {
+  decay(options: { dormantThreshold?: number; halfLives?: Partial<HalfLives> } = {}): DecayResult {
     const result = applyDecay(this.db, {
       dormantThreshold: options.dormantThreshold || this.decayConfig.dormantThreshold,
       halfLives: options.halfLives ?? this.confidenceConfig.halfLives,
@@ -349,35 +354,27 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  /**
-   * @param {string} runId
-   * @returns {{ rolledBackMemories: number, restoredEpisodes: number }}
-   */
-  rollback(runId) {
+  rollback(runId: string): { rolledBackMemories: number; restoredEpisodes: number } {
     const result = rollbackConsolidation(this.db, runId);
     this.emit('rollback', { runId, ...result });
     return result;
   }
 
-  /**
-   * @param {string} contradictionId
-   * @returns {Promise<TruthResolution>}
-   */
-  async resolveTruth(contradictionId) {
+  async resolveTruth(contradictionId: string): Promise<TruthResolution> {
     if (!this.llmProvider) {
       throw new Error('resolveTruth requires an LLM provider');
     }
 
     const contradiction = this.db.prepare(
       'SELECT * FROM contradictions WHERE id = ?'
-    ).get(contradictionId);
+    ).get(contradictionId) as { claim_a_id: string; claim_a_type: string; claim_b_id: string; claim_b_type: string } | undefined;
     if (!contradiction) throw new Error(`Contradiction not found: ${contradictionId}`);
 
     const claimA = this._loadClaimContent(contradiction.claim_a_id, contradiction.claim_a_type);
     const claimB = this._loadClaimContent(contradiction.claim_b_id, contradiction.claim_b_type);
 
     const messages = buildContextResolutionPrompt(claimA, claimB);
-    const result = await this.llmProvider.json(messages);
+    const result = await this.llmProvider.json(messages) as TruthResolution;
 
     const now = new Date().toISOString();
     const newState = result.resolution === 'context_dependent' ? 'context_dependent' : 'resolved';
@@ -402,49 +399,47 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  _loadClaimContent(claimId, claimType) {
+  _loadClaimContent(claimId: string, claimType: string): string {
     if (claimType === 'semantic') {
-      const row = this.db.prepare('SELECT content FROM semantics WHERE id = ?').get(claimId);
+      const row = this.db.prepare('SELECT content FROM semantics WHERE id = ?').get(claimId) as ContentRow | undefined;
       if (!row) throw new Error(`Semantic memory not found: ${claimId}`);
       return row.content;
     } else if (claimType === 'episodic') {
-      const row = this.db.prepare('SELECT content FROM episodes WHERE id = ?').get(claimId);
+      const row = this.db.prepare('SELECT content FROM episodes WHERE id = ?').get(claimId) as ContentRow | undefined;
       if (!row) throw new Error(`Episode not found: ${claimId}`);
       return row.content;
     }
     throw new Error(`Unknown claim type: ${claimType}`);
   }
 
-  /** @returns {Array<{ id: string, input_episode_ids: string, output_memory_ids: string, started_at: string, completed_at: string, status: string }>} */
-  consolidationHistory() {
+  consolidationHistory(): ConsolidationRunRow[] {
     return getConsolidationHistory(this.db);
   }
 
-  /** @returns {IntrospectResult} */
-  introspect() {
+  introspect(): IntrospectResult {
     return introspectFn(this.db);
   }
 
-  memoryStatus() {
-    const episodes = this.db.prepare('SELECT COUNT(*) as c FROM episodes').get().c;
-    const semantics = this.db.prepare('SELECT COUNT(*) as c FROM semantics').get().c;
-    const procedures = this.db.prepare('SELECT COUNT(*) as c FROM procedures').get().c;
-    const searchableEpisodes = this.db.prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL').get().c;
-    const searchableSemantics = this.db.prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL').get().c;
-    const searchableProcedures = this.db.prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL').get().c;
+  memoryStatus(): MemoryStatusResult {
+    const episodes = (this.db.prepare('SELECT COUNT(*) as c FROM episodes').get() as CountRow).c;
+    const semantics = (this.db.prepare('SELECT COUNT(*) as c FROM semantics').get() as CountRow).c;
+    const procedures = (this.db.prepare('SELECT COUNT(*) as c FROM procedures').get() as CountRow).c;
+    const searchableEpisodes = (this.db.prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL').get() as CountRow).c;
+    const searchableSemantics = (this.db.prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL').get() as CountRow).c;
+    const searchableProcedures = (this.db.prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL').get() as CountRow).c;
 
     let vecEpisodes = 0, vecSemantics = 0, vecProcedures = 0;
     try {
-      vecEpisodes = this.db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get().c;
-      vecSemantics = this.db.prepare('SELECT COUNT(*) as c FROM vec_semantics').get().c;
-      vecProcedures = this.db.prepare('SELECT COUNT(*) as c FROM vec_procedures').get().c;
+      vecEpisodes = (this.db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get() as CountRow).c;
+      vecSemantics = (this.db.prepare('SELECT COUNT(*) as c FROM vec_semantics').get() as CountRow).c;
+      vecProcedures = (this.db.prepare('SELECT COUNT(*) as c FROM vec_procedures').get() as CountRow).c;
     } catch {
       // vec tables may not exist if no dimensions configured
     }
 
-    const dimsRow = this.db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get();
+    const dimsRow = this.db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as ConfigRow | undefined;
     const dimensions = dimsRow ? parseInt(dimsRow.value, 10) : null;
-    const versionRow = this.db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get();
+    const versionRow = this.db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get() as ConfigRow | undefined;
     const schemaVersion = versionRow ? parseInt(versionRow.value, 10) : 0;
 
     const device = this.embeddingProvider._actualDevice
@@ -470,42 +465,42 @@ export class Audrey extends EventEmitter {
       searchable_procedures: searchableProcedures,
       dimensions,
       schema_version: schemaVersion,
-      device,
+      device: device ?? null,
       healthy,
       reembed_recommended: reembedRecommended,
     };
   }
 
-  async greeting({ context, recentLimit = 10, principleLimit = 5, identityLimit = 5 } = {}) {
+  async greeting({ context, recentLimit = 10, principleLimit = 5, identityLimit = 5 }: GreetingOptions = {}): Promise<GreetingResult> {
     const recent = this.db.prepare(
       'SELECT id, content, source, tags, salience, created_at FROM episodes WHERE "private" = 0 ORDER BY created_at DESC LIMIT ?'
-    ).all(recentLimit);
+    ).all(recentLimit) as GreetingEpisodeRow[];
 
     const principles = this.db.prepare(
       'SELECT id, content, salience, created_at FROM semantics WHERE state = ? ORDER BY salience DESC LIMIT ?'
-    ).all('active', principleLimit);
+    ).all('active', principleLimit) as GreetingPrincipleRow[];
 
     const identity = this.db.prepare(
       'SELECT id, content, tags, salience, created_at FROM episodes WHERE "private" = 1 ORDER BY created_at DESC LIMIT ?'
-    ).all(identityLimit);
+    ).all(identityLimit) as GreetingIdentityRow[];
 
     const unresolved = this.db.prepare(
       "SELECT id, content, tags, salience, created_at FROM episodes WHERE tags LIKE '%unresolved%' AND salience > 0.3 ORDER BY created_at DESC LIMIT 10"
-    ).all();
+    ).all() as GreetingUnresolvedRow[];
 
     const rawAffectRows = this.db.prepare(
       "SELECT affect FROM episodes WHERE affect IS NOT NULL AND affect != '{}' ORDER BY created_at DESC LIMIT 20"
-    ).all();
+    ).all() as AffectRow[];
 
     const affectParsed = rawAffectRows
-      .map(r => { try { return JSON.parse(r.affect); } catch { return null; } })
-      .filter(a => a && a.valence !== undefined);
+      .map(r => { try { return JSON.parse(r.affect) as Affect; } catch { return null; } })
+      .filter((a): a is Affect => a !== null && a.valence !== undefined);
 
-    let mood;
+    let mood: { valence: number; arousal: number; samples: number };
     if (affectParsed.length === 0) {
       mood = { valence: 0, arousal: 0, samples: 0 };
     } else {
-      const sumV = affectParsed.reduce((s, a) => s + a.valence, 0);
+      const sumV = affectParsed.reduce((s, a) => s + (a.valence ?? 0), 0);
       const sumA = affectParsed.reduce((s, a) => s + (a.arousal ?? 0), 0);
       mood = {
         valence: sumV / affectParsed.length,
@@ -514,7 +509,7 @@ export class Audrey extends EventEmitter {
       };
     }
 
-    const result = { recent, principles, mood, unresolved, identity };
+    const result: GreetingResult = { recent, principles, mood, unresolved, identity };
 
     if (context) {
       result.contextual = await this.recall(context, { limit: 5, includePrivate: true });
@@ -523,7 +518,11 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  async dream(options = {}) {
+  async dream(options: {
+    minClusterSize?: number;
+    similarityThreshold?: number;
+    dormantThreshold?: number;
+  } = {}): Promise<DreamResult> {
     await this._ensureMigrated();
 
     const consolidation = await this.consolidate({
@@ -537,7 +536,7 @@ export class Audrey extends EventEmitter {
 
     const stats = this.introspect();
 
-    const result = {
+    const result: DreamResult = {
       consolidation,
       decay,
       stats,
@@ -547,15 +546,15 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  export() {
+  export(): object {
     return exportMemories(this.db);
   }
 
-  async import(snapshot) {
+  async import(snapshot: unknown): Promise<void> {
     return importMemories(this.db, this.embeddingProvider, snapshot);
   }
 
-  startAutoConsolidate(intervalMs, options = {}) {
+  startAutoConsolidate(intervalMs: number, options: Partial<ConsolidationOptions> = {}): void {
     if (intervalMs < 1000) {
       throw new Error('Auto-consolidation interval must be at least 1000ms');
     }
@@ -570,41 +569,44 @@ export class Audrey extends EventEmitter {
     }
   }
 
-  stopAutoConsolidate() {
+  stopAutoConsolidate(): void {
     if (this._autoConsolidateTimer) {
       clearInterval(this._autoConsolidateTimer);
       this._autoConsolidateTimer = null;
     }
   }
 
-  suggestConsolidationParams() {
+  suggestConsolidationParams(): { minClusterSize: number; similarityThreshold: number; confidence: string } {
     return suggestParamsFn(this.db);
   }
 
-  forget(id, options = {}) {
+  forget(id: string, options: { purge?: boolean } = {}): ForgetResult {
     const result = forgetMemory(this.db, id, options);
     this.emit('forget', result);
     return result;
   }
 
-  async forgetByQuery(query, options = {}) {
+  async forgetByQuery(query: string, options: { minSimilarity?: number; purge?: boolean } = {}): Promise<ForgetResult | null> {
     await this._ensureMigrated();
     const result = await forgetByQueryFn(this.db, this.embeddingProvider, query, options);
     if (result) this.emit('forget', result);
     return result;
   }
 
-  purge() {
+  purge(): PurgeResult {
     const result = purgeMemories(this.db);
     this.emit('purge', result);
     return result;
   }
 
-  /** @returns {void} */
-  close() {
+  close(): void {
     if (this._closed) return;
     this._closed = true;
     this.stopAutoConsolidate();
     closeDatabase(this.db);
   }
+}
+
+function db_prepare_get_status(db: Database.Database, runId: string): StatusRow | undefined {
+  return db.prepare('SELECT status FROM consolidation_runs WHERE id = ?').get(runId) as StatusRow | undefined;
 }

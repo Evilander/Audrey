@@ -1,10 +1,30 @@
-export function suggestConsolidationParams(db) {
+import Database from 'better-sqlite3';
+
+interface MetricRow {
+  min_cluster_size: number;
+  similarity_threshold: number;
+  clusters_found: number;
+  principles_extracted: number;
+  episodes_evaluated: number;
+}
+
+interface ParamScore {
+  minClusterSize: number;
+  similarityThreshold: number;
+  yields: number[];
+}
+
+export function suggestConsolidationParams(db: Database.Database): {
+  minClusterSize: number;
+  similarityThreshold: number;
+  confidence: string;
+} {
   const runs = db.prepare(`
     SELECT min_cluster_size, similarity_threshold, clusters_found, principles_extracted, episodes_evaluated
     FROM consolidation_metrics
     ORDER BY created_at DESC
     LIMIT 20
-  `).all();
+  `).all() as MetricRow[];
 
   if (runs.length === 0) {
     return {
@@ -14,7 +34,7 @@ export function suggestConsolidationParams(db) {
     };
   }
 
-  const paramScores = new Map();
+  const paramScores = new Map<string, ParamScore>();
   for (const run of runs) {
     if (run.episodes_evaluated === 0) continue;
     const key = `${run.min_cluster_size}:${run.similarity_threshold}`;
@@ -25,10 +45,10 @@ export function suggestConsolidationParams(db) {
         yields: [],
       });
     }
-    paramScores.get(key).yields.push(run.principles_extracted / run.episodes_evaluated);
+    paramScores.get(key)!.yields.push(run.principles_extracted / run.episodes_evaluated);
   }
 
-  let bestKey = null;
+  let bestKey: string | null = null;
   let bestAvgYield = -1;
   for (const [key, data] of paramScores) {
     const avg = data.yields.reduce((a, b) => a + b, 0) / data.yields.length;
@@ -42,7 +62,7 @@ export function suggestConsolidationParams(db) {
     return { minClusterSize: 3, similarityThreshold: 0.85, confidence: 'no_data' };
   }
 
-  const best = paramScores.get(bestKey);
+  const best = paramScores.get(bestKey)!;
   const confidence = runs.length >= 5 ? 'high' : runs.length >= 2 ? 'medium' : 'low';
 
   return {

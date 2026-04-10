@@ -1,73 +1,36 @@
-/**
- * @typedef {Object} ChatMessage
- * @property {'system' | 'user' | 'assistant'} role
- * @property {string} content
- */
-
+import type {
+  ChatMessage,
+  LLMCompletionOptions,
+  LLMCompletionResult,
+  LLMConfig,
+  LLMProvider,
+} from './types.js';
 import { describeHttpError, requireApiKey } from './utils.js';
 
-function extractJSON(text) {
+function extractJSON(text: string): string {
   const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
-  return fenced ? fenced[1].trim() : text.trim();
+  return fenced ? fenced[1]!.trim() : text.trim();
 }
-
-/**
- * @typedef {Object} LLMCompletionResult
- * @property {string} content
- */
-
-/**
- * @typedef {Object} LLMCompletionOptions
- * @property {number} [maxTokens]
- */
-
-/**
- * @typedef {Object} LLMProvider
- * @property {string} modelName
- * @property {string} modelVersion
- * @property {(messages: ChatMessage[], options?: LLMCompletionOptions) => Promise<LLMCompletionResult>} complete
- * @property {(messages: ChatMessage[], options?: LLMCompletionOptions) => Promise<Object>} json
- */
-
-/**
- * @typedef {Object} MockLLMConfig
- * @property {'mock'} provider
- * @property {Record<string, Object>} [responses={}]
- */
-
-/**
- * @typedef {Object} AnthropicLLMConfig
- * @property {'anthropic'} provider
- * @property {string} [apiKey]
- * @property {string} [model='claude-sonnet-4-6']
- * @property {number} [maxTokens=1024]
- */
-
-/**
- * @typedef {Object} OpenAILLMConfig
- * @property {'openai'} provider
- * @property {string} [apiKey]
- * @property {string} [model='gpt-4o']
- * @property {number} [maxTokens=1024]
- */
 
 const PROMPT_TYPE_KEYS = [
   'principleExtraction',
   'contradictionDetection',
   'causalArticulation',
   'contextResolution',
-];
+] as const;
 
-/** @implements {LLMProvider} */
-export class MockLLMProvider {
-  /** @param {Partial<MockLLMConfig>} [config={}] */
-  constructor({ responses = {} } = {}) {
-    this.responses = responses;
+export class MockLLMProvider implements LLMProvider {
+  responses: Record<string, unknown>;
+  modelName: string;
+  modelVersion: string;
+
+  constructor({ responses = {} }: Partial<LLMConfig> = {}) {
+    this.responses = (responses ?? {}) as Record<string, unknown>;
     this.modelName = 'mock-llm';
     this.modelVersion = '1.0.0';
   }
 
-  _matchPromptType(messages) {
+  _matchPromptType(messages: ChatMessage[]): string | null {
     const systemMsg = messages.find(m => m.role === 'system')?.content || '';
     for (const key of PROMPT_TYPE_KEYS) {
       if (systemMsg.includes(key)) return key;
@@ -75,50 +38,42 @@ export class MockLLMProvider {
     return null;
   }
 
-  /**
-   * @param {ChatMessage[]} messages
-   * @returns {Promise<LLMCompletionResult>}
-   */
-  async complete(messages) {
+  async complete(messages: ChatMessage[]): Promise<LLMCompletionResult> {
     const promptType = this._matchPromptType(messages);
     const cannedResponse = promptType ? this.responses[promptType] : undefined;
     return { content: cannedResponse !== undefined ? JSON.stringify(cannedResponse) : '{}' };
   }
 
-  /**
-   * @param {ChatMessage[]} messages
-   * @returns {Promise<Object>}
-   */
-  async json(messages) {
+  async json(messages: ChatMessage[]): Promise<unknown> {
     const promptType = this._matchPromptType(messages);
     const cannedResponse = promptType ? this.responses[promptType] : undefined;
     return cannedResponse !== undefined ? cannedResponse : {};
   }
 }
 
-/** @implements {LLMProvider} */
-export class AnthropicLLMProvider {
-  /** @param {Partial<AnthropicLLMConfig>} [config={}] */
-  constructor({ apiKey, model = 'claude-sonnet-4-6', maxTokens = 1024, timeout = 30000 } = {}) {
+export class AnthropicLLMProvider implements LLMProvider {
+  apiKey: string | undefined;
+  model: string;
+  maxTokens: number;
+  timeout: number;
+  modelName: string;
+  modelVersion: string;
+
+  constructor({ apiKey, model = 'claude-sonnet-4-6', maxTokens = 1024, timeout = 30000 }: Partial<LLMConfig> & { timeout?: number } = {}) {
     this.apiKey = apiKey || process.env.ANTHROPIC_API_KEY;
-    this.model = model;
-    this.maxTokens = maxTokens;
-    this.timeout = timeout;
-    this.modelName = model;
+    this.model = model ?? 'claude-sonnet-4-6';
+    this.maxTokens = maxTokens ?? 1024;
+    this.timeout = timeout ?? 30000;
+    this.modelName = this.model;
     this.modelVersion = 'latest';
   }
 
-  /**
-   * @param {ChatMessage[]} messages
-   * @param {LLMCompletionOptions} [options={}]
-   * @returns {Promise<LLMCompletionResult>}
-   */
-  async complete(messages, options = {}) {
+  async complete(messages: ChatMessage[], options: LLMCompletionOptions = {}): Promise<LLMCompletionResult> {
     requireApiKey(this.apiKey, 'Anthropic LLM', 'ANTHROPIC_API_KEY');
     const systemMsg = messages.find(m => m.role === 'system')?.content;
     const nonSystemMsgs = messages.filter(m => m.role !== 'system');
 
-    const body = {
+    const body: Record<string, unknown> = {
       model: this.model,
       max_tokens: options.maxTokens || this.maxTokens,
       messages: nonSystemMsgs,
@@ -131,7 +86,7 @@ export class AnthropicLLMProvider {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
-          'x-api-key': this.apiKey,
+          'x-api-key': this.apiKey!,
           'anthropic-version': '2023-06-01',
           'content-type': 'application/json',
         },
@@ -143,7 +98,7 @@ export class AnthropicLLMProvider {
         throw new Error(`Anthropic API error: ${await describeHttpError(response)}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as { content?: { text?: string }[] };
       const text = data.content?.[0]?.text || '';
       return { content: text };
     } finally {
@@ -151,12 +106,7 @@ export class AnthropicLLMProvider {
     }
   }
 
-  /**
-   * @param {ChatMessage[]} messages
-   * @param {LLMCompletionOptions} [options={}]
-   * @returns {Promise<Object>}
-   */
-  async json(messages, options = {}) {
+  async json(messages: ChatMessage[], options: LLMCompletionOptions = {}): Promise<unknown> {
     const result = await this.complete(messages, options);
     try {
       return JSON.parse(extractJSON(result.content));
@@ -166,24 +116,24 @@ export class AnthropicLLMProvider {
   }
 }
 
-/** @implements {LLMProvider} */
-export class OpenAILLMProvider {
-  /** @param {Partial<OpenAILLMConfig>} [config={}] */
-  constructor({ apiKey, model = 'gpt-4o', maxTokens = 1024, timeout = 30000 } = {}) {
+export class OpenAILLMProvider implements LLMProvider {
+  apiKey: string | undefined;
+  model: string;
+  maxTokens: number;
+  timeout: number;
+  modelName: string;
+  modelVersion: string;
+
+  constructor({ apiKey, model = 'gpt-4o', maxTokens = 1024, timeout = 30000 }: Partial<LLMConfig> & { timeout?: number } = {}) {
     this.apiKey = apiKey || process.env.OPENAI_API_KEY;
-    this.model = model;
-    this.maxTokens = maxTokens;
-    this.timeout = timeout;
-    this.modelName = model;
+    this.model = model ?? 'gpt-4o';
+    this.maxTokens = maxTokens ?? 1024;
+    this.timeout = timeout ?? 30000;
+    this.modelName = this.model;
     this.modelVersion = 'latest';
   }
 
-  /**
-   * @param {ChatMessage[]} messages
-   * @param {LLMCompletionOptions} [options={}]
-   * @returns {Promise<LLMCompletionResult>}
-   */
-  async complete(messages, options = {}) {
+  async complete(messages: ChatMessage[], options: LLMCompletionOptions = {}): Promise<LLMCompletionResult> {
     requireApiKey(this.apiKey, 'OpenAI LLM', 'OPENAI_API_KEY');
     const body = {
       model: this.model,
@@ -208,7 +158,7 @@ export class OpenAILLMProvider {
         throw new Error(`OpenAI API error: ${await describeHttpError(response)}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as { choices?: { message?: { content?: string } }[] };
       const text = data.choices?.[0]?.message?.content || '';
       return { content: text };
     } finally {
@@ -216,12 +166,7 @@ export class OpenAILLMProvider {
     }
   }
 
-  /**
-   * @param {ChatMessage[]} messages
-   * @param {LLMCompletionOptions} [options={}]
-   * @returns {Promise<Object>}
-   */
-  async json(messages, options = {}) {
+  async json(messages: ChatMessage[], options: LLMCompletionOptions = {}): Promise<unknown> {
     const result = await this.complete(messages, options);
     try {
       return JSON.parse(extractJSON(result.content));
@@ -231,11 +176,7 @@ export class OpenAILLMProvider {
   }
 }
 
-/**
- * @param {MockLLMConfig | AnthropicLLMConfig | OpenAILLMConfig} config
- * @returns {MockLLMProvider | AnthropicLLMProvider | OpenAILLMProvider}
- */
-export function createLLMProvider(config) {
+export function createLLMProvider(config: LLMConfig): LLMProvider {
   switch (config.provider) {
     case 'mock':
       return new MockLLMProvider(config);
@@ -244,6 +185,6 @@ export function createLLMProvider(config) {
     case 'openai':
       return new OpenAILLMProvider(config);
     default:
-      throw new Error(`Unknown LLM provider: ${config.provider}. Valid: mock, anthropic, openai`);
+      throw new Error(`Unknown LLM provider: ${(config as LLMConfig).provider}. Valid: mock, anthropic, openai`);
   }
 }

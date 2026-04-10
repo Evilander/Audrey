@@ -1,3 +1,5 @@
+import Database from 'better-sqlite3';
+import type { EmbeddingProvider, LLMProvider, SemanticRow } from './types.js';
 import { generateId } from './ulid.js';
 import { safeJsonParse } from './utils.js';
 import { buildContradictionDetectionPrompt } from './prompts.js';
@@ -5,14 +7,32 @@ import { buildContradictionDetectionPrompt } from './prompts.js';
 const REINFORCEMENT_THRESHOLD = 0.85;
 const CONTRADICTION_THRESHOLD = 0.60;
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {import('./embedding.js').EmbeddingProvider} embeddingProvider
- * @param {{ id: string, content: string, source: string }} episode
- * @param {{ threshold?: number, contradictionThreshold?: number, llmProvider?: { json: (messages: any) => Promise<any> } }} [options]
- * @returns {Promise<{ action: string, semanticId?: string, similarity?: number, contradictionId?: string, resolution?: string }>}
- */
-export async function validateMemory(db, embeddingProvider, episode, options = {}) {
+interface SemanticWithSimilarity extends SemanticRow {
+  similarity: number;
+}
+
+interface SourceRow {
+  source: string;
+}
+
+interface ValidateResult {
+  action: string;
+  semanticId?: string;
+  similarity?: number;
+  contradictionId?: string;
+  resolution?: string | null;
+}
+
+export async function validateMemory(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  episode: { id: string; content: string; source: string },
+  options: {
+    threshold?: number;
+    contradictionThreshold?: number;
+    llmProvider?: LLMProvider | null;
+  } = {},
+): Promise<ValidateResult> {
   const {
     threshold = REINFORCEMENT_THRESHOLD,
     contradictionThreshold = CONTRADICTION_THRESHOLD,
@@ -29,9 +49,9 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
     WHERE v.embedding MATCH ?
       AND k = 1
       AND (v.state = 'active' OR v.state = 'context_dependent')
-  `).get(episodeBuffer);
+  `).get(episodeBuffer) as SemanticWithSimilarity | undefined;
 
-  let bestMatch = null;
+  let bestMatch: SemanticWithSimilarity | null = null;
   let bestSimilarity = 0;
 
   if (nearestSemantic) {
@@ -40,7 +60,7 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
   }
 
   if (bestMatch && bestSimilarity >= threshold) {
-    const evidenceIds = safeJsonParse(bestMatch.evidence_episode_ids, []);
+    const evidenceIds = safeJsonParse<string[]>(bestMatch.evidence_episode_ids, []);
     if (!evidenceIds.includes(episode.id)) {
       evidenceIds.push(episode.id);
     }
@@ -73,7 +93,12 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
 
   if (bestMatch && bestSimilarity >= contradictionThreshold && llmProvider) {
     const messages = buildContradictionDetectionPrompt(episode.content, bestMatch.content);
-    const verdict = await llmProvider.json(messages);
+    const verdict = await llmProvider.json(messages) as {
+      contradicts?: boolean;
+      resolution?: string;
+      conditions?: Record<string, string>;
+      explanation?: string;
+    };
 
     if (verdict.contradicts) {
       const resolution = verdict.resolution === 'context_dependent'
@@ -111,15 +136,19 @@ export async function validateMemory(db, embeddingProvider, episode, options = {
   return { action: 'none' };
 }
 
-function computeSourceDiversity(db, evidenceIds, currentEpisode) {
-  const sourceTypes = new Set();
+function computeSourceDiversity(
+  db: Database.Database,
+  evidenceIds: string[],
+  currentEpisode: { source: string },
+): number {
+  const sourceTypes = new Set<string>();
   sourceTypes.add(currentEpisode.source);
 
   if (evidenceIds.length > 0) {
     const placeholders = evidenceIds.map(() => '?').join(',');
     const rows = db.prepare(
       `SELECT DISTINCT source FROM episodes WHERE id IN (${placeholders})`
-    ).all(...evidenceIds);
+    ).all(...evidenceIds) as SourceRow[];
     for (const row of rows) {
       sourceTypes.add(row.source);
     }
@@ -128,16 +157,14 @@ function computeSourceDiversity(db, evidenceIds, currentEpisode) {
   return sourceTypes.size;
 }
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {string} claimAId
- * @param {string} claimAType
- * @param {string} claimBId
- * @param {string} claimBType
- * @param {object|null} resolution
- * @returns {string}
- */
-export function createContradiction(db, claimAId, claimAType, claimBId, claimBType, resolution) {
+export function createContradiction(
+  db: Database.Database,
+  claimAId: string,
+  claimAType: string,
+  claimBId: string,
+  claimBType: string,
+  resolution: object | null,
+): string {
   const id = generateId();
   const now = new Date().toISOString();
 
@@ -154,13 +181,7 @@ export function createContradiction(db, claimAId, claimAType, claimBId, claimBTy
   return id;
 }
 
-/**
- * @param {import('better-sqlite3').Database} db
- * @param {string} contradictionId
- * @param {string} newEvidenceId
- * @returns {void}
- */
-export function reopenContradiction(db, contradictionId, newEvidenceId) {
+export function reopenContradiction(db: Database.Database, contradictionId: string, newEvidenceId: string): void {
   const now = new Date().toISOString();
   db.prepare(`
     UPDATE contradictions SET
