@@ -132,10 +132,12 @@ class AudreyClientIntegrationTests(unittest.TestCase):
                 "AUDREY_EMBEDDING_PROVIDER": "mock",
                 "AUDREY_LLM_PROVIDER": "mock",
                 "AUDREY_API_KEY": cls.api_key,
+                # mcp-server/index.ts parses port from env, not argv.
+                "AUDREY_PORT": str(cls.port),
             }
         )
         cls.process = subprocess.Popen(
-            ["node", "mcp-server/index.js", "serve", str(cls.port)],
+            ["node", "dist/mcp-server/index.js", "serve"],
             cwd=REPO_ROOT,
             env=env,
             stdout=subprocess.PIPE,
