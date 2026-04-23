@@ -934,6 +934,31 @@ async function main(): Promise<void> {
     }
   });
 
+  server.tool('memory_promote', {
+    target: z.enum(['claude-rules']).optional().describe('Promotion target. Only claude-rules is implemented in PR 4 v1. AGENTS.md / playbook / hooks / checklist targets land in PR 4.1+.'),
+    min_confidence: z.number().min(0).max(1).optional().describe('Minimum memory confidence for promotion (default 0.7 for procedural, 0.8 for semantic).'),
+    min_evidence: z.number().int().min(1).optional().describe('Minimum supporting episode count (default 2).'),
+    limit: z.number().int().min(1).max(50).optional().describe('Max candidates to return/apply (default 20).'),
+    dry_run: z.boolean().optional().describe('If true (default), return candidates without writing. Pair with yes=true to actually write.'),
+    yes: z.boolean().optional().describe('Confirm write. Without this or dry_run=false the command stays in dry-run mode.'),
+    project_dir: z.string().optional().describe('Absolute path to the project root where .claude/rules/ should be created. Defaults to process.cwd().'),
+  }, async ({ target, min_confidence, min_evidence, limit, dry_run, yes, project_dir }) => {
+    try {
+      const result = await audrey.promote({
+        target,
+        minConfidence: min_confidence,
+        minEvidence: min_evidence,
+        limit,
+        dryRun: dry_run,
+        yes,
+        projectDir: project_dir,
+      });
+      return toolResult(result);
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('[audrey-mcp] connected via stdio');
@@ -1079,6 +1104,84 @@ async function observeToolCli(): Promise<void> {
   }
 }
 
+function parsePromoteArgs(argv: string[]): {
+  target?: 'claude-rules' | 'agents-md' | 'playbook' | 'hook' | 'checklist';
+  minConfidence?: number;
+  minEvidence?: number;
+  limit?: number;
+  dryRun?: boolean;
+  yes?: boolean;
+  projectDir?: string;
+  json?: boolean;
+} {
+  const out: Record<string, unknown> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    const next = () => argv[++i];
+    if (token === '--target') out.target = next();
+    else if (token === '--min-confidence') out.minConfidence = Number.parseFloat(next() ?? '');
+    else if (token === '--min-evidence') out.minEvidence = Number.parseInt(next() ?? '', 10);
+    else if (token === '--limit') out.limit = Number.parseInt(next() ?? '', 10);
+    else if (token === '--dry-run') out.dryRun = true;
+    else if (token === '--yes' || token === '-y') out.yes = true;
+    else if (token === '--project-dir') out.projectDir = next();
+    else if (token === '--json') out.json = true;
+  }
+  return out as ReturnType<typeof parsePromoteArgs>;
+}
+
+async function promoteCli(): Promise<void> {
+  const args = parsePromoteArgs(process.argv.slice(3));
+
+  const dataDir = resolveDataDir(process.env);
+  const embedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
+  const audrey = new Audrey({
+    dataDir,
+    agent: process.env['AUDREY_AGENT'] ?? 'promote',
+    embedding,
+  });
+
+  try {
+    const result = await audrey.promote({
+      target: args.target as 'claude-rules' | undefined,
+      minConfidence: args.minConfidence,
+      minEvidence: args.minEvidence,
+      limit: args.limit,
+      dryRun: args.dryRun ?? !args.yes,
+      yes: args.yes,
+      projectDir: args.projectDir,
+    });
+
+    if (args.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    const header = result.dry_run
+      ? `[audrey] promote (dry-run) — ${result.candidates.length} candidate${result.candidates.length === 1 ? '' : 's'} for target "${result.target}"`
+      : `[audrey] promote — wrote ${result.applied.length} rule${result.applied.length === 1 ? '' : 's'} to ${result.project_dir}`;
+    console.log(header);
+    if (result.candidates.length === 0) {
+      console.log('  (no candidates met the confidence/evidence thresholds)');
+      return;
+    }
+    for (const c of result.candidates) {
+      console.log('');
+      console.log(`  ${c.rendered_path}  [score ${c.score.toFixed(1)}]`);
+      const snippet = c.content.length > 120 ? c.content.slice(0, 117) + '…' : c.content;
+      console.log(`    memory: ${snippet}`);
+      console.log(`    why:    ${c.reason}`);
+      console.log(`    confidence=${(c.confidence * 100).toFixed(1)}%  evidence=${c.evidence_count}  prevented_failures=${c.failure_prevented}`);
+    }
+    if (result.dry_run) {
+      console.log('');
+      console.log('  Re-run with --yes to write these rules to disk.');
+    }
+  } finally {
+    audrey.close();
+  }
+}
+
 const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
 if (isDirectRun) {
@@ -1116,6 +1219,11 @@ if (isDirectRun) {
   } else if (subcommand === 'observe-tool') {
     observeToolCli().catch(err => {
       console.error('[audrey] observe-tool failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'promote') {
+    promoteCli().catch(err => {
+      console.error('[audrey] promote failed:', err);
       process.exit(1);
     });
   } else {
