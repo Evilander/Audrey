@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import type { EmbeddingProvider, ForgetResult, MemoryType, PurgeResult } from './types.js';
+import { deleteFTSEpisode, deleteFTSSemantic, deleteFTSProcedure } from './fts.js';
 
 interface IdRow {
   id: string;
@@ -25,6 +26,7 @@ export function forgetMemory(
       db.prepare("UPDATE episodes SET superseded_by = 'forgotten' WHERE id = ?").run(id);
       db.prepare('DELETE FROM vec_episodes WHERE id = ?').run(id);
     }
+    deleteFTSEpisode(db, id);
     return { id, type: 'episodic', purged: purge };
   }
 
@@ -37,6 +39,7 @@ export function forgetMemory(
       db.prepare("UPDATE semantics SET state = 'superseded' WHERE id = ?").run(id);
       db.prepare('DELETE FROM vec_semantics WHERE id = ?').run(id);
     }
+    deleteFTSSemantic(db, id);
     return { id, type: 'semantic', purged: purge };
   }
 
@@ -49,6 +52,7 @@ export function forgetMemory(
       db.prepare("UPDATE procedures SET state = 'superseded' WHERE id = ?").run(id);
       db.prepare('DELETE FROM vec_procedures WHERE id = ?').run(id);
     }
+    deleteFTSProcedure(db, id);
     return { id, type: 'procedural', purged: purge };
   }
 
@@ -70,14 +74,17 @@ export function purgeMemories(db: Database.Database): PurgeResult {
     for (const row of deadEpisodes) {
       db.prepare('DELETE FROM vec_episodes WHERE id = ?').run(row.id);
       db.prepare('DELETE FROM episodes WHERE id = ?').run(row.id);
+      deleteFTSEpisode(db, row.id);
     }
     for (const row of deadSemantics) {
       db.prepare('DELETE FROM vec_semantics WHERE id = ?').run(row.id);
       db.prepare('DELETE FROM semantics WHERE id = ?').run(row.id);
+      deleteFTSSemantic(db, row.id);
     }
     for (const row of deadProcedures) {
       db.prepare('DELETE FROM vec_procedures WHERE id = ?').run(row.id);
       db.prepare('DELETE FROM procedures WHERE id = ?').run(row.id);
+      deleteFTSProcedure(db, row.id);
     }
   });
 

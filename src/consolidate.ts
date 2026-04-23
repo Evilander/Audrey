@@ -8,6 +8,7 @@ import type {
   LLMProvider,
 } from './types.js';
 import { generateId } from './ulid.js';
+import { insertFTSSemantic, insertFTSProcedure } from './fts.js';
 import { buildPrincipleExtractionPrompt } from './prompts.js';
 
 interface VecEmbeddingRow {
@@ -255,6 +256,7 @@ export async function runConsolidation(
             prepared.maxSalience,
           );
           insertVecProcedure.run(prepared.memoryId, prepared.embeddingBuffer, 'active');
+          insertFTSProcedure(db, prepared.memoryId, prepared.principle.content);
           proceduresExtracted++;
         } else {
           insertSemantic.run(
@@ -273,6 +275,7 @@ export async function runConsolidation(
             prepared.maxSalience,
           );
           insertVecSemantic.run(prepared.memoryId, prepared.embeddingBuffer, 'active');
+          insertFTSSemantic(db, prepared.memoryId, prepared.principle.content);
         }
 
         db.prepare(`UPDATE episodes SET consolidated = 1 WHERE id IN (${placeholders})`).run(...prepared.clusterIds);

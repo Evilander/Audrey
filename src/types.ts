@@ -64,6 +64,8 @@ export interface EncodeParams {
 // Recall
 // ---------------------------------------------------------------------------
 
+export type RetrievalMode = 'vector' | 'keyword' | 'hybrid';
+
 export interface RecallOptions {
   minConfidence?: number;
   types?: MemoryType[];
@@ -78,6 +80,7 @@ export interface RecallOptions {
   mood?: Pick<Affect, 'valence' | 'arousal'>;
   confidenceConfig?: ConfidenceConfig;
   includePrivate?: boolean;
+  retrieval?: RetrievalMode;
 }
 
 export interface EpisodicProvenance {

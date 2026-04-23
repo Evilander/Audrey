@@ -14,6 +14,7 @@ import { interferenceModifier } from './interference.js';
 import { contextMatchRatio, contextModifier } from './context.js';
 import { moodCongruenceModifier, affectSimilarity } from './affect.js';
 import { daysBetween, safeJsonParse } from './utils.js';
+import { ftsIdsByType, fuseResults } from './hybrid-recall.js';
 
 const STOPWORDS = new Set([
   'a', 'an', 'and', 'are', 'at', 'be', 'by', 'did', 'do', 'does', 'for', 'from', 'had', 'has', 'have',
@@ -462,10 +463,9 @@ export async function* recallStream(
     after,
     before,
     includePrivate = false,
+    retrieval = 'hybrid',
   } = options;
 
-  const queryVector = await embeddingProvider.embed(query);
-  const queryBuffer = embeddingProvider.vectorToBuffer(queryVector);
   const searchTypes: MemoryType[] = types || ['episodic', 'semantic', 'procedural'];
   const now = new Date();
   const hasFilters = tags?.length || sources?.length || after || before;
@@ -474,52 +474,76 @@ export async function* recallStream(
 
   const allResults: RecallResult[] = [];
 
-  if (searchTypes.includes('episodic')) {
-    try {
-      const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig || {}, filters, includePrivate);
-      allResults.push(...episodic);
-    } catch {
-      // A broken episodic index should not block semantic/procedural recall.
-    }
-  }
+  // Vector pass — skipped entirely in 'keyword' mode. Still runs in 'hybrid'
+  // (default) and 'vector' modes so the underlying similarity + confidence
+  // scoring fires as before.
+  if (retrieval !== 'keyword') {
+    const queryVector = await embeddingProvider.embed(query);
+    const queryBuffer = embeddingProvider.vectorToBuffer(queryVector);
 
-  if (searchTypes.includes('semantic')) {
-    try {
-      const { results: semResults, matchedIds: semIds } =
-        knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig || {}, filters);
-      allResults.push(...semResults);
-
-      if (semIds.length > 0) {
-        const nowISO = now.toISOString();
-        const placeholders = semIds.map(() => '?').join(',');
-        db.prepare(
-          `UPDATE semantics SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
-        ).run(nowISO, ...semIds);
+    if (searchTypes.includes('episodic')) {
+      try {
+        const episodic = knnEpisodic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, confidenceConfig || {}, filters, includePrivate);
+        allResults.push(...episodic);
+      } catch {
+        // A broken episodic index should not block semantic/procedural recall.
       }
-    } catch {
-      // A broken semantic index should not block other memory types.
     }
-  }
 
-  if (searchTypes.includes('procedural')) {
-    try {
-      const { results: procResults, matchedIds: procIds } =
-        knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig || {}, filters);
-      allResults.push(...procResults);
+    if (searchTypes.includes('semantic')) {
+      try {
+        const { results: semResults, matchedIds: semIds } =
+          knnSemantic(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig || {}, filters);
+        allResults.push(...semResults);
 
-      if (procIds.length > 0) {
-        const nowISO = now.toISOString();
-        const placeholders = procIds.map(() => '?').join(',');
-        db.prepare(
-          `UPDATE procedures SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
-        ).run(nowISO, ...procIds);
+        if (semIds.length > 0) {
+          const nowISO = now.toISOString();
+          const placeholders = semIds.map(() => '?').join(',');
+          db.prepare(
+            `UPDATE semantics SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
+          ).run(nowISO, ...semIds);
+        }
+      } catch {
+        // A broken semantic index should not block other memory types.
       }
-    } catch {
-      // A broken procedural index should not block other memory types.
+    }
+
+    if (searchTypes.includes('procedural')) {
+      try {
+        const { results: procResults, matchedIds: procIds } =
+          knnProcedural(db, queryBuffer, candidateK, now, minConfidence, includeProvenance, includeDormant, confidenceConfig || {}, filters);
+        allResults.push(...procResults);
+
+        if (procIds.length > 0) {
+          const nowISO = now.toISOString();
+          const placeholders = procIds.map(() => '?').join(',');
+          db.prepare(
+            `UPDATE procedures SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
+          ).run(nowISO, ...procIds);
+        }
+      } catch {
+        // A broken procedural index should not block other memory types.
+      }
     }
   }
 
-  const top = applyResultGuards(query, allResults, limit);
+  let resultsToGuard = allResults;
+
+  if (retrieval !== 'vector') {
+    const ftsIds = ftsIdsByType(db, query, searchTypes, candidateK);
+    const fused = fuseResults(db, {
+      vectorResults: allResults,
+      ftsIds,
+      mode: retrieval,
+      includePrivate,
+      includeDormant,
+      minConfidence,
+      filters,
+    });
+    resultsToGuard = fused;
+  }
+
+  const top = applyResultGuards(query, resultsToGuard, limit);
   for (const entry of top) {
     yield entry;
   }

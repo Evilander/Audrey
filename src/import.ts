@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import type { EmbeddingProvider } from './types.js';
+import { insertFTSEpisode, insertFTSSemantic, insertFTSProcedure } from './fts.js';
 
 interface CountRow {
   c: number;
@@ -132,6 +133,7 @@ export async function importMemories(db: Database.Database, embeddingProvider: E
         ep.private ?? 0,
       );
       insertVecEpisode.run(ep.id, embeddingBuffer, ep.source, BigInt(ep.consolidated ?? 0));
+      insertFTSEpisode(db, ep.id, ep.content, ep.tags ?? null);
     }
 
     for (let i = 0; i < semantics.length; i++) {
@@ -161,6 +163,7 @@ export async function importMemories(db: Database.Database, embeddingProvider: E
         sem.salience ?? 0.5,
       );
       insertVecSemantic.run(sem.id, embeddingBuffer, sem.state);
+      insertFTSSemantic(db, sem.id, sem.content);
     }
 
     for (let i = 0; i < procedures.length; i++) {
@@ -184,6 +187,7 @@ export async function importMemories(db: Database.Database, embeddingProvider: E
         proc.salience ?? 0.5,
       );
       insertVecProcedure.run(proc.id, embeddingBuffer, proc.state);
+      insertFTSProcedure(db, proc.id, proc.content);
     }
 
     for (const link of causalLinks) {
