@@ -52,6 +52,7 @@ import {
   type FailurePattern,
   type MemoryEvent,
 } from './events.js';
+import { buildCapsule, type CapsuleOptions, type MemoryCapsule } from './capsule.js';
 
 interface ConfigRow {
   value: string;
@@ -638,6 +639,12 @@ export class Audrey extends EventEmitter {
 
   recentFailures(options: { since?: string; limit?: number } = {}): FailurePattern[] {
     return recentFailures(this.db, options);
+  }
+
+  async capsule(query: string, options: CapsuleOptions = {}): Promise<MemoryCapsule> {
+    const capsule = await buildCapsule(this, query, options);
+    this.emit('capsule', capsule);
+    return capsule;
   }
 }
 

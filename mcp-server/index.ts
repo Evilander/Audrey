@@ -910,6 +910,30 @@ async function main(): Promise<void> {
     }
   });
 
+  server.tool('memory_capsule', {
+    query: z.string().describe('Natural-language query for the turn. Drives what gets surfaced.'),
+    limit: z.number().int().min(1).max(50).optional().describe('Max recall results to consider before categorization.'),
+    budget_chars: z.number().int().min(200).max(32000).optional().describe('Token budget in characters (defaults to AUDREY_CONTEXT_BUDGET_CHARS or 4000).'),
+    mode: z.enum(['balanced', 'conservative', 'aggressive']).optional().describe('Capsule mode: conservative = fewer, higher-confidence entries; aggressive = broader sweep.'),
+    recent_change_window_hours: z.number().int().min(1).max(720).optional().describe('How far back "recent_changes" looks (default 24h).'),
+    include_risks: z.boolean().optional().describe('Include recent tool failures as risks (default true).'),
+    include_contradictions: z.boolean().optional().describe('Include open contradictions (default true).'),
+  }, async ({ query, limit, budget_chars, mode, recent_change_window_hours, include_risks, include_contradictions }) => {
+    try {
+      const capsule = await audrey.capsule(query, {
+        limit,
+        budgetChars: budget_chars,
+        mode,
+        recentChangeWindowHours: recent_change_window_hours,
+        includeRisks: include_risks,
+        includeContradictions: include_contradictions,
+      });
+      return toolResult(capsule);
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('[audrey-mcp] connected via stdio');
