@@ -43,6 +43,15 @@ import { suggestConsolidationParams as suggestParamsFn } from './adaptive.js';
 import { reembedAll } from './migrate.js';
 import { applyInterference } from './interference.js';
 import { detectResonance } from './affect.js';
+import { observeTool, type ObserveToolInput, type ObserveToolResult } from './tool-trace.js';
+import {
+  listEvents,
+  countEvents,
+  recentFailures,
+  type EventQuery,
+  type FailurePattern,
+  type MemoryEvent,
+} from './events.js';
 
 interface ConfigRow {
   value: string;
@@ -608,6 +617,27 @@ export class Audrey extends EventEmitter {
 
   async waitForIdle(): Promise<void> {
     return Promise.resolve();
+  }
+
+  observeTool(input: ObserveToolInput): ObserveToolResult {
+    const result = observeTool(this.db, {
+      ...input,
+      actorAgent: input.actorAgent ?? this.agent,
+    });
+    this.emit('tool-observed', result.event);
+    return result;
+  }
+
+  listEvents(query: EventQuery = {}): MemoryEvent[] {
+    return listEvents(this.db, query);
+  }
+
+  countEvents(query: EventQuery = {}): number {
+    return countEvents(this.db, query);
+  }
+
+  recentFailures(options: { since?: string; limit?: number } = {}): FailurePattern[] {
+    return recentFailures(this.db, options);
   }
 }
 

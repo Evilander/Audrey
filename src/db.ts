@@ -124,6 +124,24 @@ const SCHEMA = `
     FOREIGN KEY (run_id) REFERENCES consolidation_runs(id)
   );
 
+  CREATE TABLE IF NOT EXISTS memory_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    event_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    actor_agent TEXT,
+    tool_name TEXT,
+    input_hash TEXT,
+    output_hash TEXT,
+    outcome TEXT CHECK(outcome IN ('succeeded','failed','blocked','skipped','unknown') OR outcome IS NULL),
+    error_summary TEXT,
+    cwd TEXT,
+    file_fingerprints TEXT,
+    redaction_state TEXT DEFAULT 'unreviewed' CHECK(redaction_state IN ('unreviewed','redacted','clean','quarantined')),
+    metadata TEXT,
+    created_at TEXT NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_episodes_created ON episodes(created_at);
   CREATE INDEX IF NOT EXISTS idx_episodes_consolidated ON episodes(consolidated);
   CREATE INDEX IF NOT EXISTS idx_episodes_source ON episodes(source);
@@ -131,6 +149,10 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_procedures_state ON procedures(state);
   CREATE INDEX IF NOT EXISTS idx_contradictions_state ON contradictions(state);
   CREATE INDEX IF NOT EXISTS idx_consolidation_status ON consolidation_runs(status);
+  CREATE INDEX IF NOT EXISTS idx_memory_events_session ON memory_events(session_id);
+  CREATE INDEX IF NOT EXISTS idx_memory_events_tool ON memory_events(tool_name);
+  CREATE INDEX IF NOT EXISTS idx_memory_events_created ON memory_events(created_at);
+  CREATE INDEX IF NOT EXISTS idx_memory_events_outcome ON memory_events(outcome);
 `;
 
 interface ConfigRow {
@@ -288,7 +310,7 @@ function addColumnIfMissing(db: Database.Database, table: string, column: string
   }
 }
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
   { version: 1, up(db) { addColumnIfMissing(db, 'episodes', 'context', "TEXT DEFAULT '{}'"); } },
@@ -317,6 +339,11 @@ const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
     addColumnIfMissing(db, 'semantics', 'last_used_at', 'TEXT');
     addColumnIfMissing(db, 'procedures', 'usage_count', 'INTEGER DEFAULT 0');
     addColumnIfMissing(db, 'procedures', 'last_used_at', 'TEXT');
+  }},
+  { version: 11, up(_db) {
+    // memory_events table and its indexes are created via the top-level
+    // SCHEMA block, which is idempotent (CREATE TABLE IF NOT EXISTS). Running
+    // this migration simply advances schema_version to 11 for existing DBs.
   }},
 ];
 
