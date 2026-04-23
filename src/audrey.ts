@@ -53,6 +53,16 @@ import {
   type MemoryEvent,
 } from './events.js';
 import { buildCapsule, type CapsuleOptions, type MemoryCapsule } from './capsule.js';
+import {
+  findPromotionCandidates,
+  type FindCandidatesOptions,
+  type PromotionCandidate,
+  type PromotionTarget,
+} from './promote.js';
+import { renderAllRules, type RuleDoc } from './rules-compiler.js';
+import { insertEvent } from './events.js';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { dirname, join, resolve as pathResolve } from 'node:path';
 
 interface ConfigRow {
   value: string;
@@ -646,7 +656,125 @@ export class Audrey extends EventEmitter {
     this.emit('capsule', capsule);
     return capsule;
   }
+
+  findPromotionCandidates(options: FindCandidatesOptions = {}): PromotionCandidate[] {
+    return findPromotionCandidates(this.db, options);
+  }
+
+  async promote(options: PromoteOptions = {}): Promise<PromoteResult> {
+    const target: PromotionTarget = options.target ?? 'claude-rules';
+    if (target !== 'claude-rules') {
+      throw new Error(`promote target "${target}" is not implemented yet. PR 4 v1 ships claude-rules only.`);
+    }
+
+    const candidates = findPromotionCandidates(this.db, {
+      minConfidence: options.minConfidence,
+      minEvidence: options.minEvidence,
+      limit: options.limit,
+      target,
+    });
+
+    const dryRun = options.dryRun ?? !options.yes;
+    const projectDir = pathResolve(options.projectDir ?? process.cwd());
+    const promotedAt = new Date().toISOString();
+    const docs = renderAllRules(candidates, promotedAt);
+
+    const applied: PromotionWriteResult[] = [];
+
+    if (!dryRun) {
+      for (let i = 0; i < candidates.length; i++) {
+        const candidate = candidates[i]!;
+        const doc = docs[i]!;
+        const absolutePath = join(projectDir, doc.relativePath);
+        mkdirSync(dirname(absolutePath), { recursive: true });
+        const overwritten = existsSync(absolutePath);
+        writeFileSync(absolutePath, doc.body, 'utf-8');
+
+        insertEvent(this.db, {
+          eventType: 'Promotion',
+          source: 'promote-command',
+          actorAgent: this.agent,
+          toolName: target,
+          outcome: 'succeeded',
+          cwd: projectDir,
+          fileFingerprints: [doc.relativePath],
+          redactionState: 'clean',
+          metadata: {
+            memory_ids: [candidate.memory_id],
+            memory_type: candidate.memory_type,
+            candidate_id: candidate.candidate_id,
+            confidence: Number(candidate.confidence.toFixed(3)),
+            evidence_count: candidate.evidence_count,
+            failure_prevented: candidate.failure_prevented,
+            score: Number(candidate.score.toFixed(2)),
+            target,
+            absolute_path: absolutePath,
+            relative_path: doc.relativePath,
+            overwritten,
+          },
+        });
+
+        applied.push({
+          candidate_id: candidate.candidate_id,
+          memory_id: candidate.memory_id,
+          target,
+          relative_path: doc.relativePath,
+          absolute_path: absolutePath,
+          overwritten,
+        });
+      }
+    }
+
+    const result: PromoteResult = {
+      target,
+      dry_run: dryRun,
+      project_dir: projectDir,
+      promoted_at: promotedAt,
+      candidates: candidates.map((c, i) => ({
+        ...c,
+        rendered_path: docs[i]!.relativePath,
+      })),
+      applied,
+    };
+    this.emit('promote', result);
+    return result;
+  }
 }
+
+export interface PromoteOptions {
+  target?: PromotionTarget;
+  minConfidence?: number;
+  minEvidence?: number;
+  limit?: number;
+  dryRun?: boolean;
+  yes?: boolean;
+  projectDir?: string;
+}
+
+export interface PromotionCandidateWithPath extends PromotionCandidate {
+  rendered_path: string;
+}
+
+export interface PromotionWriteResult {
+  candidate_id: string;
+  memory_id: string;
+  target: PromotionTarget;
+  relative_path: string;
+  absolute_path: string;
+  overwritten: boolean;
+}
+
+export interface PromoteResult {
+  target: PromotionTarget;
+  dry_run: boolean;
+  project_dir: string;
+  promoted_at: string;
+  candidates: PromotionCandidateWithPath[];
+  applied: PromotionWriteResult[];
+}
+
+// Re-exports so the rules-compiler output is easy to consume by callers.
+export type { RuleDoc };
 
 function db_prepare_get_status(db: Database.Database, runId: string): StatusRow | undefined {
   return db.prepare('SELECT status FROM consolidation_runs WHERE id = ?').get(runId) as StatusRow | undefined;
