@@ -2,10 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Audrey } from '../dist/src/audrey.js';
-import { BENCHMARK_CASES, FAMILY_ORDER } from './cases.js';
-import { runKeywordRecencyBaseline, runRecentWindowBaseline, runVectorOnlyBaseline } from './baselines.js';
+import { LOCAL_BENCHMARK_SUITES, FAMILY_ORDER } from './cases.js';
+import { runBaselineScenario } from './baselines.js';
 import { MEMORY_TRENDS, PUBLISHED_LEADERBOARD } from './reference-results.js';
 import { writeBenchmarkArtifacts } from './report.js';
+
+const SUITE_LABELS = new Map(LOCAL_BENCHMARK_SUITES.map(suite => [suite.id, suite.title]));
+const ALL_SUITE_IDS = LOCAL_BENCHMARK_SUITES.map(suite => suite.id);
 
 function parseArgs(argv = process.argv.slice(2)) {
   const args = {
@@ -18,6 +21,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     minAudreyPassRate: 75,
     minMarginOverBaseline: 15,
     readmeAssetsDir: null,
+    suite: 'all',
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -43,6 +47,8 @@ function parseArgs(argv = process.argv.slice(2)) {
       args.minMarginOverBaseline = Number.parseFloat(argv[++i]);
     } else if (token === '--readme-assets-dir' && argv[i + 1]) {
       args.readmeAssetsDir = resolve(argv[++i]);
+    } else if (token === '--suite' && argv[i + 1]) {
+      args.suite = argv[++i];
     }
   }
 
@@ -51,6 +57,28 @@ function parseArgs(argv = process.argv.slice(2)) {
 
 function normalize(text) {
   return String(text || '').toLowerCase();
+}
+
+function normalizeSuiteSelection(value = 'all') {
+  if (value === 'all') return [...ALL_SUITE_IDS];
+  const selected = String(value)
+    .split(',')
+    .map(token => token.trim().toLowerCase())
+    .filter(Boolean);
+
+  const invalid = selected.filter(token => !ALL_SUITE_IDS.includes(token));
+  if (invalid.length > 0) {
+    throw new Error(`Unknown benchmark suite(s): ${invalid.join(', ')}. Valid: all, ${ALL_SUITE_IDS.join(', ')}`);
+  }
+  return [...new Set(selected)];
+}
+
+function selectedSuitesOrThrow(suiteIds) {
+  const suites = LOCAL_BENCHMARK_SUITES.filter(suite => suiteIds.includes(suite.id));
+  if (suites.length === 0) {
+    throw new Error('No benchmark suites selected.');
+  }
+  return suites;
 }
 
 function summarizeResults(results) {
@@ -101,7 +129,7 @@ function evaluateCase(benchmarkCase, results) {
   };
 }
 
-async function seedCase(brain, benchmarkCase) {
+async function seedRetrievalCase(brain, benchmarkCase) {
   const ids = [];
   for (let index = 0; index < benchmarkCase.memory.length; index++) {
     const memory = benchmarkCase.memory[index];
@@ -125,11 +153,51 @@ async function seedCase(brain, benchmarkCase) {
   }
 
   if (benchmarkCase.consolidate) {
+    await brain.waitForIdle();
     await brain.consolidate({
       minClusterSize: benchmarkCase.consolidate.minClusterSize,
       similarityThreshold: benchmarkCase.consolidate.similarityThreshold,
       extractPrinciple: () => benchmarkCase.consolidate.principle,
     });
+  }
+}
+
+async function executeAudreyStep(brain, step, refs) {
+  if (step.type === 'encode') {
+    const supersedes = step.supersedesRef ? refs.get(step.supersedesRef) : undefined;
+    const id = await brain.encode({
+      ...step.memory,
+      supersedes,
+    });
+    if (step.saveAs) {
+      refs.set(step.saveAs, id);
+    }
+    return;
+  }
+
+  if (step.type === 'forgetByQuery') {
+    await brain.waitForIdle();
+    await brain.forgetByQuery(step.query, step.options || {});
+    return;
+  }
+
+  if (step.type === 'consolidate') {
+    await brain.waitForIdle();
+    await brain.consolidate({
+      minClusterSize: step.minClusterSize,
+      similarityThreshold: step.similarityThreshold,
+      extractPrinciple: () => step.principle,
+    });
+    return;
+  }
+
+  throw new Error(`Unsupported Audrey benchmark step: ${step.type}`);
+}
+
+async function seedOperationsCase(brain, benchmarkCase) {
+  const refs = new Map();
+  for (const step of benchmarkCase.steps || []) {
+    await executeAudreyStep(brain, step, refs);
   }
 }
 
@@ -147,7 +215,14 @@ async function runAudreyCase(benchmarkCase, providerConfig) {
     if (typeof brain.embeddingProvider.ready === 'function') {
       await brain.embeddingProvider.ready();
     }
-    await seedCase(brain, benchmarkCase);
+
+    if (benchmarkCase.kind === 'operations') {
+      await seedOperationsCase(brain, benchmarkCase);
+    } else {
+      await seedRetrievalCase(brain, benchmarkCase);
+    }
+
+    await brain.waitForIdle();
     return await brain.recall(benchmarkCase.query, {
       limit: 5,
       minConfidence: 0.05,
@@ -159,12 +234,16 @@ async function runAudreyCase(benchmarkCase, providerConfig) {
   }
 }
 
+async function runBaselineCase(system, benchmarkCase, providerConfig) {
+  return runBaselineScenario(system, benchmarkCase, providerConfig, 5);
+}
+
 async function runSystemsForCase(benchmarkCase, providerConfig) {
   const systems = [
     { system: 'Audrey', run: () => runAudreyCase(benchmarkCase, providerConfig) },
-    { system: 'Vector Only', run: () => runVectorOnlyBaseline(benchmarkCase, providerConfig) },
-    { system: 'Keyword + Recency', run: () => Promise.resolve(runKeywordRecencyBaseline(benchmarkCase)) },
-    { system: 'Recent Window', run: () => Promise.resolve(runRecentWindowBaseline(benchmarkCase)) },
+    { system: 'Vector Only', run: () => runBaselineCase('Vector Only', benchmarkCase, providerConfig) },
+    { system: 'Keyword + Recency', run: () => runBaselineCase('Keyword + Recency', benchmarkCase, providerConfig) },
+    { system: 'Recent Window', run: () => runBaselineCase('Recent Window', benchmarkCase, providerConfig) },
   ];
 
   const results = [];
@@ -210,9 +289,9 @@ function summarizeLocalResults(caseResults) {
   return [...systems.values()]
     .map(system => ({
       system: system.system,
-      scorePercent: (system.totalScore / system.totalCases) * 100,
-      passRate: (system.passCount / system.totalCases) * 100,
-      avgDurationMs: system.durationMs / system.totalCases,
+      scorePercent: system.totalCases === 0 ? 0 : (system.totalScore / system.totalCases) * 100,
+      passRate: system.totalCases === 0 ? 0 : (system.passCount / system.totalCases) * 100,
+      avgDurationMs: system.totalCases === 0 ? 0 : system.durationMs / system.totalCases,
     }))
     .sort((a, b) => b.scorePercent - a.scorePercent);
 }
@@ -231,7 +310,26 @@ function summarizeByFamily(caseResults) {
     families.set(caseResult.family, entry);
   }
 
-  return [...families.values()];
+  return [...families.values()].filter(entry => Object.keys(entry.systems).length > 0);
+}
+
+function summarizeSuites(caseResults, suites) {
+  return suites.map(suite => {
+    const suiteCases = caseResults.filter(caseResult => caseResult.suite === suite.id);
+    return {
+      id: suite.id,
+      title: suite.title,
+      description: suite.description,
+      overall: summarizeLocalResults(suiteCases),
+      byFamily: summarizeByFamily(suiteCases),
+      cases: suiteCases,
+    };
+  });
+}
+
+function commandForSummary(providerConfig, suiteIds) {
+  const suiteArg = suiteIds.length === ALL_SUITE_IDS.length ? '' : ` --suite ${suiteIds.join(',')}`;
+  return `node benchmarks/run.js --provider ${providerConfig.provider} --dimensions ${providerConfig.dimensions}${suiteArg}`;
 }
 
 export function assertBenchmarkGuardrails(summary, options = {}) {
@@ -289,34 +387,46 @@ export async function runBenchmarkSuite(options = {}) {
     provider: options.provider || 'mock',
     dimensions: options.dimensions || 64,
   };
+  const suiteIds = normalizeSuiteSelection(options.suite || 'all');
+  const selectedSuites = selectedSuitesOrThrow(suiteIds);
 
   const caseResults = [];
-  for (const benchmarkCase of BENCHMARK_CASES) {
-    const results = await runSystemsForCase(benchmarkCase, providerConfig);
-    caseResults.push({
-      id: benchmarkCase.id,
-      title: benchmarkCase.title,
-      family: benchmarkCase.family,
-      description: benchmarkCase.description,
-      query: benchmarkCase.query,
-      results,
-    });
+  for (const suite of selectedSuites) {
+    for (const benchmarkCase of suite.cases) {
+      const results = await runSystemsForCase(benchmarkCase, providerConfig);
+      caseResults.push({
+        id: benchmarkCase.id,
+        suite: benchmarkCase.suite,
+        title: benchmarkCase.title,
+        family: benchmarkCase.family,
+        description: benchmarkCase.description,
+        query: benchmarkCase.query,
+        results,
+      });
+    }
   }
 
   const localOverall = summarizeLocalResults(caseResults);
   const localByFamily = summarizeByFamily(caseResults);
+  const localSuites = summarizeSuites(caseResults, selectedSuites);
 
   return {
     generatedAt: new Date().toISOString(),
-    command: `node benchmarks/run.js --provider ${providerConfig.provider} --dimensions ${providerConfig.dimensions}`,
-    config: providerConfig,
+    command: commandForSummary(providerConfig, suiteIds),
+    config: {
+      ...providerConfig,
+      suites: suiteIds,
+    },
     methodology: {
-      localBenchmark: 'LongMemEval-inspired synthetic capability suite plus privacy and abstention checks',
+      localBenchmark: 'LongMemEval-inspired retrieval benchmark plus operation-level lifecycle benchmark',
+      retrievalBenchmark: 'Information extraction, updates, reasoning, procedural learning, privacy, abstention, and conflict handling',
+      operationsBenchmark: 'Update, overwrite, delete, merge, and abstention behavior after lifecycle operations',
       externalLeaderboard: 'Published LoCoMo scores from official papers and project blogs',
     },
     local: {
       overall: localOverall,
       byFamily: localByFamily,
+      suites: localSuites,
       cases: caseResults,
     },
     external: {
@@ -334,6 +444,7 @@ export async function runBenchmarkCli({ argv = process.argv.slice(2), out = cons
     outputDir: args.outDir,
     summary,
     localOverall: summary.local.overall,
+    localSuites: summary.local.suites,
     externalOverall: summary.external.leaderboard,
     trends: summary.trends,
     readmeAssetsDir: args.readmeAssetsDir,
@@ -354,6 +465,7 @@ export async function runBenchmarkCli({ argv = process.argv.slice(2), out = cons
   const lines = [];
   lines.push('Audrey benchmark complete.');
   lines.push('');
+  lines.push(`Suites: ${summary.config.suites.map(suiteId => SUITE_LABELS.get(suiteId) || suiteId).join(', ')}`);
   for (const row of summary.local.overall) {
     lines.push(
       `${row.system}: ${row.scorePercent.toFixed(1)}% score, ${row.passRate.toFixed(1)}% pass rate, `
@@ -361,12 +473,25 @@ export async function runBenchmarkCli({ argv = process.argv.slice(2), out = cons
     );
   }
   lines.push('');
+  for (const suite of summary.local.suites) {
+    const audrey = suite.overall.find(row => row.system === 'Audrey');
+    lines.push(`${suite.title}: Audrey ${audrey?.scorePercent.toFixed(1) ?? '0.0'}%`);
+  }
+  lines.push('');
   lines.push(`JSON report: ${artifacts.json}`);
   lines.push(`HTML report: ${artifacts.html}`);
   lines.push(`Local chart: ${artifacts.localChart}`);
+  if (artifacts.suiteCharts.length > 0) {
+    for (const suiteChart of artifacts.suiteCharts) {
+      lines.push(`${suiteChart.title}: ${suiteChart.path}`);
+    }
+  }
   lines.push(`Published chart: ${artifacts.externalChart}`);
   if (artifacts.readmeAssets) {
     lines.push(`README local chart: ${artifacts.readmeAssets.localChart}`);
+    if (artifacts.readmeAssets.operationsChart) {
+      lines.push(`README operations chart: ${artifacts.readmeAssets.operationsChart}`);
+    }
     lines.push(`README published chart: ${artifacts.readmeAssets.externalChart}`);
   }
   if (gate) {

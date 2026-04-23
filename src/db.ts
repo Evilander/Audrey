@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { join } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
+import { createFTSTables, backfillFTS } from './fts.js';
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS episodes (
@@ -287,7 +288,7 @@ function addColumnIfMissing(db: Database.Database, table: string, column: string
   }
 }
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 10;
 
 const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
   { version: 1, up(db) { addColumnIfMissing(db, 'episodes', 'context', "TEXT DEFAULT '{}'"); } },
@@ -297,6 +298,26 @@ const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
   { version: 5, up(db) { addColumnIfMissing(db, 'procedures', 'interference_count', 'INTEGER DEFAULT 0'); } },
   { version: 6, up(db) { addColumnIfMissing(db, 'procedures', 'salience', 'REAL DEFAULT 0.5'); } },
   { version: 7, up(db) { addColumnIfMissing(db, 'episodes', 'private', 'INTEGER DEFAULT 0'); } },
+  { version: 8, up(db) {
+    addColumnIfMissing(db, 'episodes', 'agent', "TEXT DEFAULT 'default'");
+    addColumnIfMissing(db, 'semantics', 'agent', "TEXT DEFAULT 'default'");
+    addColumnIfMissing(db, 'procedures', 'agent', "TEXT DEFAULT 'default'");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_semantics_agent ON semantics(agent)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_agent ON procedures(agent)");
+  }},
+  { version: 9, up(db) {
+    createFTSTables(db);
+    backfillFTS(db);
+  }},
+  { version: 10, up(db) {
+    addColumnIfMissing(db, 'episodes', 'usage_count', 'INTEGER DEFAULT 0');
+    addColumnIfMissing(db, 'episodes', 'last_used_at', 'TEXT');
+    addColumnIfMissing(db, 'semantics', 'usage_count', 'INTEGER DEFAULT 0');
+    addColumnIfMissing(db, 'semantics', 'last_used_at', 'TEXT');
+    addColumnIfMissing(db, 'procedures', 'usage_count', 'INTEGER DEFAULT 0');
+    addColumnIfMissing(db, 'procedures', 'last_used_at', 'TEXT');
+  }},
 ];
 
 function runMigrations(db: Database.Database): void {

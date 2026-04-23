@@ -1,9 +1,10 @@
 # Benchmarking Audrey
 
-Audrey now ships with a memory benchmark harness that does two different jobs:
+Audrey now ships with a memory benchmark harness that does three different jobs:
 
-1. It runs Audrey against a local capability suite inspired by LongMemEval, plus privacy and abstention checks that matter in production.
-2. It overlays published leaderboard numbers from leading memory systems on LoCoMo so you can place Audrey in the current market and research landscape without pretending the measurements are identical.
+1. It runs Audrey against a local retrieval suite inspired by LongMemEval, plus privacy and abstention checks that matter in production.
+2. It runs Audrey against an operation-level suite for update, overwrite, delete, merge, and abstain behavior.
+3. It overlays published leaderboard numbers from leading memory systems on LoCoMo so you can place Audrey in the current market and research landscape without pretending the measurements are identical.
 
 That split is deliberate. A lot of memory tooling mixes internal demos with external benchmark claims. Audrey should not do that.
 
@@ -24,6 +25,8 @@ Artifacts are written to `benchmarks/output/`:
 - `summary.json`
 - `report.html`
 - `local-overall.svg`
+- `retrieval-overall.svg`
+- `operations-overall.svg`
 - `published-locomo.svg`
 
 For CI, JSON-only output is available:
@@ -48,9 +51,16 @@ npm run bench:memory:readme-assets
 
 That writes stable chart assets to `docs/assets/benchmarks/` so the GitHub repo surface shows the same benchmark posture as the generated report.
 
-## What The Local Benchmark Measures
+To run a single local track:
 
-The local suite covers eight memory families:
+```bash
+npm run bench:memory:retrieval
+npm run bench:memory:operations
+```
+
+## What The Local Retrieval Benchmark Measures
+
+The retrieval suite covers eight memory families:
 
 - `information_extraction`
 - `knowledge_updates`
@@ -67,6 +77,24 @@ This is intentionally closer to how operators evaluate memory in production than
 - avoid leaking private memory
 - consolidate repeated episodes into reusable procedures
 - handle conflict without amplifying low-reliability noise
+
+## What The Local Operations Benchmark Measures
+
+The operations suite covers four lifecycle families:
+
+- `update_overwrite`
+- `delete_and_abstain`
+- `semantic_merge`
+- `procedural_merge`
+
+This suite exists because leading memory systems are often compared on offline recall, while real agent memory succeeds or fails on memory operations:
+
+- can a newer fact overwrite stale state without leaking both
+- can a delete actually prevent future recall
+- can repeated raw events merge into reusable semantic knowledge
+- can repeated events merge into an actionable procedure instead of another inert blob of text
+
+Those are not implementation details. They are the actual product surface of memory.
 
 ## What The Published Leaderboard Means
 
@@ -105,10 +133,10 @@ The most important memory trends right now:
 
 The benchmark highlights the next credible roadmap for Audrey:
 
-- stronger abstention so tangential memories do not surface when the right answer is "unknown"
-- conflict-aware retrieval suppression so low-reliability contradicting evidence is demoted harder
+- first-party LoCoMo and LongMemEval adapters so Audrey can publish directly reproducible external benchmark numbers
+- contradiction-state and truth-resolution benchmark cases, not just retrieval outcomes
+- cost, latency, and storage curves against long-context baselines and simpler memory systems
 - a typed memory graph layer for cross-memory state transitions and time-aware reasoning
-- a first-party LoCoMo or LongMemEval adapter so Audrey can publish directly reproducible external benchmark numbers
 
 ## Source Links
 

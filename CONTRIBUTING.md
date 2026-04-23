@@ -10,7 +10,7 @@ npm test
 npm run pack:check
 ```
 
-Node `>=18` is required.
+Node `>=20` is required.
 
 ## What Good Contributions Look Like
 
