@@ -858,10 +858,172 @@ async function main(): Promise<void> {
     }
   });
 
+  server.tool('memory_observe_tool', {
+    event: z.string().describe('Hook event name (PreToolUse, PostToolUse, PostToolUseFailure, PreCompact, PostCompact, etc.)'),
+    tool: z.string().describe('Tool name being observed (Bash, Edit, Write, etc.)'),
+    session_id: z.string().optional().describe('Session identifier for grouping related events'),
+    input: z.unknown().optional().describe('Tool input. Hashed and never stored raw; redacted + summarized into metadata only when retain_details is true.'),
+    output: z.unknown().optional().describe('Tool output. Same redaction and storage policy as input.'),
+    outcome: z.enum(['succeeded', 'failed', 'blocked', 'skipped', 'unknown']).optional().describe('Outcome classification'),
+    error_summary: z.string().optional().describe('Short error description if the tool failed. Redacted and truncated to 2 KB.'),
+    cwd: z.string().optional().describe('Working directory at the time of the tool call'),
+    files: z.array(z.string()).optional().describe('File paths to fingerprint (size + mtime + content hash)'),
+    metadata: z.record(z.string(), z.unknown()).optional().describe('Arbitrary structured metadata (redacted before storage)'),
+    retain_details: z.boolean().optional().describe('If true, redacted input and output payloads are stored alongside hashes. Defaults to false.'),
+  }, async ({ event, tool, session_id, input, output, outcome, error_summary, cwd, files, metadata, retain_details }) => {
+    try {
+      const result = audrey.observeTool({
+        event,
+        tool,
+        sessionId: session_id,
+        input,
+        output,
+        outcome,
+        errorSummary: error_summary,
+        cwd,
+        files,
+        metadata,
+        retainDetails: retain_details,
+      });
+      return toolResult({
+        id: result.event.id,
+        event_type: result.event.event_type,
+        tool_name: result.event.tool_name,
+        outcome: result.event.outcome,
+        redaction_state: result.event.redaction_state,
+        redactions: result.redactions,
+        created_at: result.event.created_at,
+      });
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+
+  server.tool('memory_recent_failures', {
+    since: z.string().optional().describe('ISO timestamp lower bound (defaults to 7 days ago)'),
+    limit: z.number().int().min(1).max(200).optional().describe('Max rows to return (defaults to 20)'),
+  }, async ({ since, limit }) => {
+    try {
+      return toolResult(audrey.recentFailures({ since, limit }));
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('[audrey-mcp] connected via stdio');
   registerShutdownHandlers(process, audrey);
+}
+
+function parseObserveToolArgs(argv: string[]): {
+  event?: string;
+  tool?: string;
+  sessionId?: string;
+  outcome?: string;
+  cwd?: string;
+  errorSummary?: string;
+  files?: string[];
+  inputJson?: string;
+  outputJson?: string;
+  metadataJson?: string;
+  retainDetails?: boolean;
+} {
+  const out: Record<string, unknown> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    const next = () => argv[++i];
+    if (token === '--event') out.event = next();
+    else if (token === '--tool') out.tool = next();
+    else if (token === '--session-id') out.sessionId = next();
+    else if (token === '--outcome') out.outcome = next();
+    else if (token === '--cwd') out.cwd = next();
+    else if (token === '--error-summary') out.errorSummary = next();
+    else if (token === '--files') {
+      const list = next();
+      if (list) out.files = list.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    else if (token === '--input-json') out.inputJson = next();
+    else if (token === '--output-json') out.outputJson = next();
+    else if (token === '--metadata-json') out.metadataJson = next();
+    else if (token === '--retain-details') out.retainDetails = true;
+  }
+  return out as ReturnType<typeof parseObserveToolArgs>;
+}
+
+async function observeToolCli(): Promise<void> {
+  const args = parseObserveToolArgs(process.argv.slice(3));
+
+  if (!args.event) {
+    console.error('[audrey] observe-tool: --event is required (e.g. PreToolUse, PostToolUse)');
+    process.exit(2);
+  }
+  if (!args.tool) {
+    console.error('[audrey] observe-tool: --tool is required (e.g. Bash, Edit, Write)');
+    process.exit(2);
+  }
+
+  let stdinPayload: Record<string, unknown> | null = null;
+  if (!process.stdin.isTTY) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+    const raw = Buffer.concat(chunks).toString('utf-8').trim();
+    if (raw) {
+      try { stdinPayload = JSON.parse(raw) as Record<string, unknown>; }
+      catch { console.error('[audrey] observe-tool: stdin was not valid JSON, ignoring.'); }
+    }
+  }
+
+  const parseMaybeJson = (text: string | undefined): unknown => {
+    if (text == null) return undefined;
+    try { return JSON.parse(text); }
+    catch { return text; }
+  };
+
+  const inputPayload = args.inputJson !== undefined
+    ? parseMaybeJson(args.inputJson)
+    : stdinPayload?.tool_input ?? stdinPayload?.input ?? stdinPayload;
+  const outputPayload = args.outputJson !== undefined
+    ? parseMaybeJson(args.outputJson)
+    : stdinPayload?.tool_output ?? stdinPayload?.output;
+  const metadataPayload = args.metadataJson !== undefined
+    ? parseMaybeJson(args.metadataJson)
+    : stdinPayload?.metadata;
+
+  const dataDir = resolveDataDir(process.env);
+  const embedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
+  const audrey = new Audrey({
+    dataDir,
+    agent: process.env['AUDREY_AGENT'] ?? 'observe-tool',
+    embedding,
+  });
+
+  try {
+    const result = audrey.observeTool({
+      event: args.event,
+      tool: args.tool,
+      sessionId: args.sessionId,
+      input: inputPayload,
+      output: outputPayload,
+      outcome: args.outcome as 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown' | undefined,
+      errorSummary: args.errorSummary ?? (stdinPayload?.error_summary as string | undefined),
+      cwd: args.cwd ?? (stdinPayload?.cwd as string | undefined),
+      files: args.files,
+      metadata: (metadataPayload ?? undefined) as Record<string, unknown> | undefined,
+      retainDetails: args.retainDetails,
+    });
+    const summary = {
+      id: result.event.id,
+      event_type: result.event.event_type,
+      tool_name: result.event.tool_name,
+      outcome: result.event.outcome,
+      redaction_state: result.event.redaction_state,
+      redactions: result.redactions,
+    };
+    console.log(JSON.stringify(summary));
+  } finally {
+    audrey.close();
+  }
 }
 
 const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -898,6 +1060,11 @@ if (isDirectRun) {
     });
   } else if (subcommand === 'status') {
     status();
+  } else if (subcommand === 'observe-tool') {
+    observeToolCli().catch(err => {
+      console.error('[audrey] observe-tool failed:', err);
+      process.exit(1);
+    });
   } else {
     main().catch(err => {
       console.error('[audrey-mcp] fatal:', err);
