@@ -1,0 +1,39 @@
+services:
+  audrey:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: audrey:local
+    restart: unless-stopped
+    ports:
+      - "${AUDREY_PUBLISHED_PORT:-3487}:3487"
+    environment:
+      AUDREY_HOST: 0.0.0.0
+      AUDREY_PORT: 3487
+      AUDREY_DATA_DIR: /data
+      AUDREY_DEVICE: ${AUDREY_DEVICE:-cpu}
+      AUDREY_EMBEDDING_PROVIDER: ${AUDREY_EMBEDDING_PROVIDER:-local}
+      AUDREY_LLM_PROVIDER: ${AUDREY_LLM_PROVIDER:-}
+      AUDREY_API_KEY: ${AUDREY_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - audrey-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "--input-type=module",
+          "-e",
+          "const headers = process.env.AUDREY_API_KEY ? { Authorization: 'Bearer ' + process.env.AUDREY_API_KEY } : {}; fetch('http://127.0.0.1:3487/health', { headers }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  audrey-data:

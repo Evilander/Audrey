@@ -39,6 +39,92 @@ function flattenMemories(benchmarkCase, ids = []) {
   }));
 }
 
+function buildSyntheticCase(query, memories, options = {}) {
+  return {
+    query,
+    memory: memories.map(memory => ({
+      content: memory.content,
+      source: memory.source,
+      createdAt: memory.createdAt,
+      private: memory.private,
+    })),
+    options,
+  };
+}
+
+async function runBaselineRetrieval(system, syntheticCase, providerConfig, limit = 5) {
+  switch (system) {
+    case 'Vector Only':
+      return runVectorOnlyBaseline(syntheticCase, providerConfig, limit);
+    case 'Keyword + Recency':
+      return runKeywordRecencyBaseline(syntheticCase, limit);
+    case 'Recent Window':
+      return runRecentWindowBaseline(syntheticCase, limit);
+    default:
+      throw new Error(`Unknown baseline system: ${system}`);
+  }
+}
+
+function createOperationMemory(state, step) {
+  const index = state.counter++;
+  return {
+    id: `memory-${index + 1}`,
+    content: step.memory.content,
+    source: step.memory.source,
+    createdAt: step.memory.createdAt || new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+    private: Boolean(step.memory.private),
+  };
+}
+
+async function applyBaselineStep(system, state, step, providerConfig) {
+  if (step.type === 'encode') {
+    const memory = createOperationMemory(state, step);
+    state.memories.push(memory);
+    if (step.saveAs) {
+      state.aliases.set(step.saveAs, memory.id);
+    }
+    return;
+  }
+
+  if (step.type === 'forgetByQuery') {
+    const syntheticCase = buildSyntheticCase(step.query, state.memories, step.options);
+    const [match] = await runBaselineRetrieval(system, syntheticCase, providerConfig, 1);
+    if (match && Number.isFinite(match.score) && match.score > 0) {
+      state.memories = state.memories.filter(memory => memory.id !== match.id);
+    }
+    return;
+  }
+
+  if (step.type === 'consolidate') {
+    return;
+  }
+
+  throw new Error(`Unsupported baseline step: ${step.type}`);
+}
+
+export async function runBaselineScenario(system, benchmarkCase, providerConfig, limit = 5) {
+  if (benchmarkCase.kind !== 'operations') {
+    return runBaselineRetrieval(system, benchmarkCase, providerConfig, limit);
+  }
+
+  const state = {
+    counter: 0,
+    memories: [],
+    aliases: new Map(),
+  };
+
+  for (const step of benchmarkCase.steps || []) {
+    await applyBaselineStep(system, state, step, providerConfig);
+  }
+
+  return runBaselineRetrieval(
+    system,
+    buildSyntheticCase(benchmarkCase.query, state.memories, benchmarkCase.options),
+    providerConfig,
+    limit,
+  );
+}
+
 export function runKeywordRecencyBaseline(benchmarkCase, limit = 5) {
   const queryTokens = tokenize(benchmarkCase.query);
   return sortByScore(flattenMemories(benchmarkCase).map(memory => ({

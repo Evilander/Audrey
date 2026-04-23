@@ -2,6 +2,8 @@
 
 Audrey is ready to be the memory layer inside a production agent system, but it is not a complete regulated-platform package by itself. Treat it as stateful infrastructure: pin providers, isolate tenants, monitor health, and wrap it with the controls your environment requires.
 
+First contact should now go through `npx audrey init sidecar-prod` for the sidecar path or `npx audrey init` for the default Claude Code path, then `npx audrey doctor` before exposing Audrey to real traffic.
+
 ## Best Vertical Fit
 
 ### 1. Financial Services Operations
@@ -62,6 +64,7 @@ Guardrails:
 8. Keep API keys, bearer tokens, and raw credentials out of encoded memory content.
 9. Decide whether `private` memories are allowed for your use case and document who can create them.
 10. Add application-level encryption, access control, logging, and retention policies around Audrey.
+11. On graceful shutdown paths, call `await brain.waitForIdle()` before `brain.close()` so tracked background work drains cleanly.
 
 ## Operations Commands
 
@@ -93,3 +96,29 @@ Use Audrey as a local sidecar to the agent service:
 - Regulated-data filtering handled before `memory_encode`
 
 That keeps Audrey focused on memory integrity while the host system owns compliance, tenancy, and transport security.
+
+## Docker Deployment
+
+Audrey now ships with a first-party container path for the REST API:
+
+```bash
+npx audrey init sidecar-prod
+docker compose up -d --build
+```
+
+Operational notes:
+
+- The container persists SQLite data in the named volume `audrey-data`.
+- Set `AUDREY_API_KEY` before exposing the service beyond localhost.
+- For CI or very fast smoke checks, prefer `AUDREY_EMBEDDING_PROVIDER=mock` and `AUDREY_LLM_PROVIDER=mock`.
+- For stable local/offline container use, keep `AUDREY_EMBEDDING_PROVIDER=local` and `AUDREY_DEVICE=cpu`.
+- If you map the service to a different host port, keep the container port at `3487`.
+
+Suggested smoke check:
+
+```bash
+AUDREY_API_KEY=secret docker compose up -d --build
+curl -H "Authorization: Bearer secret" http://localhost:3487/health
+curl -H "Authorization: Bearer secret" http://localhost:3487/status
+docker compose logs --tail=100 audrey
+```

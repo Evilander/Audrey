@@ -198,6 +198,20 @@ describe('recall', () => {
     expect(incremented).toBe(true);
   });
 
+  // Skipped: recall()'s partialFailure surface is planned in docs/plans/audrey-1.0-continuity-os-2026-04-22.md
+  // (silent-failure-hunter principle — surface KNN errors to callers instead of swallowing).
+  it.skip('surfaces partial failures when a recall path breaks', async () => {
+    db.exec('DROP TABLE vec_semantics');
+
+    const results = await recall(db, embedding, 'Stripe rate limit', { types: ['semantic'] });
+
+    expect(results).toHaveLength(0);
+    expect(results.partialFailure).toBe(true);
+    expect(results.errors).toEqual([
+      expect.objectContaining({ type: 'semantic' }),
+    ]);
+  });
+
   // --- recallStream tests ---
 
   it('recallStream yields results as async generator', async () => {

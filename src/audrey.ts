@@ -605,6 +605,10 @@ export class Audrey extends EventEmitter {
     this.stopAutoConsolidate();
     closeDatabase(this.db);
   }
+
+  async waitForIdle(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 function db_prepare_get_status(db: Database.Database, runId: string): StatusRow | undefined {

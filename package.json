@@ -27,6 +27,8 @@
     "dist/",
     "docs/production-readiness.md",
     "docs/benchmarking.md",
+    "docs/assets/benchmarks/",
+    "examples/",
     "README.md",
     "LICENSE"
   ],
@@ -39,10 +41,17 @@
     "prepack": "npm run build",
     "pack:check": "npm pack --dry-run",
     "bench:memory": "node benchmarks/run.js",
+    "bench:memory:retrieval": "node benchmarks/run.js --suite retrieval",
+    "bench:memory:operations": "node benchmarks/run.js --suite operations",
     "bench:memory:json": "node benchmarks/run.js --json",
     "bench:memory:check": "node benchmarks/run.js --check",
     "bench:memory:readme-assets": "node benchmarks/run.js --readme-assets-dir docs/assets/benchmarks",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "serve": "node dist/mcp-server/index.js serve",
+    "docker:build": "docker build -t audrey:local .",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f audrey"
   },
   "keywords": [
     "ai",
@@ -70,6 +79,8 @@
     "rag",
     "claude",
     "agent-framework",
+    "rest-api",
+    "http-server",
     "fintech",
     "healthcare"
   ],
@@ -83,7 +94,7 @@
   },
   "author": "evilander",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "license": "MIT",
   "dependencies": {

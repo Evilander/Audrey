@@ -1,14 +1,33 @@
 node_modules/
+.npm-cache/
 audrey-data/
+.tmp/
+.tmp-vitest/
+.archive/
+.worktrees/
 *.db
 *.db-wal
 *.db-shm
 .env
 CLAUDE.md
-.worktrees/
 benchmarks/output/
 benchmarks/.tmp/
+memorybench/
+windows-smoke-job-*.log
+
+# Node build output
 dist/
+
+# Python build artifacts
 __pycache__/
 *.pyc
 .pytest_cache/
+python/build/
+python/dist/
+python/*.egg-info/
+python/.venv/
+python/.pytest_cache/
+python/**/__pycache__/
+pip-*/
+build-env-*/
+build-reqs-*.txt
