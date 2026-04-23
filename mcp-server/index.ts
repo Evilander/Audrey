@@ -954,15 +954,6 @@ function parseObserveToolArgs(argv: string[]): {
 async function observeToolCli(): Promise<void> {
   const args = parseObserveToolArgs(process.argv.slice(3));
 
-  if (!args.event) {
-    console.error('[audrey] observe-tool: --event is required (e.g. PreToolUse, PostToolUse)');
-    process.exit(2);
-  }
-  if (!args.tool) {
-    console.error('[audrey] observe-tool: --tool is required (e.g. Bash, Edit, Write)');
-    process.exit(2);
-  }
-
   let stdinPayload: Record<string, unknown> | null = null;
   if (!process.stdin.isTTY) {
     const chunks: Buffer[] = [];
@@ -974,6 +965,21 @@ async function observeToolCli(): Promise<void> {
     }
   }
 
+  // Auto-extract common fields from the Claude Code hook payload so the hook
+  // config can be minimal: only --event needs to be specified on the command
+  // line; tool_name / session_id / cwd / hook_event_name come from stdin.
+  const effectiveEvent = args.event ?? (stdinPayload?.hook_event_name as string | undefined);
+  const effectiveTool = args.tool ?? (stdinPayload?.tool_name as string | undefined);
+
+  if (!effectiveEvent) {
+    console.error('[audrey] observe-tool: --event is required (or provide hook_event_name in stdin JSON)');
+    process.exit(2);
+  }
+  if (!effectiveTool) {
+    console.error('[audrey] observe-tool: --tool is required (or provide tool_name in stdin JSON)');
+    process.exit(2);
+  }
+
   const parseMaybeJson = (text: string | undefined): unknown => {
     if (text == null) return undefined;
     try { return JSON.parse(text); }
@@ -982,13 +988,36 @@ async function observeToolCli(): Promise<void> {
 
   const inputPayload = args.inputJson !== undefined
     ? parseMaybeJson(args.inputJson)
-    : stdinPayload?.tool_input ?? stdinPayload?.input ?? stdinPayload;
+    : stdinPayload?.tool_input ?? stdinPayload?.input;
   const outputPayload = args.outputJson !== undefined
     ? parseMaybeJson(args.outputJson)
-    : stdinPayload?.tool_output ?? stdinPayload?.output;
+    : stdinPayload?.tool_response ?? stdinPayload?.tool_output ?? stdinPayload?.output;
   const metadataPayload = args.metadataJson !== undefined
     ? parseMaybeJson(args.metadataJson)
     : stdinPayload?.metadata;
+
+  const sessionId = args.sessionId ?? (stdinPayload?.session_id as string | undefined);
+  const cwd = args.cwd ?? (stdinPayload?.cwd as string | undefined);
+
+  // Detect failure from Claude Code hook payload shape: tool_response often
+  // includes a non-empty error or a success=false flag for failed tools.
+  let outcome = args.outcome as 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown' | undefined;
+  let errorSummary = args.errorSummary ?? (stdinPayload?.error_summary as string | undefined);
+  if (outcome == null && effectiveEvent === 'PostToolUse') {
+    const resp = (stdinPayload?.tool_response as Record<string, unknown> | undefined) ?? undefined;
+    const errField = resp?.['error'] ?? resp?.['stderr'];
+    const successField = resp?.['success'];
+    if (typeof successField === 'boolean') {
+      outcome = successField ? 'succeeded' : 'failed';
+    } else if (errField && (typeof errField === 'string' ? errField.length > 0 : true)) {
+      outcome = 'failed';
+    } else {
+      outcome = 'succeeded';
+    }
+    if (outcome === 'failed' && !errorSummary) {
+      errorSummary = typeof errField === 'string' ? errField : JSON.stringify(errField ?? resp);
+    }
+  }
 
   const dataDir = resolveDataDir(process.env);
   const embedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
@@ -1000,14 +1029,14 @@ async function observeToolCli(): Promise<void> {
 
   try {
     const result = audrey.observeTool({
-      event: args.event,
-      tool: args.tool,
-      sessionId: args.sessionId,
+      event: effectiveEvent,
+      tool: effectiveTool,
+      sessionId,
       input: inputPayload,
       output: outputPayload,
-      outcome: args.outcome as 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown' | undefined,
-      errorSummary: args.errorSummary ?? (stdinPayload?.error_summary as string | undefined),
-      cwd: args.cwd ?? (stdinPayload?.cwd as string | undefined),
+      outcome,
+      errorSummary,
+      cwd,
       files: args.files,
       metadata: (metadataPayload ?? undefined) as Record<string, unknown> | undefined,
       retainDetails: args.retainDetails,
