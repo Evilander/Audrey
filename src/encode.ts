@@ -3,6 +3,7 @@ import type { Affect, CausalParams, EmbeddingProvider, SourceType } from './type
 import { generateId } from './ulid.js';
 import { sourceReliability } from './confidence.js';
 import { arousalSalienceBoost } from './affect.js';
+import { insertFTSEpisode } from './fts.js';
 
 export async function encodeEpisode(
   db: Database.Database,
@@ -64,6 +65,7 @@ export async function encodeEpisode(
     db.prepare(
       'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
     ).run(id, embeddingBuffer, source, BigInt(0));
+    insertFTSEpisode(db, id, content, tags ?? null);
     if (supersedes) {
       db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ?').run(id, supersedes);
     }

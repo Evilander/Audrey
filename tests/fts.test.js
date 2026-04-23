@@ -4,8 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Skipped: FTS5 hybrid retrieval is planned in docs/plans/audrey-1.0-continuity-os-2026-04-22.md (retrieval-policy + capsule). src/fts.ts exists but is not yet wired into recall.
-describe.skip('FTS5 full-text search', () => {
+describe('FTS5 full-text search', () => {
   let audrey;
   let dataDir;
 
