@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Audrey } from './audrey.js';
+import { VERSION } from '../mcp-server/config.js';
 
 export interface AppOptions {
   apiKey?: string;
@@ -8,13 +9,27 @@ export interface AppOptions {
 export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   const app = new Hono();
 
-  // Health check — no auth required
+  // Health check — no auth required.
+  // Fields kept for backward compatibility across Audrey client surfaces:
+  //   status  / healthy — original TS-era field names (tests/http-api.test.js)
+  //   ok      / version — Python SDK HealthResponse contract
+  //                       (python/audrey_memory/types.py)
   app.get('/health', (c) => {
     try {
       const status = audrey.memoryStatus();
-      return c.json({ status: 'ok', healthy: status.healthy });
+      return c.json({
+        status: 'ok',
+        ok: true,
+        healthy: status.healthy,
+        version: VERSION,
+      });
     } catch {
-      return c.json({ status: 'error', healthy: false }, 500);
+      return c.json({
+        status: 'error',
+        ok: false,
+        healthy: false,
+        version: VERSION,
+      }, 500);
     }
   });
 
