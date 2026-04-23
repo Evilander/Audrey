@@ -131,13 +131,16 @@ function Update-CodexConfig {
   $skippingAudrey = $false
 
   foreach ($line in $existingLines) {
-    if (-not $skippingAudrey -and $line -eq '[mcp_servers.audrey-memory]') {
+    if (-not $skippingAudrey -and $line -match '^\[mcp_servers\.audrey-memory(\..+)?\]$') {
       $skippingAudrey = $true
       continue
     }
 
     if ($skippingAudrey) {
       if ($line -match '^\[[^\]]+\]$') {
+        if ($line -match '^\[mcp_servers\.audrey-memory(\..+)?\]$') {
+          continue
+        }
         $skippingAudrey = $false
         $cleanLines.Add($line)
       }
@@ -145,6 +148,10 @@ function Update-CodexConfig {
     }
 
     $cleanLines.Add($line)
+  }
+
+  while ($cleanLines.Count -gt 0 -and [string]::IsNullOrWhiteSpace($cleanLines[$cleanLines.Count - 1])) {
+    $cleanLines.RemoveAt($cleanLines.Count - 1)
   }
 
   $block = @(
