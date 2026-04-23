@@ -51,7 +51,7 @@ function Update-JsonMcpEntryWithNode {
 
   $patchScript = @'
 import fs from "node:fs";
-const [path, entry, storeDir, agent, nodeExe] = process.argv.slice(1);
+const [path, entry, storeDir, agent, nodeExe] = process.argv.slice(2);
 let config = {};
 if (fs.existsSync(path)) {
   config = JSON.parse(fs.readFileSync(path, "utf8"));
@@ -74,7 +74,15 @@ config.mcpServers["audrey-memory"] = {
 fs.writeFileSync(path, JSON.stringify(config, null, 2));
 '@
 
-  & $Node --input-type=module -e $patchScript $Path $Entry $StoreDir $Agent $Node
+  $scriptFile = [System.IO.Path]::GetTempFileName()
+  $scriptFile = [System.IO.Path]::ChangeExtension($scriptFile, '.mjs')
+  Set-Content -LiteralPath $scriptFile -Value $patchScript -Encoding utf8
+
+  try {
+    & $Node $scriptFile $Path $Entry $StoreDir $Agent $Node
+  } finally {
+    Remove-Item -LiteralPath $scriptFile -Force -ErrorAction SilentlyContinue
+  }
 }
 
 function Update-ClaudeCodeConfig {
