@@ -1,4 +1,4 @@
-import { Audrey } from '../src/index.js';
+import { Audrey } from '../dist/src/index.js';
 
 async function demo() {
   console.log('=== Audrey Demo: Financial Services Operations ===\n');

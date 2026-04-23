@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
-import { createEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider, LocalEmbeddingProvider, GeminiEmbeddingProvider } from '../src/embedding.js';
+import { createEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider, LocalEmbeddingProvider, GeminiEmbeddingProvider } from '../dist/src/embedding.js';
 
 const RUN_LOCAL_EMBEDDING_INTEGRATION = process.env.AUDREY_RUN_LOCAL_EMBEDDING_TESTS === '1';
 const describeLocalEmbeddingIntegration = RUN_LOCAL_EMBEDDING_INTEGRATION ? describe : describe.skip;

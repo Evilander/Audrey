@@ -4,7 +4,7 @@ import {
   AnthropicLLMProvider,
   OpenAILLMProvider,
   createLLMProvider,
-} from '../src/llm.js';
+} from '../dist/src/llm.js';
 
 describe('MockLLMProvider', () => {
   it('returns canned response from responses map', async () => {

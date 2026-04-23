@@ -1,5 +1,5 @@
-import { createEmbeddingProvider } from '../src/embedding.js';
-import { cosineSimilarity } from '../src/utils.js';
+import { createEmbeddingProvider } from '../dist/src/embedding.js';
+import { cosineSimilarity } from '../dist/src/utils.js';
 
 function normalize(text) {
   return String(text || '').toLowerCase();

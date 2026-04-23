@@ -9,7 +9,7 @@ import {
   DEFAULT_WEIGHTS,
   DEFAULT_SOURCE_RELIABILITY,
   DEFAULT_HALF_LIVES,
-} from '../src/confidence.js';
+} from '../dist/src/confidence.js';
 
 describe('sourceReliability', () => {
   it('returns 0.95 for direct-observation', () => {
