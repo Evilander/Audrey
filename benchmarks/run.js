@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Audrey } from '../src/audrey.js';
+import { Audrey } from '../dist/src/audrey.js';
 import { LOCAL_BENCHMARK_SUITES, FAMILY_ORDER } from './cases.js';
 import { runBaselineScenario } from './baselines.js';
 import { MEMORY_TRENDS, PUBLISHED_LEADERBOARD } from './reference-results.js';

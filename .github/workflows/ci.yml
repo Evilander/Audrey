@@ -28,6 +28,8 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
       - run: npm test
       - run: npm run bench:memory:check
       - run: npm run pack:check
@@ -49,6 +51,7 @@ jobs:
           python-version: '3.11'
 
       - run: npm ci
+      - run: npm run build
       - run: python -m pip install --upgrade pip setuptools wheel build
       - run: python -m pip install -e ./python
       - run: python -m unittest discover -s python/tests -v
@@ -87,6 +90,8 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
       - run: npm test
       - run: npm run bench:memory:check
       - run: npm run pack:check

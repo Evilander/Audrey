@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { applyDecay } from '../src/decay.js';
-import { createDatabase, closeDatabase } from '../src/db.js';
-import { generateId } from '../src/ulid.js';
+import { applyDecay } from '../dist/src/decay.js';
+import { createDatabase, closeDatabase } from '../dist/src/db.js';
+import { generateId } from '../dist/src/ulid.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-decay-data';

@@ -143,14 +143,14 @@ class Audrey:
         return _validate(HealthResponse, _decode_json(self._client.get("/health")))
 
     def status(self) -> StatusResponse:
-        return _validate(StatusResponse, _decode_json(self._client.get("/status")))
+        return _validate(StatusResponse, _decode_json(self._client.get("/v1/status")))
 
     def analytics(self) -> AnalyticsResponse:
-        return _validate(AnalyticsResponse, _decode_json(self._client.get("/analytics")))
+        return _validate(AnalyticsResponse, _decode_json(self._client.get("/v1/analytics")))
 
     def encode(self, payload: EncodeRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> str:
         request = _build_model_payload(payload, EncodeRequest, "content", kwargs)
-        data = _decode_json(self._client.post("/encode", json=_dump_payload(request)))
+        data = _decode_json(self._client.post("/v1/encode", json=_dump_payload(request)))
         return _validate(EncodeResponse, data).id
 
     def recall(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any):
@@ -158,12 +158,12 @@ class Audrey:
 
     def recall_response(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> RecallResponse:
         request = _build_model_payload(payload, RecallRequest, "query", kwargs)
-        data = _decode_json(self._client.post("/recall", json=_dump_payload(request)))
+        data = _decode_json(self._client.post("/v1/recall", json=_dump_payload(request)))
         return _validate(RecallResponse, data)
 
     def dream(self, payload: DreamRequest | Mapping[str, Any] | None = None, /, **kwargs: Any) -> OperationResult:
         request = _optional_model_payload(payload, DreamRequest, kwargs)
-        data = _decode_json(self._client.post("/dream", json=_dump_payload(request)))
+        data = _decode_json(self._client.post("/v1/dream", json=_dump_payload(request)))
         return _validate(OperationResult, data)
 
     def consolidate(
@@ -173,12 +173,12 @@ class Audrey:
         **kwargs: Any,
     ) -> OperationResult:
         request = _optional_model_payload(payload, ConsolidateRequest, kwargs)
-        data = _decode_json(self._client.post("/consolidate", json=_dump_payload(request)))
+        data = _decode_json(self._client.post("/v1/consolidate", json=_dump_payload(request)))
         return _validate(OperationResult, data)
 
     def mark_used(self, memory_id: str) -> AckResponse:
         request = MarkUsedRequest(id=memory_id)
-        data = _decode_json(self._client.post("/mark-used", json=_dump_payload(request)))
+        data = _decode_json(self._client.post("/v1/mark-used", json=_dump_payload(request)))
         return _validate(AckResponse, data)
 
     def forget(
@@ -195,18 +195,20 @@ class Audrey:
             purge=purge,
             minSimilarity=min_similarity,
         )
-        data = _decode_json(self._client.post("/forget", json=_dump_payload(request)))
+        data = _decode_json(self._client.post("/v1/forget", json=_dump_payload(request)))
         if data is None:
             return None
         return _validate(ForgetResponse, data)
 
     def snapshot(self) -> MemorySnapshot:
-        data = _decode_json(self._client.post("/snapshot"))
+        # Server exposes snapshot as GET /v1/export.
+        data = _decode_json(self._client.get("/v1/export"))
         return _validate(MemorySnapshot, data)
 
     def restore(self, snapshot: MemorySnapshot | Mapping[str, Any]) -> RestoreResponse:
+        # Server exposes restore as POST /v1/import.
         request = snapshot if isinstance(snapshot, MemorySnapshot) else MemorySnapshot.model_validate(snapshot)
-        data = _decode_json(self._client.post("/restore", json=_dump_payload(request)))
+        data = _decode_json(self._client.post("/v1/import", json=_dump_payload(request)))
         return _validate(RestoreResponse, data)
 
 
@@ -240,14 +242,14 @@ class AsyncAudrey:
         return _validate(HealthResponse, _decode_json(await self._client.get("/health")))
 
     async def status(self) -> StatusResponse:
-        return _validate(StatusResponse, _decode_json(await self._client.get("/status")))
+        return _validate(StatusResponse, _decode_json(await self._client.get("/v1/status")))
 
     async def analytics(self) -> AnalyticsResponse:
-        return _validate(AnalyticsResponse, _decode_json(await self._client.get("/analytics")))
+        return _validate(AnalyticsResponse, _decode_json(await self._client.get("/v1/analytics")))
 
     async def encode(self, payload: EncodeRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> str:
         request = _build_model_payload(payload, EncodeRequest, "content", kwargs)
-        data = _decode_json(await self._client.post("/encode", json=_dump_payload(request)))
+        data = _decode_json(await self._client.post("/v1/encode", json=_dump_payload(request)))
         return _validate(EncodeResponse, data).id
 
     async def recall(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any):
@@ -255,12 +257,12 @@ class AsyncAudrey:
 
     async def recall_response(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> RecallResponse:
         request = _build_model_payload(payload, RecallRequest, "query", kwargs)
-        data = _decode_json(await self._client.post("/recall", json=_dump_payload(request)))
+        data = _decode_json(await self._client.post("/v1/recall", json=_dump_payload(request)))
         return _validate(RecallResponse, data)
 
     async def dream(self, payload: DreamRequest | Mapping[str, Any] | None = None, /, **kwargs: Any) -> OperationResult:
         request = _optional_model_payload(payload, DreamRequest, kwargs)
-        data = _decode_json(await self._client.post("/dream", json=_dump_payload(request)))
+        data = _decode_json(await self._client.post("/v1/dream", json=_dump_payload(request)))
         return _validate(OperationResult, data)
 
     async def consolidate(
@@ -270,12 +272,12 @@ class AsyncAudrey:
         **kwargs: Any,
     ) -> OperationResult:
         request = _optional_model_payload(payload, ConsolidateRequest, kwargs)
-        data = _decode_json(await self._client.post("/consolidate", json=_dump_payload(request)))
+        data = _decode_json(await self._client.post("/v1/consolidate", json=_dump_payload(request)))
         return _validate(OperationResult, data)
 
     async def mark_used(self, memory_id: str) -> AckResponse:
         request = MarkUsedRequest(id=memory_id)
-        data = _decode_json(await self._client.post("/mark-used", json=_dump_payload(request)))
+        data = _decode_json(await self._client.post("/v1/mark-used", json=_dump_payload(request)))
         return _validate(AckResponse, data)
 
     async def forget(
@@ -292,16 +294,18 @@ class AsyncAudrey:
             purge=purge,
             minSimilarity=min_similarity,
         )
-        data = _decode_json(await self._client.post("/forget", json=_dump_payload(request)))
+        data = _decode_json(await self._client.post("/v1/forget", json=_dump_payload(request)))
         if data is None:
             return None
         return _validate(ForgetResponse, data)
 
     async def snapshot(self) -> MemorySnapshot:
-        data = _decode_json(await self._client.post("/snapshot"))
+        # Server exposes snapshot as GET /v1/export.
+        data = _decode_json(await self._client.get("/v1/export"))
         return _validate(MemorySnapshot, data)
 
     async def restore(self, snapshot: MemorySnapshot | Mapping[str, Any]) -> RestoreResponse:
+        # Server exposes restore as POST /v1/import.
         request = snapshot if isinstance(snapshot, MemorySnapshot) else MemorySnapshot.model_validate(snapshot)
-        data = _decode_json(await self._client.post("/restore", json=_dump_payload(request)))
+        data = _decode_json(await self._client.post("/v1/import", json=_dump_payload(request)))
         return _validate(RestoreResponse, data)

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { introspect } from '../src/introspect.js';
-import { encodeEpisode } from '../src/encode.js';
-import { createDatabase, closeDatabase } from '../src/db.js';
-import { MockEmbeddingProvider } from '../src/embedding.js';
+import { introspect } from '../dist/src/introspect.js';
+import { encodeEpisode } from '../dist/src/encode.js';
+import { createDatabase, closeDatabase } from '../dist/src/db.js';
+import { MockEmbeddingProvider } from '../dist/src/embedding.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-introspect-data';

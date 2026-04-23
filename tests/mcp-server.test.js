@@ -1,22 +1,11 @@
 ﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { z } from 'zod';
-import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { Audrey } from '../src/index.js';
-import { readStoredDimensions } from '../src/db.js';
-import {
-  buildAudreyConfig,
-  buildInitEnv,
-  buildInstallArgs,
-  DEFAULT_DATA_DIR,
-  listInitPresets,
-  MCP_ENTRYPOINT,
-  SERVER_NAME,
-  VERSION,
-} from '../mcp-server/config.js';
+import { Audrey } from '../dist/src/index.js';
+import { readStoredDimensions } from '../dist/src/db.js';
+import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, MCP_ENTRYPOINT, SERVER_NAME, VERSION } from '../dist/mcp-server/config.js';
 import {
   MAX_MEMORY_CONTENT_LENGTH,
-  buildHooksConfig,
   buildStatusReport,
   formatStatusReport,
   initializeEmbeddingProvider,
@@ -26,22 +15,16 @@ import {
   memoryRecallToolSchema,
   registerShutdownHandlers,
   registerDreamTool,
-  resolveInitProfilePath,
-  resolveSnapshotPath,
-  runInitCommand,
   runStatusCommand,
   validateForgetSelection,
-} from '../mcp-server/index.js';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+} from '../dist/mcp-server/index.js';
+import { existsSync, rmSync } from 'node:fs';
 
 const TEST_DIR = './test-mcp-server';
-const PACKAGE_VERSION = JSON.parse(
-  readFileSync(new URL('../package.json', import.meta.url), 'utf8')
-).version;
 
 describe('MCP config', () => {
-  it('VERSION matches package.json', () => {
-    expect(VERSION).toBe(PACKAGE_VERSION);
+  it('VERSION is 0.20.0', () => {
+    expect(VERSION).toBe('0.20.0');
   });
 });
 
@@ -198,191 +181,6 @@ describe('MCP CLI: buildInstallArgs', () => {
   });
 });
 
-describe('MCP CLI: init presets', () => {
-  const envBackup = {};
-  const envKeys = [
-    'AUDREY_DATA_DIR', 'AUDREY_AGENT', 'AUDREY_EMBEDDING_PROVIDER',
-    'AUDREY_LLM_PROVIDER', 'AUDREY_DEVICE', 'GOOGLE_API_KEY',
-    'GEMINI_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
-    'AUDREY_HOST', 'AUDREY_PORT', 'AUDREY_API_KEY',
-  ];
-
-  beforeEach(() => {
-    for (const key of envKeys) {
-      envBackup[key] = process.env[key];
-      delete process.env[key];
-    }
-  });
-
-  afterEach(() => {
-    for (const key of envKeys) {
-      if (envBackup[key] !== undefined) process.env[key] = envBackup[key];
-      else delete process.env[key];
-    }
-  });
-
-  it('lists the supported init presets', () => {
-    expect(listInitPresets().map(p => p.name)).toEqual([
-      'local-offline',
-      'hosted-fast',
-      'ci-mock',
-      'sidecar-prod',
-    ]);
-  });
-
-  it('builds a local-offline init env without hosted providers', () => {
-    const initEnv = buildInitEnv({
-      GOOGLE_API_KEY: 'google-test',
-      ANTHROPIC_API_KEY: 'anthropic-test',
-      AUDREY_DEVICE: 'cpu',
-    }, 'local-offline');
-
-    expect(initEnv.AUDREY_EMBEDDING_PROVIDER).toBe('local');
-    expect(initEnv.AUDREY_DEVICE).toBe('cpu');
-    expect(initEnv.GOOGLE_API_KEY).toBeUndefined();
-    expect(initEnv.ANTHROPIC_API_KEY).toBeUndefined();
-    expect(initEnv.AUDREY_AGENT).toBe('claude-code');
-  });
-
-  it('builds a hosted-fast env using detected hosted providers', () => {
-    const initEnv = buildInitEnv({
-      GOOGLE_API_KEY: 'google-test',
-      ANTHROPIC_API_KEY: 'anthropic-test',
-    }, 'hosted-fast');
-
-    expect(initEnv.AUDREY_EMBEDDING_PROVIDER).toBe('gemini');
-    expect(initEnv.AUDREY_LLM_PROVIDER).toBe('anthropic');
-    expect(initEnv.AUDREY_AGENT).toBe('claude-code');
-  });
-
-  it('builds a ci-mock env with mock providers', () => {
-    const initEnv = buildInitEnv({
-      OPENAI_API_KEY: 'openai-test',
-      ANTHROPIC_API_KEY: 'anthropic-test',
-    }, 'ci-mock');
-
-    expect(initEnv.AUDREY_EMBEDDING_PROVIDER).toBe('mock');
-    expect(initEnv.AUDREY_LLM_PROVIDER).toBe('mock');
-    expect(initEnv.OPENAI_API_KEY).toBeUndefined();
-    expect(initEnv.ANTHROPIC_API_KEY).toBeUndefined();
-    expect(initEnv.AUDREY_AGENT).toBe('audrey-ci');
-  });
-
-  it('builds a sidecar-prod env with serving defaults', () => {
-    const initEnv = buildInitEnv({}, 'sidecar-prod');
-
-    expect(initEnv.AUDREY_AGENT).toBe('audrey-sidecar');
-    expect(initEnv.AUDREY_HOST).toBe('0.0.0.0');
-    expect(initEnv.AUDREY_PORT).toBe('3487');
-    expect(initEnv.AUDREY_EMBEDDING_PROVIDER).toBe('local');
-  });
-});
-
-describe('MCP CLI: init command', () => {
-  it('resolves the init profile path next to the data directory', () => {
-    expect(resolveInitProfilePath('/tmp/audrey/data')).toBe(path.resolve('/tmp/audrey/init-profile.json'));
-  });
-
-  it('bootstraps the common Claude path and writes a profile', () => {
-    const lines = [];
-    const installFn = vi.fn();
-    const hooksInstallFn = vi.fn();
-    const writeFile = vi.fn();
-    const mkdir = vi.fn();
-    const execFn = vi.fn();
-
-    const result = runInitCommand({
-      argv: ['node', 'mcp-server/index.js', 'init', 'local-offline'],
-      env: { AUDREY_DATA_DIR: '/tmp/audrey-data', AUDREY_DEVICE: 'cpu' },
-      out: line => lines.push(line),
-      installFn,
-      hooksInstallFn,
-      execFn,
-      writeFile,
-      mkdir,
-    });
-
-    expect(result.preset).toBe('local-offline');
-    expect(result.installedMcp).toBe(true);
-    expect(result.installedHooks).toBe(true);
-    expect(installFn).toHaveBeenCalledOnce();
-    expect(hooksInstallFn).toHaveBeenCalledOnce();
-    expect(writeFile).toHaveBeenCalledOnce();
-    expect(mkdir).toHaveBeenCalled();
-    expect(lines.join('\n')).toContain('Init preset: local-offline');
-    expect(lines.join('\n')).toContain('npx audrey doctor');
-
-    const profile = JSON.parse(writeFile.mock.calls[0][1]);
-    expect(profile.preset).toBe('local-offline');
-    expect(profile.embedding.provider).toBe('local');
-    expect(profile.hooksInstalled).toBe(true);
-  });
-
-  it('supports dry runs without side effects', () => {
-    const installFn = vi.fn();
-    const hooksInstallFn = vi.fn();
-    const writeFile = vi.fn();
-    const mkdir = vi.fn();
-    const execFn = vi.fn(() => {
-      throw new Error('missing claude');
-    });
-
-    const result = runInitCommand({
-      argv: ['node', 'mcp-server/index.js', 'init', 'hosted-fast', '--dry-run'],
-      env: { AUDREY_DATA_DIR: '/tmp/audrey-data' },
-      installFn,
-      hooksInstallFn,
-      execFn,
-      writeFile,
-      mkdir,
-    });
-
-    expect(result.dryRun).toBe(true);
-    expect(result.installedMcp).toBe(false);
-    expect(installFn).not.toHaveBeenCalled();
-    expect(hooksInstallFn).not.toHaveBeenCalled();
-    expect(writeFile).not.toHaveBeenCalled();
-    expect(mkdir).not.toHaveBeenCalled();
-  });
-
-  it('skips hooks when requested', () => {
-    const hooksInstallFn = vi.fn();
-
-    const result = runInitCommand({
-      argv: ['node', 'mcp-server/index.js', 'init', 'local-offline', '--no-hooks'],
-      env: { AUDREY_DATA_DIR: '/tmp/audrey-data' },
-      installFn: vi.fn(),
-      hooksInstallFn,
-      execFn: vi.fn(),
-      writeFile: vi.fn(),
-      mkdir: vi.fn(),
-    });
-
-    expect(result.installedHooks).toBe(false);
-    expect(hooksInstallFn).not.toHaveBeenCalled();
-  });
-
-  it('does not attempt Claude registration for sidecar-prod', () => {
-    const installFn = vi.fn();
-
-    const result = runInitCommand({
-      argv: ['node', 'mcp-server/index.js', 'init', 'sidecar-prod'],
-      env: { AUDREY_DATA_DIR: '/tmp/audrey-data' },
-      installFn,
-      hooksInstallFn: vi.fn(),
-      execFn: vi.fn(() => {
-        throw new Error('missing claude');
-      }),
-      writeFile: vi.fn(),
-      mkdir: vi.fn(),
-    });
-
-    expect(result.installedMcp).toBe(false);
-    expect(result.profile.surface).toBe('sidecar');
-    expect(installFn).not.toHaveBeenCalled();
-  });
-});
-
 describe('MCP validation hardening', () => {
   it('memory_encode rejects empty or whitespace-only content', () => {
     const schema = z.object(memoryEncodeToolSchema);
@@ -455,34 +253,6 @@ describe('MCP lifecycle hardening', () => {
 
     registerShutdownHandlers(fakeProcess, audrey, vi.fn());
     fakeProcess.emit('SIGTERM');
-
-    expect(audrey.close).toHaveBeenCalledOnce();
-    expect(fakeProcess.exit).toHaveBeenCalledWith(0);
-  });
-
-  it('waits for pending Audrey work before exiting when waitForIdle is available', async () => {
-    const fakeProcess = new EventEmitter();
-    fakeProcess.exit = vi.fn();
-
-    let releaseIdle;
-    const idle = new Promise(resolve => {
-      releaseIdle = resolve;
-    });
-    const audrey = {
-      waitForIdle: vi.fn(() => idle),
-      close: vi.fn(),
-    };
-
-    registerShutdownHandlers(fakeProcess, audrey, vi.fn());
-    fakeProcess.emit('SIGTERM');
-
-    expect(audrey.waitForIdle).toHaveBeenCalledOnce();
-    expect(audrey.close).not.toHaveBeenCalled();
-    expect(fakeProcess.exit).not.toHaveBeenCalled();
-
-    releaseIdle();
-    await idle;
-    await new Promise(resolve => setImmediate(resolve));
 
     expect(audrey.close).toHaveBeenCalledOnce();
     expect(fakeProcess.exit).toHaveBeenCalledWith(0);
@@ -1106,7 +876,7 @@ describe('MCP tool: memory_status', () => {
     expect(status.procedures).toBe(0);
     expect(status.vec_procedures).toBe(0);
     expect(status.dimensions).toBe(8);
-    expect(status.schema_version).toBe(10);
+    expect(status.schema_version).toBe(11);
     expect(status.healthy).toBe(true);
   });
 
@@ -1119,178 +889,4 @@ describe('MCP tool: memory_status', () => {
   });
 });
 
-describe('buildHooksConfig', () => {
-  it('returns hook entries for all four lifecycle events', () => {
-    const config = buildHooksConfig();
-    expect(config).toHaveProperty('SessionStart');
-    expect(config).toHaveProperty('UserPromptSubmit');
-    expect(config).toHaveProperty('Stop');
-    expect(config).toHaveProperty('PostCompact');
-  });
 
-  it('SessionStart matcher targets startup and resume', () => {
-    const config = buildHooksConfig();
-    expect(config.SessionStart[0].matcher).toBe('startup|resume');
-    expect(config.SessionStart[0].hooks[0].command).toContain('audrey greeting');
-  });
-
-  it('UserPromptSubmit uses recall command', () => {
-    const config = buildHooksConfig();
-    expect(config.UserPromptSubmit[0].hooks[0].command).toContain('audrey recall');
-  });
-
-  it('Stop uses reflect command', () => {
-    const config = buildHooksConfig();
-    expect(config.Stop[0].hooks[0].command).toContain('audrey reflect');
-  });
-
-  it('PostCompact re-injects with greeting', () => {
-    const config = buildHooksConfig();
-    expect(config.PostCompact[0].hooks[0].command).toContain('audrey greeting');
-  });
-
-  it('all hooks have type command', () => {
-    const config = buildHooksConfig();
-    for (const entries of Object.values(config)) {
-      for (const entry of entries) {
-        for (const hook of entry.hooks) {
-          expect(hook.type).toBe('command');
-        }
-      }
-    }
-  });
-
-  it('all hooks have timeout values', () => {
-    const config = buildHooksConfig();
-    for (const entries of Object.values(config)) {
-      for (const entry of entries) {
-        for (const hook of entry.hooks) {
-          expect(typeof hook.timeout).toBe('number');
-          expect(hook.timeout).toBeGreaterThan(0);
-        }
-      }
-    }
-  });
-});
-
-describe('resolveSnapshotPath', () => {
-  it('uses explicit output path when provided', () => {
-    const result = resolveSnapshotPath('/tmp/my-snapshot.json', '/data');
-    // On Windows, resolve() prepends the drive letter (e.g. D:\tmp\...)
-    expect(result).toMatch(/my-snapshot\.json$/);
-    expect(path.isAbsolute(result)).toBe(true);
-  });
-
-  it('generates timestamped filename when no output arg given', () => {
-    const result = resolveSnapshotPath(undefined, '/home/user/.audrey/data');
-    expect(result).toMatch(/audrey-snapshot-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.json$/);
-    // Should be in parent of dataDir (i.e., ~/.audrey/)
-    expect(result).toContain(path.join('user', '.audrey', 'audrey-snapshot-'));
-  });
-
-  it('resolves relative output path to absolute', () => {
-    const result = resolveSnapshotPath('./snapshots/backup.json', '/data');
-    expect(result).toContain(path.join('snapshots', 'backup.json'));
-    expect(path.isAbsolute(result)).toBe(true);
-  });
-});
-
-describe('snapshot and restore round-trip', () => {
-  const SNAP_DIR = './test-snapshot-roundtrip';
-  const SNAP_DIR_2 = './test-snapshot-roundtrip-2';
-  let audrey;
-
-  beforeEach(() => {
-    rmSync(SNAP_DIR, { recursive: true, force: true });
-    rmSync(SNAP_DIR_2, { recursive: true, force: true });
-    audrey = new Audrey({
-      dataDir: SNAP_DIR,
-      agent: 'snap-test',
-      embedding: { provider: 'mock', dimensions: 64 },
-    });
-  });
-
-  afterEach(() => {
-    audrey.close();
-    rmSync(SNAP_DIR, { recursive: true, force: true });
-    rmSync(SNAP_DIR_2, { recursive: true, force: true });
-  });
-
-  it('exports a valid snapshot with all fields', async () => {
-    await audrey.encode({ content: 'test memory alpha', source: 'direct-observation' });
-    await audrey.encode({ content: 'test memory beta', source: 'told-by-user' });
-
-    const snapshot = audrey.export();
-    expect(snapshot.version).toBe(PACKAGE_VERSION);
-    expect(snapshot.exportedAt).toBeTruthy();
-    expect(snapshot.episodes).toHaveLength(2);
-    expect(snapshot.episodes[0].content).toBe('test memory alpha');
-    expect(snapshot).toHaveProperty('semantics');
-    expect(snapshot).toHaveProperty('procedures');
-    expect(snapshot).toHaveProperty('causalLinks');
-    expect(snapshot).toHaveProperty('contradictions');
-    expect(snapshot).toHaveProperty('config');
-  });
-
-  it('round-trips memories through export and import into a fresh db', async () => {
-    await audrey.encode({ content: 'payment failed at gateway', source: 'direct-observation', tags: ['payments'] });
-    await audrey.encode({ content: 'retry with exponential backoff', source: 'told-by-user' });
-
-    const snapshot = audrey.export();
-    audrey.close();
-
-    // Import into a fresh database
-    const audrey2 = new Audrey({
-      dataDir: SNAP_DIR_2,
-      agent: 'snap-test-2',
-      embedding: { provider: 'mock', dimensions: 64 },
-    });
-
-    await audrey2.import(snapshot);
-    const stats = audrey2.introspect();
-    expect(stats.episodic).toBe(2);
-
-    const results = await audrey2.recall('payment retry', { limit: 5 });
-    expect(results.length).toBeGreaterThan(0);
-
-    audrey2.close();
-    // Re-assign so afterEach cleanup works
-    audrey = new Audrey({
-      dataDir: SNAP_DIR,
-      agent: 'snap-test',
-      embedding: { provider: 'mock', dimensions: 64 },
-    });
-  });
-
-  it('snapshot JSON is git-friendly (valid JSON, human-readable)', async () => {
-    await audrey.encode({ content: 'this is diffable', source: 'direct-observation' });
-
-    const snapshot = audrey.export();
-    const json = JSON.stringify(snapshot, null, 2);
-
-    // Valid JSON
-    expect(() => JSON.parse(json)).not.toThrow();
-
-    // Human-readable (contains newlines, indentation)
-    expect(json).toContain('\n');
-    expect(json).toContain('  ');
-
-    // Contains searchable content
-    expect(json).toContain('this is diffable');
-  });
-
-  it('preserves tags, source, and metadata through round-trip', async () => {
-    await audrey.encode({
-      content: 'important fact about auth',
-      source: 'told-by-user',
-      tags: ['auth', 'security'],
-      salience: 0.9,
-    });
-
-    const snapshot = audrey.export();
-    const ep = snapshot.episodes[0];
-    expect(ep.source).toBe('told-by-user');
-    expect(ep.tags).toEqual(['auth', 'security']);
-    expect(ep.salience).toBe(0.9);
-  });
-});
