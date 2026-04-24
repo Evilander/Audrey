@@ -53,6 +53,8 @@ import {
   type MemoryEvent,
 } from './events.js';
 import { buildCapsule, type CapsuleOptions, type MemoryCapsule } from './capsule.js';
+import { buildPreflight, type MemoryPreflight, type PreflightOptions } from './preflight.js';
+import { buildReflexReport, type MemoryReflexReport, type ReflexOptions } from './reflexes.js';
 import {
   findPromotionCandidates,
   type FindCandidatesOptions,
@@ -655,6 +657,18 @@ export class Audrey extends EventEmitter {
     const capsule = await buildCapsule(this, query, options);
     this.emit('capsule', capsule);
     return capsule;
+  }
+
+  async preflight(action: string, options: PreflightOptions = {}): Promise<MemoryPreflight> {
+    const preflight = await buildPreflight(this, action, options);
+    this.emit('preflight', preflight);
+    return preflight;
+  }
+
+  async reflexes(action: string, options: ReflexOptions = {}): Promise<MemoryReflexReport> {
+    const report = await buildReflexReport(this, action, options);
+    this.emit('reflexes', report);
+    return report;
   }
 
   findPromotionCandidates(options: FindCandidatesOptions = {}): PromotionCandidate[] {

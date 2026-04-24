@@ -1,6 +1,16 @@
 # Audrey MCP Host Guide
 
-Audrey ships as a local stdio MCP server, so the simplest cross-host setup is to launch it with `npx`.
+Audrey ships as a local stdio MCP server. Claude Code is only one host; the same server is meant to be used from Codex, Claude Desktop, Cursor, Windsurf, VS Code, JetBrains, and any MCP-compatible local agent shell.
+
+For pinned configs that launch the built Audrey entrypoint directly:
+
+```bash
+npx audrey mcp-config codex
+npx audrey mcp-config generic
+npx audrey mcp-config vscode
+```
+
+For portable configs that always resolve the latest published package, launch with `npx`:
 
 ```json
 {
@@ -24,6 +34,62 @@ If a Windows host fails to locate `npx`, use:
     "audrey-memory": {
       "command": "cmd",
       "args": ["/c", "npx", "-y", "audrey"]
+    }
+  }
+}
+```
+
+## Codex
+
+Codex uses TOML under `C:\Users\<you>\.codex\config.toml` on Windows.
+
+Generate a pinned block:
+
+```bash
+npx audrey mcp-config codex
+```
+
+Example shape:
+
+```toml
+[mcp_servers.audrey-memory]
+command = "C:\\Program Files\\nodejs\\node.exe"
+args = ["C:\\Users\\you\\AppData\\Roaming\\npm\\node_modules\\audrey\\dist\\mcp-server\\index.js"]
+
+[mcp_servers.audrey-memory.env]
+AUDREY_AGENT = "codex"
+AUDREY_DATA_DIR = "C:\\Users\\you\\.audrey\\data"
+AUDREY_EMBEDDING_PROVIDER = "local"
+AUDREY_DEVICE = "gpu"
+```
+
+Use one shared `AUDREY_DATA_DIR` if Codex and other hosts should remember the same work. Use separate data directories if you need hard separation between clients or projects.
+
+## Claude Code
+
+Claude Code can use Audrey through the built-in installer:
+
+```bash
+npx audrey install
+claude mcp list
+```
+
+The installer persists a Claude Code `AUDREY_AGENT=claude-code` identity while still using the same Audrey MCP runtime as every other host.
+
+## Claude Desktop
+
+Claude Desktop uses `claude_desktop_config.json`.
+
+```json
+{
+  "mcpServers": {
+    "audrey-memory": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "audrey"],
+      "env": {
+        "AUDREY_AGENT": "claude-desktop"
+      }
     }
   }
 }
@@ -128,6 +194,6 @@ Example JSON:
 
 Once connected, hosts can use:
 
-- Tools: the 13 `memory_*` Audrey tools
+- Tools: the 19 `memory_*` Audrey tools, including `memory_preflight` and `memory_reflexes`
 - Resources: `audrey://status`, `audrey://recent`, `audrey://principles`
 - Prompts: `audrey-session-briefing`, `audrey-memory-recall`, `audrey-memory-reflection`

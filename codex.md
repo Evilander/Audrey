@@ -4,7 +4,7 @@
 
 ## What Audrey Is
 
-Audrey is a **biological memory system for AI agents**. It gives agents persistent, local memory that encodes, consolidates, decays, and dreams — modeled after how human brains actually process memory. Published on npm as `audrey` (v0.20.0) and PyPI as `audrey-memory` (v0.20.0).
+Audrey is a **biological memory system and local-first continuity runtime for AI agents**. It gives Codex, Claude Code, Claude Desktop, Ollama-backed local agents, and custom agent services persistent local memory that encodes, consolidates, decays, and dreams - modeled after how human brains actually process memory. Published on npm as `audrey` (v0.20.0) and PyPI as `audrey-memory` (v0.20.0).
 
 **Not a database.** Not a RAG pipeline. Not a vector store. Audrey is a *memory layer* with biological fidelity: episodic memories consolidate into semantic principles, confidence decays over time, contradictions are tracked and resolved, emotional affect influences recall, and interference between competing memories is modeled explicitly.
 
@@ -41,7 +41,7 @@ audrey/
 │   ├── audrey.ts                 # Main Audrey class — EventEmitter, owns all methods
 │   ├── index.ts                  # Barrel re-exports (SDK entry point)
 │   ├── server.ts                 # HTTP server (Hono + @hono/node-server)
-│   ├── routes.ts                 # 13 REST endpoints + /health
+│   ├── routes.ts                 # 15 /v1 REST endpoints + /health
 │   ├── encode.ts                 # Episode encoding with auto-supersede
 │   ├── recall.ts                 # KNN vector recall with 6-signal confidence scoring
 │   ├── consolidate.ts            # Cluster episodes → extract principles (LLM or heuristic)
@@ -66,7 +66,7 @@ audrey/
 │   ├── ulid.ts                   # Monotonic ULID generation
 │   └── utils.ts                  # Cosine similarity, JSON parse, API key validation
 ├── mcp-server/                   # MCP server + CLI (2 modules)
-│   ├── index.ts                  # 13 MCP tools + CLI (install/uninstall/status/greeting/reflect/dream/reembed/serve)
+│   ├── index.ts                  # 19 MCP tools + CLI (install/uninstall/status/greeting/reflect/dream/reembed/serve)
 │   └── config.ts                 # Provider resolution, VERSION constant, install args
 ├── python-sdk/                   # Python SDK (pip install audrey-memory)
 │   ├── pyproject.toml            # Hatchling build, deps: httpx + pydantic
@@ -133,10 +133,13 @@ const dream = await brain.dream();
 brain.close();
 ```
 
-### 2. MCP Server (Claude Code / Cursor / Windsurf)
+### 2. MCP Server (Codex / Claude Code / Claude Desktop / Cursor / Windsurf)
 
 ```bash
-npx audrey install    # registers MCP server with Claude Code
+npx audrey demo                  # self-contained local proof, no keys or host setup
+npx audrey mcp-config codex     # prints ready-to-paste Codex TOML
+npx audrey mcp-config generic   # prints JSON for stdio MCP hosts
+npx audrey install              # registers MCP server with Claude Code
 npx audrey status     # check health
 npx audrey greeting   # session briefing (for hooks)
 npx audrey reflect    # form memories from conversation (for hooks)
@@ -144,7 +147,7 @@ npx audrey dream      # consolidation + decay cycle
 npx audrey serve      # start HTTP API on port 7437
 ```
 
-13 MCP tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_dream`, `memory_introspect`, `memory_resolve_truth`, `memory_export`, `memory_import`, `memory_forget`, `memory_decay`, `memory_status`, `memory_reflect`, `memory_greeting`.
+19 MCP tools: `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_dream`, `memory_introspect`, `memory_resolve_truth`, `memory_export`, `memory_import`, `memory_forget`, `memory_decay`, `memory_status`, `memory_reflect`, `memory_greeting`, `memory_observe_tool`, `memory_recent_failures`, `memory_capsule`, `memory_preflight`, `memory_reflexes`, `memory_promote`.
 
 ### 3. HTTP API
 
@@ -161,7 +164,7 @@ curl -X POST http://localhost:7437/v1/recall \
   -d '{"query":"test"}'
 ```
 
-14 endpoints: `GET /health`, `POST /v1/encode`, `POST /v1/recall`, `POST /v1/consolidate`, `POST /v1/dream`, `GET /v1/introspect`, `POST /v1/resolve-truth`, `GET /v1/export`, `POST /v1/import`, `POST /v1/forget`, `POST /v1/decay`, `GET /v1/status`, `POST /v1/reflect`, `POST /v1/greeting`.
+16 `/v1` endpoints plus `GET /health`: `POST /v1/encode`, `POST /v1/recall`, `POST /v1/capsule`, `POST /v1/preflight`, `POST /v1/reflexes`, `POST /v1/consolidate`, `POST /v1/dream`, `GET /v1/introspect`, `POST /v1/resolve-truth`, `GET /v1/export`, `POST /v1/import`, `POST /v1/forget`, `POST /v1/decay`, `GET /v1/status`, `POST /v1/reflect`, `POST /v1/greeting`.
 
 ### 4. Python SDK
 
@@ -306,7 +309,7 @@ Schema is in `src/db.ts`. Migrations are in the `MIGRATIONS` array (currently v1
 | `AUDREY_DEVICE` | No | `gpu` | Local embedding device (`gpu` or `cpu`) |
 | `AUDREY_PORT` | No | `7437` | HTTP API server port |
 | `AUDREY_API_KEY` | No | — | Bearer token for HTTP API auth |
-| `AUDREY_AGENT` | No | `claude-code` | Agent name for MCP server |
+| `AUDREY_AGENT` | No | `local-agent` | Agent name for MCP server |
 
 Auto-detection priority: `GOOGLE_API_KEY` → Gemini embeddings; `ANTHROPIC_API_KEY` → Anthropic LLM; no keys → local embeddings (384d, offline).
 
