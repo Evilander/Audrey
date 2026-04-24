@@ -458,6 +458,7 @@ describe('MCP doctor automation', () => {
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
       env: {},
+      nodeVersion: '20.0.0',
     });
 
     expect(report.version).toBe(VERSION);
@@ -472,6 +473,7 @@ describe('MCP doctor automation', () => {
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
       env: {},
+      nodeVersion: '20.0.0',
     });
     const text = formatDoctorReport(report);
 
