@@ -490,6 +490,9 @@ describe('MCP doctor automation', () => {
 
     await audrey.encode({ content: 'doctor health drift episode', source: 'direct-observation' });
     audrey.db.exec('DELETE FROM vec_episodes');
+    audrey.db.prepare(
+      "UPDATE audrey_config SET value = ? WHERE key = 'dimensions'"
+    ).run('16');
     audrey.close();
 
     const lines = [];
