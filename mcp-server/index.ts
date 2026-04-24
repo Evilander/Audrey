@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { z } from 'zod';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, platform, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -11,6 +11,7 @@ import type { AudreyConfig, EmbeddingProvider, IntrospectResult, MemoryStatusRes
 import {
   VERSION,
   SERVER_NAME,
+  MCP_ENTRYPOINT,
   buildAudreyConfig,
   buildInstallArgs,
   formatMcpHostConfig,
@@ -147,7 +148,7 @@ export const memoryReflexesToolSchema = {
 // Local interface for status reporting
 // ---------------------------------------------------------------------------
 
-interface StatusReport {
+export interface StatusReport {
   generatedAt: string;
   registered: boolean;
   dataDir: string;
@@ -157,6 +158,30 @@ interface StatusReport {
   health: MemoryStatusResult | null;
   lastConsolidation: string | null;
   error: string | null;
+}
+
+export type DoctorSeverity = 'info' | 'warning' | 'error';
+
+export interface DoctorCheck {
+  name: string;
+  ok: boolean;
+  severity: DoctorSeverity;
+  message: string;
+  hint?: string;
+}
+
+export interface DoctorReport {
+  generatedAt: string;
+  version: string;
+  node: string;
+  platform: string;
+  entrypoint: string;
+  dataDir: string;
+  embedding: string;
+  llm: string;
+  status: StatusReport;
+  checks: DoctorCheck[];
+  ok: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +461,68 @@ async function reflect(): Promise<void> {
   }
 }
 
-function install(): void {
+interface InstallOptions {
+  host: string;
+  dryRun: boolean;
+}
+
+function parseInstallOptions(argv: string[] = process.argv): InstallOptions {
+  let host = 'claude-code';
+  let dryRun = false;
+
+  for (let i = 3; i < argv.length; i += 1) {
+    const arg = argv[i] ?? '';
+    if (arg === '--dry-run' || arg === '--print') {
+      dryRun = true;
+    } else if (arg === '--host') {
+      host = argv[i + 1] || host;
+      i += 1;
+    } else if (arg.startsWith('--host=')) {
+      host = arg.slice('--host='.length) || host;
+    } else if (!arg.startsWith('-')) {
+      host = arg;
+    }
+  }
+
+  return { host, dryRun };
+}
+
+export function formatInstallGuide(
+  host: string,
+  env: Record<string, string | undefined> = process.env,
+  dryRun = false,
+): string {
+  const normalizedHost = host || 'claude-code';
+  const title = dryRun || normalizedHost === 'claude-code'
+    ? `Audrey install preview for ${normalizedHost}`
+    : `Audrey config-only install for ${normalizedHost}`;
+  const lines = [
+    title,
+    '',
+    'No host config files were modified.',
+    '',
+    'Generated MCP config:',
+    formatMcpHostConfig(normalizedHost, env),
+    '',
+    'Next steps:',
+  ];
+
+  if (normalizedHost === 'claude-code') {
+    lines.push('- Run without --dry-run to register Audrey through Claude Code: npx audrey install --host claude-code');
+    lines.push('- Verify with: claude mcp list');
+  } else if (normalizedHost === 'codex') {
+    lines.push('- Paste the TOML block into C:\\Users\\<you>\\.codex\\config.toml under the MCP server section.');
+    lines.push('- Restart Codex, then run: codex mcp list');
+  } else {
+    lines.push('- Paste the JSON block into your host MCP configuration.');
+    lines.push('- Restart the host and look for the audrey-memory MCP server.');
+  }
+
+  lines.push('- Run a local health check any time with: npx audrey doctor');
+  return lines.join('\n');
+}
+
+function installClaudeCode(): void {
   try {
     execFileSync('claude', ['--version'], { stdio: 'ignore' });
   } catch {
@@ -507,7 +593,9 @@ Audrey registered as "${SERVER_NAME}" with Claude Code.
 
 CLI subcommands:
   npx audrey demo      - Run a 60-second local proof with no network calls
+  npx audrey doctor    - Diagnose runtime, store health, and host config readiness
   npx audrey install   - Register MCP server with Claude Code
+  npx audrey install --host codex --dry-run - Print safe host setup instructions
   npx audrey mcp-config codex - Print Codex MCP TOML
   npx audrey mcp-config generic - Print JSON config for other MCP hosts
   npx audrey uninstall - Remove MCP server registration
@@ -522,6 +610,22 @@ CLI subcommands:
 Data stored in: ${dataDir}
 Verify: claude mcp list
 `);
+}
+
+function install(): void {
+  const options = parseInstallOptions();
+  if (options.dryRun || options.host !== 'claude-code') {
+    try {
+      console.log(formatInstallGuide(options.host, process.env, options.dryRun));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[audrey] install failed: ${message}`);
+      process.exit(2);
+    }
+    return;
+  }
+
+  installClaudeCode();
 }
 
 function uninstall(): void {
@@ -679,6 +783,7 @@ export async function runDemoCommand({
 
     out('');
     out('Next steps:');
+    out('- Diagnose your setup: npx audrey doctor');
     out('- Codex: npx audrey mcp-config codex');
     out('- Any stdio MCP host: npx audrey mcp-config generic');
     out('- Ollama/local agents: npx audrey serve, then call /v1/reflexes, /v1/capsule, and /v1/recall as tools');
@@ -812,8 +917,183 @@ export function runStatusCommand({
   return { report, exitCode };
 }
 
+function describeEmbedding(env: Record<string, string | undefined>): string {
+  const embedding = resolveEmbeddingProvider(env, env['AUDREY_EMBEDDING_PROVIDER']);
+  if (embedding.provider === 'local') {
+    return `local (${embedding.dimensions}d, device=${embedding.device || 'gpu'})`;
+  }
+  return `${embedding.provider} (${embedding.dimensions}d)`;
+}
+
+function describeLlm(env: Record<string, string | undefined>): string {
+  const llm = resolveLLMProvider(env, env['AUDREY_LLM_PROVIDER']);
+  return llm ? llm.provider : 'not configured (heuristic mode)';
+}
+
+function addDoctorCheck(
+  checks: DoctorCheck[],
+  name: string,
+  ok: boolean,
+  severity: DoctorSeverity,
+  message: string,
+  hint?: string,
+): void {
+  checks.push({ name, ok, severity, message, ...(hint ? { hint } : {}) });
+}
+
+export function buildDoctorReport({
+  dataDir = resolveDataDir(process.env),
+  claudeJsonPath = join(homedir(), '.claude.json'),
+  env = process.env,
+  nodeVersion = process.versions.node,
+}: {
+  dataDir?: string;
+  claudeJsonPath?: string;
+  env?: Record<string, string | undefined>;
+  nodeVersion?: string;
+} = {}): DoctorReport {
+  const checks: DoctorCheck[] = [];
+  const statusReport = buildStatusReport({ dataDir, claudeJsonPath });
+  const major = Number.parseInt(nodeVersion.split('.')[0] || '0', 10);
+  const entrypointExists = existsSync(MCP_ENTRYPOINT);
+
+  addDoctorCheck(
+    checks,
+    'node-runtime',
+    major >= 20,
+    'error',
+    `Node.js ${nodeVersion}`,
+    major >= 20 ? undefined : 'Install Node.js 20 or newer.',
+  );
+
+  addDoctorCheck(
+    checks,
+    'mcp-entrypoint',
+    entrypointExists,
+    'error',
+    MCP_ENTRYPOINT,
+    entrypointExists ? undefined : 'Run npm run build before launching Audrey from this checkout.',
+  );
+
+  let embedding = 'invalid';
+  try {
+    embedding = describeEmbedding(env);
+    addDoctorCheck(checks, 'embedding-provider', true, 'info', embedding);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    addDoctorCheck(checks, 'embedding-provider', false, 'error', message, 'Check AUDREY_EMBEDDING_PROVIDER.');
+  }
+
+  let llm = 'not configured (heuristic mode)';
+  try {
+    llm = describeLlm(env);
+    addDoctorCheck(checks, 'llm-provider', true, 'info', llm);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    addDoctorCheck(checks, 'llm-provider', false, 'error', message, 'Check AUDREY_LLM_PROVIDER.');
+  }
+
+  if (!statusReport.exists) {
+    addDoctorCheck(
+      checks,
+      'memory-store',
+      true,
+      'info',
+      `${dataDir} is not created yet`,
+      'Run npx audrey demo or connect a host to create the store.',
+    );
+  } else if (statusReport.error) {
+    addDoctorCheck(checks, 'memory-store', false, 'error', statusReport.error, 'Run npx audrey status --json for details.');
+  } else if (!statusReport.health) {
+    addDoctorCheck(checks, 'memory-store', false, 'error', 'memory store health could not be read');
+  } else if (statusReport.health && !statusReport.health.healthy) {
+    addDoctorCheck(checks, 'memory-store', false, 'error', 'memory vectors are out of sync', 'Run npx audrey reembed.');
+  } else {
+    addDoctorCheck(checks, 'memory-store', true, 'info', 'healthy');
+  }
+
+  try {
+    formatMcpHostConfig('codex', env);
+    formatMcpHostConfig('generic', env);
+    addDoctorCheck(checks, 'host-config-generation', true, 'info', 'codex TOML and generic JSON can be generated');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    addDoctorCheck(checks, 'host-config-generation', false, 'error', message);
+  }
+
+  const ok = checks.every(check => check.ok || check.severity !== 'error');
+  return {
+    generatedAt: new Date().toISOString(),
+    version: VERSION,
+    node: nodeVersion,
+    platform: platform(),
+    entrypoint: MCP_ENTRYPOINT,
+    dataDir,
+    embedding,
+    llm,
+    status: statusReport,
+    checks,
+    ok,
+  };
+}
+
+export function formatDoctorReport(report: DoctorReport): string {
+  const lines = [
+    `Audrey Doctor v${report.version}`,
+    `Runtime: Node.js ${report.node} on ${report.platform}`,
+    `MCP entrypoint: ${report.entrypoint}`,
+    `Data directory: ${report.dataDir}`,
+    `Embedding: ${report.embedding}`,
+    `LLM: ${report.llm}`,
+    `Store health: ${report.status.exists ? (report.status.health?.healthy ? 'healthy' : 'needs attention') : 'not initialized'}`,
+    '',
+    'Checks:',
+  ];
+
+  for (const check of report.checks) {
+    const marker = check.ok ? 'OK' : check.severity.toUpperCase();
+    lines.push(`- [${marker}] ${check.name}: ${check.message}`);
+    if (check.hint) lines.push(`  hint: ${check.hint}`);
+  }
+
+  lines.push('');
+  lines.push(`Verdict: ${report.ok ? 'ready' : 'blocked'}`);
+  lines.push('');
+  lines.push('Next steps:');
+  lines.push('- Prove local behavior: npx audrey demo');
+  lines.push('- Preview host setup: npx audrey install --host codex --dry-run');
+  lines.push('- Emit automation JSON: npx audrey doctor --json');
+
+  return lines.join('\n');
+}
+
+export function runDoctorCommand({
+  argv = process.argv,
+  dataDir = resolveDataDir(process.env),
+  claudeJsonPath = join(homedir(), '.claude.json'),
+  env = process.env,
+  out = console.log,
+}: {
+  argv?: string[];
+  dataDir?: string;
+  claudeJsonPath?: string;
+  env?: Record<string, string | undefined>;
+  out?: (...args: unknown[]) => void;
+} = {}): { report: DoctorReport; exitCode: number } {
+  const report = buildDoctorReport({ dataDir, claudeJsonPath, env });
+  out(cliHasFlag('--json', argv) ? JSON.stringify(report, null, 2) : formatDoctorReport(report));
+  return { report, exitCode: report.ok ? 0 : 1 };
+}
+
 function status(): void {
   const { exitCode } = runStatusCommand();
+  if (exitCode !== 0) {
+    process.exitCode = exitCode;
+  }
+}
+
+function doctor(): void {
+  const { exitCode } = runDoctorCommand();
   if (exitCode !== 0) {
     process.exitCode = exitCode;
   }
@@ -1555,6 +1835,8 @@ if (isDirectRun) {
     });
   } else if (subcommand === 'status') {
     status();
+  } else if (subcommand === 'doctor') {
+    doctor();
   } else if (subcommand === 'observe-tool') {
     observeToolCli().catch(err => {
       console.error('[audrey] observe-tool failed:', err);

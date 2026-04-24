@@ -16,7 +16,10 @@ import {
 } from '../dist/mcp-server/config.js';
 import {
   MAX_MEMORY_CONTENT_LENGTH,
+  buildDoctorReport,
   buildStatusReport,
+  formatDoctorReport,
+  formatInstallGuide,
   formatStatusReport,
   initializeEmbeddingProvider,
   memoryEncodeToolSchema,
@@ -28,6 +31,7 @@ import {
   registerShutdownHandlers,
   registerDreamTool,
   runDemoCommand,
+  runDoctorCommand,
   runStatusCommand,
   validateForgetSelection,
 } from '../dist/mcp-server/index.js';
@@ -36,8 +40,8 @@ import { existsSync, rmSync } from 'node:fs';
 const TEST_DIR = './test-mcp-server';
 
 describe('MCP config', () => {
-  it('VERSION is 0.20.0', () => {
-    expect(VERSION).toBe('0.20.0');
+  it('VERSION is 0.21.0', () => {
+    expect(VERSION).toBe('0.21.0');
   });
 });
 
@@ -235,6 +239,23 @@ describe('MCP CLI: host-neutral config output', () => {
   });
 });
 
+describe('MCP CLI: install guidance', () => {
+  it('prints safe Codex setup without mutating host files', () => {
+    const text = formatInstallGuide('codex', {}, true);
+    expect(text).toContain('No host config files were modified');
+    expect(text).toContain(`[mcp_servers.${SERVER_NAME}]`);
+    expect(text).toContain('AUDREY_AGENT = "codex"');
+    expect(text).toContain('npx audrey doctor');
+  });
+
+  it('prints a Claude Code dry-run path before invoking the installer', () => {
+    const text = formatInstallGuide('claude-code', {}, true);
+    expect(text).toContain('claude-code');
+    expect(text).toContain('Run without --dry-run');
+    expect(text).toContain('AUDREY_AGENT');
+  });
+});
+
 describe('MCP CLI: demo command', () => {
   it('prints a self-contained memory demo without external services', async () => {
     const lines = [];
@@ -243,6 +264,7 @@ describe('MCP CLI: demo command', () => {
     expect(output).toContain('Audrey 60-second memory demo');
     expect(output).toContain('Capsule highlights:');
     expect(output).toContain('Recall proof:');
+    expect(output).toContain('npx audrey doctor');
     expect(output).toContain('npx audrey mcp-config codex');
   });
 });
@@ -423,6 +445,67 @@ describe('MCP status automation', () => {
     const parsed = JSON.parse(lines[0]);
     expect(parsed.health.healthy).toBe(false);
     expect(parsed.health.reembed_recommended).toBe(true);
+  });
+});
+
+describe('MCP doctor automation', () => {
+  afterEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+
+  it('builds a ready report for first-run installs without an existing store', () => {
+    const report = buildDoctorReport({
+      dataDir: './missing-audrey-dir',
+      claudeJsonPath: './missing-claude-config.json',
+      env: {},
+    });
+
+    expect(report.version).toBe(VERSION);
+    expect(report.entrypoint).toBe(MCP_ENTRYPOINT);
+    expect(report.ok).toBe(true);
+    expect(report.status.exists).toBe(false);
+    expect(report.checks.some(check => check.name === 'host-config-generation' && check.ok)).toBe(true);
+  });
+
+  it('formats doctor output with a clear verdict and next steps', () => {
+    const report = buildDoctorReport({
+      dataDir: './missing-audrey-dir',
+      claudeJsonPath: './missing-claude-config.json',
+      env: {},
+    });
+    const text = formatDoctorReport(report);
+
+    expect(text).toContain('Audrey Doctor');
+    expect(text).toContain('Store health: not initialized');
+    expect(text).toContain('Verdict: ready');
+    expect(text).toContain('npx audrey install --host codex --dry-run');
+  });
+
+  it('emits JSON and exits non-zero when the store needs repair', async () => {
+    const audrey = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'doctor-json-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+
+    await audrey.encode({ content: 'doctor health drift episode', source: 'direct-observation' });
+    audrey.db.exec('DELETE FROM vec_episodes');
+    audrey.close();
+
+    const lines = [];
+    const { report, exitCode } = runDoctorCommand({
+      argv: ['node', 'mcp-server/index.js', 'doctor', '--json'],
+      dataDir: TEST_DIR,
+      claudeJsonPath: './missing-claude-config.json',
+      env: {},
+      out: line => lines.push(line),
+    });
+
+    expect(exitCode).toBe(1);
+    expect(report.ok).toBe(false);
+    const parsed = JSON.parse(lines[0]);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.checks.some(check => check.name === 'memory-store' && !check.ok)).toBe(true);
   });
 });
 
