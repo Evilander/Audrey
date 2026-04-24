@@ -195,10 +195,11 @@ POST /v1/reflexes
 Run:
 
 ```bash
+npx audrey doctor
 npx audrey demo
 ```
 
-This does not need API keys, Claude, Codex, Ollama, or any hosted model.
+`doctor` checks whether Audrey can run on your machine. The demo does not need API keys, Claude, Codex, Ollama, or any hosted model.
 
 The demo:
 
@@ -228,6 +229,8 @@ Examples:
 Generate host config:
 
 ```bash
+npx audrey install --host codex --dry-run
+npx audrey install --host generic --dry-run
 npx audrey mcp-config codex
 npx audrey mcp-config generic
 npx audrey mcp-config vscode
@@ -410,7 +413,11 @@ Use these rules when deciding what Audrey should remember.
 
 ```bash
 # Run the local proof demo
+npx audrey doctor
 npx audrey demo
+
+# Preview host setup without editing files
+npx audrey install --host codex --dry-run
 
 # Print Codex MCP config
 npx audrey mcp-config codex
@@ -428,6 +435,7 @@ npx audrey uninstall
 npx audrey serve
 
 # Check memory health
+npx audrey doctor --json
 npx audrey status
 npx audrey status --json --fail-on-unhealthy
 
@@ -555,6 +563,7 @@ Audrey can remember:
 Run:
 
 ```bash
+npx audrey doctor
 npx audrey status
 node --version
 ```
@@ -566,6 +575,8 @@ Audrey requires Node.js 20 or newer.
 Generate a pinned config:
 
 ```bash
+npx audrey install --host codex --dry-run
+npx audrey install --host generic --dry-run
 npx audrey mcp-config codex
 npx audrey mcp-config generic
 ```
@@ -652,7 +663,7 @@ The best use is:
 
 ## Where To Go Next
 
-- Run `npx audrey demo`.
+- Run `npx audrey doctor`, then `npx audrey demo`.
 - Read `docs/mcp-hosts.md` to connect Codex, Claude, Cursor, Windsurf, VS Code, or JetBrains.
 - Read `docs/ollama-local-agents.md` for local Ollama-backed agents.
 - Read `docs/production-readiness.md` before using Audrey in a real deployment.

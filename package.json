@@ -1,6 +1,6 @@
 {
   "name": "audrey",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Local-first memory runtime for AI agents with recall, consolidation, memory reflexes, contradiction detection, and tool-trace learning",
   "type": "module",
   "main": "dist/src/index.js",
@@ -31,8 +31,12 @@
     "docs/future-of-llm-memory.md",
     "docs/mcp-hosts.md",
     "docs/ollama-local-agents.md",
+    "docs/assets/audrey-feature-grid.jpg",
+    "docs/assets/audrey-logo.svg",
+    "docs/assets/audrey-wordmark.png",
     "docs/assets/benchmarks/",
     "examples/",
+    "CHANGELOG.md",
     "README.md",
     "LICENSE"
   ],
