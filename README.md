@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/audrey-logo.svg" alt="Audrey - local-first memory for agents" width="760">
+  <img src="docs/assets/audrey-wordmark.png" alt="Audrey wordmark" width="760">
 
   <p><strong>The local-first memory control plane for AI agents.</strong></p>
 
@@ -28,6 +28,10 @@ Audrey turns those hard-won lessons into a local memory runtime:
 - `audrey doctor` tells a human or CI system whether the runtime is actually ready.
 
 It is not a hosted vector database, a notes app, or a Claude-only plugin. Audrey is a SQLite-backed continuity layer that can sit under any local or sidecar agent loop.
+
+<div align="center">
+  <img src="docs/assets/audrey-feature-grid.jpg" alt="Audrey feature marks: memory continuity, archive signal, recall loop, layered evidence, local node, and remembering before acting" width="760">
+</div>
 
 ## Quick Start
 
