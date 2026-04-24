@@ -4,7 +4,7 @@
 
 ## What Audrey Is
 
-Audrey is a **biological memory system and local-first continuity runtime for AI agents**. It gives Codex, Claude Code, Claude Desktop, Ollama-backed local agents, and custom agent services persistent local memory that encodes, consolidates, decays, and dreams - modeled after how human brains actually process memory. Published on npm as `audrey` (v0.20.0) and PyPI as `audrey-memory` (v0.20.0).
+Audrey is a **biological memory system and local-first continuity runtime for AI agents**. It gives Codex, Claude Code, Claude Desktop, Ollama-backed local agents, and custom agent services persistent local memory that encodes, consolidates, decays, and dreams - modeled after how human brains actually process memory. This release targets npm package `audrey` v0.21.0; the Python client is separately versioned under `python/`.
 
 **Not a database.** Not a RAG pipeline. Not a vector store. Audrey is a *memory layer* with biological fidelity: episodic memories consolidate into semantic principles, confidence decays over time, contradictions are tracked and resolved, emotional affect influences recall, and interference between competing memories is modeled explicitly.
 
@@ -68,7 +68,7 @@ audrey/
 ├── mcp-server/                   # MCP server + CLI (2 modules)
 │   ├── index.ts                  # 19 MCP tools + CLI (install/uninstall/status/greeting/reflect/dream/reembed/serve)
 │   └── config.ts                 # Provider resolution, VERSION constant, install args
-├── python-sdk/                   # Python SDK (pip install audrey-memory)
+├── python/                       # Python SDK (pip install audrey-memory)
 │   ├── pyproject.toml            # Hatchling build, deps: httpx + pydantic
 │   ├── src/audrey_memory/
 │   │   ├── __init__.py           # Public API exports
@@ -99,7 +99,7 @@ audrey/
 ├── .github/workflows/ci.yml     # CI: Node 18/20/22 Ubuntu + Windows smoke
 ├── tsconfig.json                 # Strict TS, Node16 module resolution, outDir: ./dist
 ├── vitest.config.js              # Test config (excludes stale dirs)
-├── package.json                  # v0.20.0, ES modules, exports: . + ./mcp + ./server
+├── package.json                  # v0.21.0, ES modules, exports: . + ./mcp + ./server
 └── codex.md                      # This file
 ```
 
@@ -137,6 +137,8 @@ brain.close();
 
 ```bash
 npx audrey demo                  # self-contained local proof, no keys or host setup
+npx audrey doctor                # first-contact diagnostics and release-gate JSON
+npx audrey install --host codex --dry-run # safe host setup preview
 npx audrey mcp-config codex     # prints ready-to-paste Codex TOML
 npx audrey mcp-config generic   # prints JSON for stdio MCP hosts
 npx audrey install              # registers MCP server with Claude Code
@@ -206,7 +208,7 @@ npm run bench:memory:check
 npm run pack:check
 
 # Python SDK tests (separate)
-cd python-sdk
+cd python
 pip install -e ".[dev]"
 pytest -m "not integration" -v
 ```
@@ -317,7 +319,7 @@ Auto-detection priority: `GOOGLE_API_KEY` → Gemini embeddings; `ANTHROPIC_API_
 
 These are from the approved roadmap in `docs/superpowers/specs/2026-04-10-audrey-industry-standard-design.md`.
 
-### v0.21: LoCoMo Benchmark Adapter (HIGH PRIORITY)
+### v0.22: LoCoMo Benchmark Adapter (HIGH PRIORITY)
 
 **Why:** Audrey currently has an internal benchmark (100% score, 43.8 points ahead of baselines). But there's no direct reproduction of the LoCoMo benchmark protocol, which is what Mem0 (66.9), Letta (74.0), and MIRIX (85.4) report against. Publishing a LoCoMo number is the single biggest credibility move for the research community.
 
@@ -381,9 +383,9 @@ See `docs/superpowers/specs/2026-04-10-audrey-industry-standard-design.md` for t
 
 5. **Python SDK requires running server** — The Python SDK is an HTTP client, not a native implementation. Users must run `npx audrey serve` separately. A native Python port is planned post-1.0 if demand warrants it.
 
-6. **No OpenAPI spec** — The HTTP API has no auto-generated OpenAPI documentation. The Zod schemas exist and could generate one via `@hono/zod-openapi`, but it's not wired up yet.
+6. **OpenAPI coverage still needs release-grade examples** - `/openapi.json` and `/docs` are wired through `OpenAPIHono`, but the spec should keep gaining richer request/response examples before 1.0.
 
-7. **Benchmark uses mock embeddings** — The internal benchmark runs with mock embeddings (deterministic hashes, 64d). Real embedding providers would produce different (likely better) scores. The LoCoMo adapter (v0.21) will address this.
+7. **Benchmark uses mock embeddings** - The internal benchmark runs with mock embeddings (deterministic hashes, 64d). Real embedding providers would produce different scores. The LoCoMo adapter is the next credibility milestone.
 
 ## How to Add Providers
 
@@ -408,8 +410,8 @@ See `docs/superpowers/specs/2026-04-10-audrey-industry-standard-design.md` for t
 
 1. Add route to `src/routes.ts` following the existing pattern
 2. Add test to `tests/http-api.test.js`
-3. Add corresponding method to Python SDK clients (`python-sdk/src/audrey_memory/client.py` and `async_client.py`)
-4. Add Pydantic model to `python-sdk/src/audrey_memory/models.py` if new response shape
+3. Add corresponding method to Python SDK clients (`python/audrey_memory/client.py` and `async_client.py`)
+4. Add Pydantic model to `python/audrey_memory/models.py` if new response shape
 
 ### New MCP Tool
 
@@ -478,8 +480,8 @@ Audrey's moat: biological fidelity (affect + interference + consolidation + drea
 3. Merge to master with `--no-ff`
 4. Tag: `git tag v0.X.0`
 5. Bump VERSION in `mcp-server/config.ts` and `package.json`
-6. If Python SDK changed, bump version in `python-sdk/pyproject.toml`
-7. Publish: `npm publish` (Node.js) and `cd python-sdk && python -m build && twine upload dist/*` (Python)
+6. If Python SDK changed, bump version in `python/audrey_memory/_version.py`
+7. Publish: `npm publish` (Node.js) and `cd python && python -m build && twine upload dist/*` (Python)
 
 ## Codex-Specific Notes
 

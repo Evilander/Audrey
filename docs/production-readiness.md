@@ -2,7 +2,7 @@
 
 Audrey is ready to be the memory layer inside a production agent system, but it is not a complete regulated-platform package by itself. Treat it as stateful infrastructure: pin providers, isolate tenants, monitor health, and wrap it with the controls your environment requires.
 
-First contact should now go through `npx audrey mcp-config <host>` for local MCP hosts, `npx audrey install` for Claude Code specifically, or `npx audrey serve` for the sidecar path. Run `npx audrey status --json --fail-on-unhealthy` before exposing Audrey to real traffic.
+First contact should now go through `npx audrey doctor`, then `npx audrey install --host <host> --dry-run` for local MCP hosts, `npx audrey install` for Claude Code specifically, or `npx audrey serve` for the sidecar path. Run `npx audrey status --json --fail-on-unhealthy` before exposing Audrey to real traffic.
 
 ## Best Vertical Fit
 
@@ -56,19 +56,24 @@ Guardrails:
 
 1. Pin `AUDREY_EMBEDDING_PROVIDER` and `AUDREY_LLM_PROVIDER` explicitly. Do not rely on key-based auto-detection in production.
 2. Set a dedicated `AUDREY_DATA_DIR` per environment and per tenant boundary.
-3. Add a health check that runs `npx audrey status --json --fail-on-unhealthy`.
+3. Add a startup check that runs `npx audrey doctor --json`.
 4. Alert on `health.healthy=false` or `health.reembed_recommended=true`.
 5. Schedule `npx audrey dream` during low-traffic windows so consolidation and decay stay current.
 6. Backup the SQLite data directory before changing embedding dimensions or providers.
 7. Treat re-embedding as a controlled maintenance action and validate with `npx audrey status`.
-8. Keep API keys, bearer tokens, and raw credentials out of encoded memory content.
-9. Decide whether `private` memories are allowed for your use case and document who can create them.
-10. Add application-level encryption, access control, logging, and retention policies around Audrey.
-11. On graceful shutdown paths, call `await brain.waitForIdle()` before `brain.close()` so tracked background work drains cleanly.
+8. Use `npx audrey install --host <host> --dry-run` in deployment docs so operators can preview host config without accidental writes.
+9. Keep API keys, bearer tokens, and raw credentials out of encoded memory content.
+10. Decide whether `private` memories are allowed for your use case and document who can create them.
+11. Add application-level encryption, access control, logging, and retention policies around Audrey.
+12. On graceful shutdown paths, call `await brain.waitForIdle()` before `brain.close()` so tracked background work drains cleanly.
 
 ## Operations Commands
 
 ```bash
+# First-contact diagnostics
+npx audrey doctor
+npx audrey doctor --json
+
 # Human-readable health
 npx audrey status
 

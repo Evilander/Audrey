@@ -5,10 +5,15 @@ Audrey ships as a local stdio MCP server. Claude Code is only one host; the same
 For pinned configs that launch the built Audrey entrypoint directly:
 
 ```bash
+npx audrey doctor
+npx audrey install --host codex --dry-run
+npx audrey install --host generic --dry-run
 npx audrey mcp-config codex
 npx audrey mcp-config generic
 npx audrey mcp-config vscode
 ```
+
+`doctor` verifies the runtime, local memory store, provider configuration, and config-generation path. `install --host <host> --dry-run` prints setup instructions without writing to a host config file. That is the safest first pass when Codex, Cursor, Windsurf, VS Code, or JetBrains manage their own config formats.
 
 For portable configs that always resolve the latest published package, launch with `npx`:
 
@@ -46,6 +51,7 @@ Codex uses TOML under `C:\Users\<you>\.codex\config.toml` on Windows.
 Generate a pinned block:
 
 ```bash
+npx audrey install --host codex --dry-run
 npx audrey mcp-config codex
 ```
 
@@ -70,11 +76,12 @@ Use one shared `AUDREY_DATA_DIR` if Codex and other hosts should remember the sa
 Claude Code can use Audrey through the built-in installer:
 
 ```bash
+npx audrey install --host claude-code --dry-run
 npx audrey install
 claude mcp list
 ```
 
-The installer persists a Claude Code `AUDREY_AGENT=claude-code` identity while still using the same Audrey MCP runtime as every other host.
+The dry-run prints the exact shape before any host changes. The real installer persists a Claude Code `AUDREY_AGENT=claude-code` identity while still using the same Audrey MCP runtime as every other host.
 
 ## Claude Desktop
 
