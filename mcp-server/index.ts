@@ -961,7 +961,7 @@ export function buildDoctorReport({
     checks,
     'node-runtime',
     major >= 20,
-    'error',
+    major >= 20 ? 'info' : 'error',
     `Node.js ${nodeVersion}`,
     major >= 20 ? undefined : 'Install Node.js 20 or newer.',
   );
@@ -970,7 +970,7 @@ export function buildDoctorReport({
     checks,
     'mcp-entrypoint',
     entrypointExists,
-    'error',
+    entrypointExists ? 'info' : 'error',
     MCP_ENTRYPOINT,
     entrypointExists ? undefined : 'Run npm run build before launching Audrey from this checkout.',
   );
