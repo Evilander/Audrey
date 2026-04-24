@@ -72,6 +72,83 @@ describe('HTTP API', () => {
     expect(body[0].content).toContain('SQLite');
   });
 
+  it('POST /v1/capsule returns a structured memory packet', async () => {
+    await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: 'Before editing Audrey host docs, keep Codex and Ollama as first-class targets',
+        source: 'direct-observation',
+        tags: ['procedure', 'codex', 'ollama'],
+      }),
+    });
+
+    const res = await app.request('/v1/capsule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'Audrey Codex Ollama host docs', budget_chars: 2000 }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.query).toBe('Audrey Codex Ollama host docs');
+    expect(body.sections).toHaveProperty('procedures');
+    expect(Array.isArray(body.evidence_ids)).toBe(true);
+  });
+
+  it('POST /v1/preflight checks memory before an action', async () => {
+    audrey.observeTool({
+      event: 'PostToolUse',
+      tool: 'npm test',
+      outcome: 'failed',
+      errorSummary: 'Vitest failed with spawn EPERM on this Windows host',
+      cwd: process.cwd(),
+    });
+
+    const res = await app.request('/v1/preflight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'run npm test before release',
+        tool: 'npm test',
+        record_event: true,
+        include_capsule: false,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.action).toBe('run npm test before release');
+    expect(body.decision).toBe('caution');
+    expect(body.warnings.some(w => w.type === 'recent_failure')).toBe(true);
+    expect(body.preflight_event_id).toMatch(/^01/);
+    expect(body.capsule).toBeUndefined();
+  });
+
+  it('POST /v1/reflexes returns trigger-response memory reflexes', async () => {
+    audrey.observeTool({
+      event: 'PostToolUse',
+      tool: 'npm test',
+      outcome: 'failed',
+      errorSummary: 'Vitest failed with spawn EPERM on this Windows host',
+      cwd: process.cwd(),
+    });
+
+    const res = await app.request('/v1/reflexes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'run npm test before release',
+        tool: 'npm test',
+        include_preflight: true,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.decision).toBe('caution');
+    expect(body.reflexes[0].trigger).toBe('Before using npm test');
+    expect(body.reflexes[0].response_type).toBe('warn');
+    expect(body.preflight.decision).toBe('caution');
+  });
+
   it('POST /v1/dream runs full cycle', async () => {
     const res = await app.request('/v1/dream', {
       method: 'POST',
