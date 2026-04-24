@@ -5,8 +5,26 @@ import type { AudreyConfig, EmbeddingConfig, LLMConfig } from '../src/types.js';
 
 export const VERSION = '0.20.0';
 export const SERVER_NAME = 'audrey-memory';
+export const DEFAULT_AGENT = 'local-agent';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
 export const MCP_ENTRYPOINT = fileURLToPath(new URL('./index.js', import.meta.url));
+
+export const HOST_AGENT_NAMES = {
+  generic: DEFAULT_AGENT,
+  codex: 'codex',
+  'claude-code': 'claude-code',
+  'claude-desktop': 'claude-desktop',
+  cursor: 'cursor',
+  windsurf: 'windsurf',
+  vscode: 'vscode-copilot',
+  jetbrains: 'jetbrains',
+} as const;
+
+export type AudreyHost = keyof typeof HOST_AGENT_NAMES;
+
+interface McpEnvOptions {
+  includeSecrets?: boolean;
+}
 
 const VALID_EMBEDDING_PROVIDERS = new Set(['mock', 'local', 'gemini', 'openai']);
 const VALID_LLM_PROVIDERS = new Set(['mock', 'anthropic', 'openai']);
@@ -90,7 +108,7 @@ export function resolveLLMProvider(
 
 export function buildAudreyConfig(): AudreyConfig {
   const dataDir = resolveDataDir(process.env);
-  const agent = process.env['AUDREY_AGENT'] || 'claude-code';
+  const agent = process.env['AUDREY_AGENT'] || DEFAULT_AGENT;
   const explicitProvider = process.env['AUDREY_EMBEDDING_PROVIDER'];
 
   const embedding = resolveEmbeddingProvider(process.env, explicitProvider);
@@ -105,38 +123,124 @@ export function buildAudreyConfig(): AudreyConfig {
   return config;
 }
 
-export function buildInstallArgs(env: Record<string, string | undefined> = process.env): string[] {
+export function resolveHostAgent(host: string | undefined): string {
+  if (!host) return HOST_AGENT_NAMES.generic;
+  if (host in HOST_AGENT_NAMES) return HOST_AGENT_NAMES[host as AudreyHost];
+  throw new Error(`Unsupported MCP host "${host}". Supported hosts: ${Object.keys(HOST_AGENT_NAMES).join(', ')}`);
+}
+
+export function buildAudreyMcpEnv(
+  env: Record<string, string | undefined> = process.env,
+  agent = env['AUDREY_AGENT'] || DEFAULT_AGENT,
+  options: McpEnvOptions = {},
+): Record<string, string> {
+  const includeSecrets = options.includeSecrets ?? true;
+  const providerEnv = includeSecrets
+    ? env
+    : {
+      ...env,
+      ANTHROPIC_API_KEY: undefined,
+      GOOGLE_API_KEY: undefined,
+      GEMINI_API_KEY: undefined,
+      OPENAI_API_KEY: undefined,
+    };
   const envPairs = new Map<string, string>();
   const addEnv = (key: string, value: string | undefined | null): void => {
     if (value === undefined || value === null || value === '') return;
-    envPairs.set(key, `${key}=${value}`);
+    envPairs.set(key, value);
   };
 
   addEnv('AUDREY_DATA_DIR', resolveDataDir(env));
+  addEnv('AUDREY_AGENT', agent);
 
-  const embedding = resolveEmbeddingProvider(env, env['AUDREY_EMBEDDING_PROVIDER']);
+  const embedding = resolveEmbeddingProvider(providerEnv, env['AUDREY_EMBEDDING_PROVIDER']);
   addEnv('AUDREY_EMBEDDING_PROVIDER', embedding.provider);
   if (embedding.provider === 'local') {
     addEnv('AUDREY_DEVICE', embedding.device || env['AUDREY_DEVICE'] || 'gpu');
   } else if (embedding.provider === 'gemini') {
-    addEnv('GOOGLE_API_KEY', embedding.apiKey);
+    if (includeSecrets) addEnv('GOOGLE_API_KEY', embedding.apiKey);
   } else if (embedding.provider === 'openai') {
-    addEnv('OPENAI_API_KEY', embedding.apiKey);
+    if (includeSecrets) addEnv('OPENAI_API_KEY', embedding.apiKey);
   }
 
-  const llm = resolveLLMProvider(env, env['AUDREY_LLM_PROVIDER']);
+  const llm = resolveLLMProvider(providerEnv, env['AUDREY_LLM_PROVIDER']);
   if (llm) {
     addEnv('AUDREY_LLM_PROVIDER', llm.provider);
     if (llm.provider === 'anthropic') {
-      addEnv('ANTHROPIC_API_KEY', llm.apiKey);
+      if (includeSecrets) addEnv('ANTHROPIC_API_KEY', llm.apiKey);
     } else if (llm.provider === 'openai') {
-      addEnv('OPENAI_API_KEY', llm.apiKey);
+      if (includeSecrets) addEnv('OPENAI_API_KEY', llm.apiKey);
     }
   }
 
+  return Object.fromEntries(envPairs);
+}
+
+export function buildStdioMcpServerConfig(
+  env: Record<string, string | undefined> = process.env,
+  host: string | undefined = 'generic',
+): { command: string; args: string[]; env: Record<string, string> } {
+  const agent = env['AUDREY_AGENT'] || resolveHostAgent(host);
+  return {
+    command: process.execPath,
+    args: [MCP_ENTRYPOINT],
+    env: buildAudreyMcpEnv(env, agent, { includeSecrets: false }),
+  };
+}
+
+function jsonHostConfig(host: string | undefined, env: Record<string, string | undefined>): unknown {
+  const config = buildStdioMcpServerConfig(env, host);
+  if (host === 'vscode') {
+    return {
+      servers: {
+        [SERVER_NAME]: {
+          type: 'stdio',
+          ...config,
+        },
+      },
+    };
+  }
+
+  return {
+    mcpServers: {
+      [SERVER_NAME]: {
+        type: 'stdio',
+        ...config,
+      },
+    },
+  };
+}
+
+function tomlString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+export function formatMcpHostConfig(
+  host: string | undefined = 'generic',
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const normalizedHost = host || 'generic';
+  if (normalizedHost === 'codex') {
+    const config = buildStdioMcpServerConfig(env, normalizedHost);
+    const lines = [
+      `[mcp_servers.${SERVER_NAME}]`,
+      `command = ${tomlString(config.command)}`,
+      `args = [${config.args.map(tomlString).join(', ')}]`,
+      '',
+      `[mcp_servers.${SERVER_NAME}.env]`,
+      ...Object.entries(config.env).map(([key, value]) => `${key} = ${tomlString(value)}`),
+    ];
+    return lines.join('\n');
+  }
+
+  return JSON.stringify(jsonHostConfig(normalizedHost, env), null, 2);
+}
+
+export function buildInstallArgs(env: Record<string, string | undefined> = process.env): string[] {
+  const envPairs = buildAudreyMcpEnv(env, env['AUDREY_AGENT'] || HOST_AGENT_NAMES['claude-code'], { includeSecrets: true });
   const args = ['mcp', 'add', '-s', 'user', SERVER_NAME];
-  for (const pair of envPairs.values()) {
-    args.push('-e', pair);
+  for (const [key, value] of Object.entries(envPairs)) {
+    args.push('-e', `${key}=${value}`);
   }
   args.push('--', process.execPath, MCP_ENTRYPOINT);
 

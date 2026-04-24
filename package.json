@@ -1,7 +1,7 @@
 {
   "name": "audrey",
   "version": "0.20.0",
-  "description": "Biological memory architecture for AI agents - encode, consolidate, and recall memories with confidence decay, contradiction detection, and causal graphs",
+  "description": "Local-first memory runtime for AI agents with recall, consolidation, memory reflexes, contradiction detection, and tool-trace learning",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -27,6 +27,10 @@
     "dist/",
     "docs/production-readiness.md",
     "docs/benchmarking.md",
+    "docs/audrey-for-dummies.md",
+    "docs/future-of-llm-memory.md",
+    "docs/mcp-hosts.md",
+    "docs/ollama-local-agents.md",
     "docs/assets/benchmarks/",
     "examples/",
     "README.md",
@@ -76,6 +80,12 @@
     "confidence",
     "long-term-memory",
     "persistent-memory",
+    "memory-preflight",
+    "memory-reflexes",
+    "agent-reflexes",
+    "agent-safety",
+    "tool-trace-memory",
+    "local-first-memory",
     "rag",
     "claude",
     "agent-framework",
@@ -112,5 +122,10 @@
     "@types/node": "^25.6.0",
     "typescript": "^6.0.2",
     "vitest": "^4.0.18"
+  },
+  "directories": {
+    "doc": "docs",
+    "example": "examples",
+    "test": "tests"
   }
 }

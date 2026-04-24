@@ -29,6 +29,22 @@ export { forgetMemory, forgetByQuery, purgeMemories } from './forget.js';
 export { applyInterference, interferenceModifier } from './interference.js';
 export { contextMatchRatio, contextModifier } from './context.js';
 export { arousalSalienceBoost, affectSimilarity, moodCongruenceModifier, detectResonance } from './affect.js';
+export { buildPreflight } from './preflight.js';
+export type {
+  MemoryPreflight,
+  PreflightDecision,
+  PreflightOptions,
+  PreflightSeverity,
+  PreflightWarning,
+  PreflightWarningType,
+} from './preflight.js';
+export { buildReflexReport } from './reflexes.js';
+export type {
+  MemoryReflex,
+  MemoryReflexReport,
+  ReflexOptions,
+  ReflexResponseType,
+} from './reflexes.js';
 
 export type {
   Affect,

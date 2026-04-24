@@ -1,5 +1,8 @@
 node_modules/
 .npm-cache/
+.tmp-npm-cache/
+.audrey-demo-tmp/
+.claude/settings.local.json
 audrey-data/
 .tmp/
 .tmp-vitest/
