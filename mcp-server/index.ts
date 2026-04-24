@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { z } from 'zod';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Audrey } from '../src/index.js';
@@ -13,6 +13,7 @@ import {
   SERVER_NAME,
   buildAudreyConfig,
   buildInstallArgs,
+  formatMcpHostConfig,
   resolveDataDir,
   resolveEmbeddingProvider,
   resolveLLMProvider,
@@ -69,7 +70,9 @@ export const memoryEncodeToolSchema = {
   source: z.enum(VALID_SOURCES).describe('Source type of the memory'),
   tags: z.array(z.string()).optional().describe('Optional tags for categorization'),
   salience: z.number().min(0).max(1).optional().describe('Importance weight 0-1'),
-  context: z.record(z.string(), z.string()).optional().describe('Situational context as key-value pairs (e.g., {task: "debugging", domain: "payments"})'),
+  context: z.record(z.string(), z.string()).optional().describe(
+    'Situational context as key-value pairs (e.g., {task: "debugging", domain: "payments"})'
+  ),
   affect: z.object({
     valence: z.number().min(-1).max(1).describe('Emotional valence: -1 (very negative) to 1 (very positive)'),
     arousal: z.number().min(0).max(1).optional().describe('Emotional arousal: 0 (calm) to 1 (highly activated)'),
@@ -113,6 +116,31 @@ export const memoryForgetToolSchema = {
   query: z.string().optional().describe('Semantic query to find and forget the closest matching memory'),
   min_similarity: z.number().min(0).max(1).optional().describe('Minimum similarity for query-based forget (default 0.9)'),
   purge: z.boolean().optional().describe('Hard-delete the memory permanently (default false, soft-delete)'),
+};
+
+export const memoryPreflightToolSchema = {
+  action: z.string()
+    .refine(isNonEmptyText, 'Action must not be empty')
+    .describe('Natural-language description of the action the agent is about to take.'),
+  tool: z.string().optional().describe('Tool or command family about to be used, e.g. Bash, npm test, Edit, deploy.'),
+  session_id: z.string().optional().describe('Session identifier for grouping the optional preflight event.'),
+  cwd: z.string().optional().describe('Working directory for the action.'),
+  files: z.array(z.string()).optional().describe('File paths to fingerprint if record_event is true.'),
+  strict: z.boolean().optional().describe('If true, high-severity memory warnings produce decision=block instead of caution.'),
+  limit: z.number().int().min(1).max(50).optional().describe('Max recall results to consider before preflight categorization.'),
+  budget_chars: z.number().int().min(200).max(32000).optional().describe('Capsule budget in characters.'),
+  mode: z.enum(['balanced', 'conservative', 'aggressive']).optional().describe('Underlying capsule mode. Defaults to conservative.'),
+  failure_window_hours: z.number().int().min(1).max(8760).optional().describe(
+    'How far back to check failed tool events. Defaults to 168 hours.'
+  ),
+  include_status: z.boolean().optional().describe('Include memory health in the response and warning calculation. Defaults to true.'),
+  record_event: z.boolean().optional().describe('Record a redacted PreToolUse event for this preflight. Defaults to false.'),
+  include_capsule: z.boolean().optional().describe('If false, omit the embedded Memory Capsule from the response.'),
+};
+
+export const memoryReflexesToolSchema = {
+  ...memoryPreflightToolSchema,
+  include_preflight: z.boolean().optional().describe('If true, include the full underlying preflight report.'),
 };
 
 // ---------------------------------------------------------------------------
@@ -265,12 +293,19 @@ async function greeting(): Promise<void> {
     if (result.mood && result.mood.samples > 0) {
       const v = result.mood.valence;
       const moodWord = v > 0.3 ? 'positive' : v < -0.3 ? 'negative' : 'neutral';
-      lines.push(`Mood: ${moodWord} (valence=${v.toFixed(2)}, arousal=${result.mood.arousal.toFixed(2)}, from ${result.mood.samples} recent memories)`);
+      lines.push(
+        `Mood: ${moodWord} (valence=${v.toFixed(2)}, `
+        + `arousal=${result.mood.arousal.toFixed(2)}, `
+        + `from ${result.mood.samples} recent memories)`
+      );
     }
 
     // Health
     const stats = audrey.introspect();
-    lines.push(`Memory: ${stats.episodic} episodic, ${stats.semantic} semantic, ${stats.procedural} procedural | ${health.healthy ? 'healthy' : 'needs attention'}`);
+    lines.push(
+      `Memory: ${stats.episodic} episodic, ${stats.semantic} semantic, `
+      + `${stats.procedural} procedural | ${health.healthy ? 'healthy' : 'needs attention'}`
+    );
     lines.push('');
 
     // Principles (semantic memories)
@@ -449,7 +484,7 @@ function install(): void {
   console.log(`
 Audrey registered as "${SERVER_NAME}" with Claude Code.
 
-13 MCP tools available in every session:
+19 MCP tools available in every session:
   memory_encode        - Store observations, facts, preferences
   memory_recall        - Search memories by semantic similarity
   memory_consolidate   - Extract principles from accumulated episodes
@@ -463,9 +498,18 @@ Audrey registered as "${SERVER_NAME}" with Claude Code.
   memory_status        - Check brain health (episode/vec sync, dimensions)
   memory_reflect       - Form lasting memories from a conversation
   memory_greeting      - Wake up as yourself: load identity, context, mood
+  memory_observe_tool  - Record redacted tool-use events
+  memory_recent_failures - Inspect recent failed tool events
+  memory_capsule       - Return a ranked, evidence-backed memory packet
+  memory_preflight     - Check memory before an agent acts
+  memory_reflexes      - Convert preflight evidence into trigger-response reflexes
+  memory_promote       - Promote repeated lessons into project rules
 
 CLI subcommands:
+  npx audrey demo      - Run a 60-second local proof with no network calls
   npx audrey install   - Register MCP server with Claude Code
+  npx audrey mcp-config codex - Print Codex MCP TOML
+  npx audrey mcp-config generic - Print JSON config for other MCP hosts
   npx audrey uninstall - Remove MCP server registration
   npx audrey status    - Show memory store health and stats
   npx audrey status --json - Emit machine-readable health output
@@ -494,6 +538,158 @@ function uninstall(): void {
   } catch {
     console.error(`Failed to remove "${SERVER_NAME}". It may not be registered.`);
     process.exit(1);
+  }
+}
+
+function printMcpConfig(): void {
+  const host = process.argv[3] || 'generic';
+  try {
+    console.log(formatMcpHostConfig(host, process.env));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[audrey] mcp-config failed: ${message}`);
+    process.exit(2);
+  }
+}
+
+function sectionTitle(section: string): string {
+  return section.replace(/_/g, ' ');
+}
+
+function createDemoDir(): string {
+  const preferredParent = process.env['AUDREY_DEMO_PARENT_DIR'] || tmpdir();
+  try {
+    return mkdtempSync(join(preferredParent, 'audrey-demo-'));
+  } catch {
+    const fallbackParent = join(process.cwd(), '.audrey-demo-tmp');
+    mkdirSync(fallbackParent, { recursive: true });
+    return mkdtempSync(join(fallbackParent, 'run-'));
+  }
+}
+
+export async function runDemoCommand({
+  out = console.log,
+  keep = process.argv.includes('--keep'),
+}: {
+  out?: (...args: unknown[]) => void;
+  keep?: boolean;
+} = {}): Promise<void> {
+  const demoDir = createDemoDir();
+  const audrey = new Audrey({
+    dataDir: demoDir,
+    agent: 'audrey-demo',
+    embedding: { provider: 'mock', dimensions: 64 },
+    llm: { provider: 'mock' },
+  });
+
+  try {
+    out('Audrey 60-second memory demo');
+    out('');
+    out(`Memory store: ${demoDir}`);
+    out('Writing memories that could have come from Codex, Claude, or an Ollama agent...');
+
+    const ids: string[] = [];
+    ids.push(await audrey.encode({
+      content: 'Audrey should work across Codex, Claude Code, Claude Desktop, Cursor, and Ollama-backed local agents.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'host-neutral', 'codex', 'ollama'],
+    }));
+    ids.push(await audrey.encode({
+      content: 'Before an agent starts work, ask Audrey for a Memory Capsule and include the capsule in the model context.',
+      source: 'direct-observation',
+      tags: ['procedure', 'memory-capsule', 'agent-loop'],
+    }));
+    ids.push(await audrey.encode({
+      content: 'If a host cannot auto-install Audrey, run npx audrey mcp-config codex '
+        + 'or npx audrey mcp-config generic and paste the generated config.',
+      source: 'direct-observation',
+      tags: ['procedure', 'mcp', 'first-contact'],
+    }));
+    ids.push(await audrey.encode({
+      content: 'Repeated tool failures should become procedural warnings before the agent retries the same risky action.',
+      source: 'direct-observation',
+      tags: ['risk', 'procedure', 'tool-trace'],
+    }));
+    ids.push(await audrey.encode({
+      content: 'Memory Reflexes turn preflight evidence into trigger-response rules an agent can follow before tool use.',
+      source: 'direct-observation',
+      tags: ['procedure', 'memory-reflexes', 'agent-loop'],
+    }));
+
+    const event = audrey.observeTool({
+      event: 'PostToolUse',
+      tool: 'npm test',
+      outcome: 'failed',
+      errorSummary: 'Vitest can fail with spawn EPERM on locked-down Windows hosts; '
+        + 'use build, typecheck, benchmarks, and direct dist smokes as the fallback evidence path.',
+      cwd: process.cwd(),
+      metadata: { demo: true, source: 'audrey demo' },
+    });
+
+    out(`Encoded ${ids.length} memories and 1 redacted tool trace (${event.event.id}).`);
+    out('');
+
+    const query = 'How should an agent use Audrey with Codex and Ollama?';
+    out(`Asking Audrey for a Memory Capsule: "${query}"`);
+    const capsule = await audrey.capsule(query, {
+      limit: 8,
+      budgetChars: 2400,
+      includeRisks: true,
+      includeContradictions: true,
+    });
+
+    out('');
+    out('Capsule highlights:');
+    let printed = 0;
+    for (const [name, entries] of Object.entries(capsule.sections)) {
+      if (!Array.isArray(entries) || entries.length === 0) continue;
+      printed += 1;
+      out(`- ${sectionTitle(name)}:`);
+      for (const entry of entries.slice(0, 2)) {
+        out(`  * ${entry.content}`);
+        out(`    why: ${entry.reason}`);
+      }
+    }
+    if (printed === 0) {
+      out('- No capsule sections were populated. That is unexpected for this demo.');
+    }
+
+    const reflexReport = await audrey.reflexes('run npm test before release', {
+      tool: 'npm test',
+      includePreflight: false,
+    });
+    out('');
+    out('Memory Reflex proof:');
+    const demoReflexes = [...reflexReport.reflexes].sort((a, b) => {
+      if (a.source === 'recent_failure' && b.source !== 'recent_failure') return -1;
+      if (b.source === 'recent_failure' && a.source !== 'recent_failure') return 1;
+      return 0;
+    });
+    for (const reflex of demoReflexes.slice(0, 3)) {
+      out(`- ${reflex.trigger}`);
+      out(`  ${reflex.response_type}: ${reflex.response}`);
+    }
+
+    const recall = await audrey.recall('Codex Ollama Memory Capsule host install', { limit: 3 });
+    out('');
+    out('Recall proof:');
+    for (const memory of recall.slice(0, 3)) {
+      out(`- [${memory.type}] ${(memory.confidence * 100).toFixed(0)}% ${memory.content}`);
+    }
+
+    out('');
+    out('Next steps:');
+    out('- Codex: npx audrey mcp-config codex');
+    out('- Any stdio MCP host: npx audrey mcp-config generic');
+    out('- Ollama/local agents: npx audrey serve, then call /v1/reflexes, /v1/capsule, and /v1/recall as tools');
+    if (keep) {
+      out(`- Demo data kept at: ${demoDir}`);
+    }
+  } finally {
+    audrey.close();
+    if (!keep) {
+      rmSync(demoDir, { recursive: true, force: true });
+    }
   }
 }
 
@@ -725,7 +921,18 @@ async function main(): Promise<void> {
     }
   });
 
-  server.tool('memory_recall', memoryRecallToolSchema, async ({ query, limit, types, min_confidence, tags, sources, after, before, context, mood }) => {
+  server.tool('memory_recall', memoryRecallToolSchema, async ({
+    query,
+    limit,
+    types,
+    min_confidence,
+    tags,
+    sources,
+    after,
+    before,
+    context,
+    mood,
+  }) => {
     try {
       const results = await audrey.recall(query, {
         limit: limit ?? 10,
@@ -849,7 +1056,9 @@ async function main(): Promise<void> {
   registerDreamTool(server, audrey);
 
   server.tool('memory_greeting', {
-    context: z.string().optional().describe('Optional hint about this session (e.g. "working on authentication feature"). If provided, also returns semantically relevant memories.'),
+    context: z.string().optional().describe(
+      'Optional hint about this session. When provided, Audrey also returns semantically relevant memories.'
+    ),
   }, async ({ context }) => {
     try {
       return toolResult(await audrey.greeting({ context }));
@@ -859,18 +1068,36 @@ async function main(): Promise<void> {
   });
 
   server.tool('memory_observe_tool', {
-    event: z.string().describe('Hook event name (PreToolUse, PostToolUse, PostToolUseFailure, PreCompact, PostCompact, etc.)'),
+    event: z.string().describe(
+      'Hook event name (PreToolUse, PostToolUse, PostToolUseFailure, PreCompact, PostCompact, etc.)'
+    ),
     tool: z.string().describe('Tool name being observed (Bash, Edit, Write, etc.)'),
     session_id: z.string().optional().describe('Session identifier for grouping related events'),
-    input: z.unknown().optional().describe('Tool input. Hashed and never stored raw; redacted + summarized into metadata only when retain_details is true.'),
+    input: z.unknown().optional().describe(
+      'Tool input. Hashed and never stored raw; redacted metadata is only stored when retain_details is true.'
+    ),
     output: z.unknown().optional().describe('Tool output. Same redaction and storage policy as input.'),
     outcome: z.enum(['succeeded', 'failed', 'blocked', 'skipped', 'unknown']).optional().describe('Outcome classification'),
     error_summary: z.string().optional().describe('Short error description if the tool failed. Redacted and truncated to 2 KB.'),
     cwd: z.string().optional().describe('Working directory at the time of the tool call'),
     files: z.array(z.string()).optional().describe('File paths to fingerprint (size + mtime + content hash)'),
     metadata: z.record(z.string(), z.unknown()).optional().describe('Arbitrary structured metadata (redacted before storage)'),
-    retain_details: z.boolean().optional().describe('If true, redacted input and output payloads are stored alongside hashes. Defaults to false.'),
-  }, async ({ event, tool, session_id, input, output, outcome, error_summary, cwd, files, metadata, retain_details }) => {
+    retain_details: z.boolean().optional().describe(
+      'If true, redacted input and output payloads are stored alongside hashes. Defaults to false.'
+    ),
+  }, async ({
+    event,
+    tool,
+    session_id,
+    input,
+    output,
+    outcome,
+    error_summary,
+    cwd,
+    files,
+    metadata,
+    retain_details,
+  }) => {
     try {
       const result = audrey.observeTool({
         event,
@@ -913,12 +1140,24 @@ async function main(): Promise<void> {
   server.tool('memory_capsule', {
     query: z.string().describe('Natural-language query for the turn. Drives what gets surfaced.'),
     limit: z.number().int().min(1).max(50).optional().describe('Max recall results to consider before categorization.'),
-    budget_chars: z.number().int().min(200).max(32000).optional().describe('Token budget in characters (defaults to AUDREY_CONTEXT_BUDGET_CHARS or 4000).'),
-    mode: z.enum(['balanced', 'conservative', 'aggressive']).optional().describe('Capsule mode: conservative = fewer, higher-confidence entries; aggressive = broader sweep.'),
+    budget_chars: z.number().int().min(200).max(32000).optional().describe(
+      'Token budget in characters (defaults to AUDREY_CONTEXT_BUDGET_CHARS or 4000).'
+    ),
+    mode: z.enum(['balanced', 'conservative', 'aggressive']).optional().describe(
+      'Capsule mode: conservative = fewer, higher-confidence entries; aggressive = broader sweep.'
+    ),
     recent_change_window_hours: z.number().int().min(1).max(720).optional().describe('How far back "recent_changes" looks (default 24h).'),
     include_risks: z.boolean().optional().describe('Include recent tool failures as risks (default true).'),
     include_contradictions: z.boolean().optional().describe('Include open contradictions (default true).'),
-  }, async ({ query, limit, budget_chars, mode, recent_change_window_hours, include_risks, include_contradictions }) => {
+  }, async ({
+    query,
+    limit,
+    budget_chars,
+    mode,
+    recent_change_window_hours,
+    include_risks,
+    include_contradictions,
+  }) => {
     try {
       const capsule = await audrey.capsule(query, {
         limit,
@@ -934,15 +1173,103 @@ async function main(): Promise<void> {
     }
   });
 
+  server.tool('memory_preflight', memoryPreflightToolSchema, async ({
+    action,
+    tool,
+    session_id,
+    cwd,
+    files,
+    strict,
+    limit,
+    budget_chars,
+    mode,
+    failure_window_hours,
+    include_status,
+    record_event,
+    include_capsule,
+  }) => {
+    try {
+      const preflight = await audrey.preflight(action, {
+        tool,
+        sessionId: session_id,
+        cwd,
+        files,
+        strict,
+        limit,
+        budgetChars: budget_chars,
+        mode,
+        recentFailureWindowHours: failure_window_hours,
+        includeStatus: include_status,
+        recordEvent: record_event,
+        includeCapsule: include_capsule,
+      });
+      return toolResult(preflight);
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+
+  server.tool('memory_reflexes', memoryReflexesToolSchema, async ({
+    action,
+    tool,
+    session_id,
+    cwd,
+    files,
+    strict,
+    limit,
+    budget_chars,
+    mode,
+    failure_window_hours,
+    include_status,
+    record_event,
+    include_capsule,
+    include_preflight,
+  }) => {
+    try {
+      const report = await audrey.reflexes(action, {
+        tool,
+        sessionId: session_id,
+        cwd,
+        files,
+        strict,
+        limit,
+        budgetChars: budget_chars,
+        mode,
+        recentFailureWindowHours: failure_window_hours,
+        includeStatus: include_status,
+        recordEvent: record_event,
+        includeCapsule: include_capsule,
+        includePreflight: include_preflight,
+      });
+      return toolResult(report);
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+
   server.tool('memory_promote', {
-    target: z.enum(['claude-rules']).optional().describe('Promotion target. Only claude-rules is implemented in PR 4 v1. AGENTS.md / playbook / hooks / checklist targets land in PR 4.1+.'),
-    min_confidence: z.number().min(0).max(1).optional().describe('Minimum memory confidence for promotion (default 0.7 for procedural, 0.8 for semantic).'),
+    target: z.enum(['claude-rules']).optional().describe(
+      'Promotion target. Only claude-rules is implemented in PR 4 v1.'
+    ),
+    min_confidence: z.number().min(0).max(1).optional().describe(
+      'Minimum memory confidence for promotion (default 0.7 for procedural, 0.8 for semantic).'
+    ),
     min_evidence: z.number().int().min(1).optional().describe('Minimum supporting episode count (default 2).'),
     limit: z.number().int().min(1).max(50).optional().describe('Max candidates to return/apply (default 20).'),
     dry_run: z.boolean().optional().describe('If true (default), return candidates without writing. Pair with yes=true to actually write.'),
     yes: z.boolean().optional().describe('Confirm write. Without this or dry_run=false the command stays in dry-run mode.'),
-    project_dir: z.string().optional().describe('Absolute path to the project root where .claude/rules/ should be created. Defaults to process.cwd().'),
-  }, async ({ target, min_confidence, min_evidence, limit, dry_run, yes, project_dir }) => {
+    project_dir: z.string().optional().describe(
+      'Absolute path to the project root where .claude/rules/ should be created. Defaults to process.cwd().'
+    ),
+  }, async ({
+    target,
+    min_confidence,
+    min_evidence,
+    limit,
+    dry_run,
+    yes,
+    project_dir,
+  }) => {
     try {
       const result = await audrey.promote({
         target,
@@ -1157,9 +1484,11 @@ async function promoteCli(): Promise<void> {
       return;
     }
 
+    const candidateLabel = `${result.candidates.length} candidate${result.candidates.length === 1 ? '' : 's'}`;
+    const appliedLabel = `${result.applied.length} rule${result.applied.length === 1 ? '' : 's'}`;
     const header = result.dry_run
-      ? `[audrey] promote (dry-run) — ${result.candidates.length} candidate${result.candidates.length === 1 ? '' : 's'} for target "${result.target}"`
-      : `[audrey] promote — wrote ${result.applied.length} rule${result.applied.length === 1 ? '' : 's'} to ${result.project_dir}`;
+      ? `[audrey] promote (dry-run) - ${candidateLabel} for target "${result.target}"`
+      : `[audrey] promote - wrote ${appliedLabel} to ${result.project_dir}`;
     console.log(header);
     if (result.candidates.length === 0) {
       console.log('  (no candidates met the confidence/evidence thresholds)');
@@ -1168,10 +1497,13 @@ async function promoteCli(): Promise<void> {
     for (const c of result.candidates) {
       console.log('');
       console.log(`  ${c.rendered_path}  [score ${c.score.toFixed(1)}]`);
-      const snippet = c.content.length > 120 ? c.content.slice(0, 117) + '…' : c.content;
+      const snippet = c.content.length > 120 ? c.content.slice(0, 117) + '...' : c.content;
       console.log(`    memory: ${snippet}`);
       console.log(`    why:    ${c.reason}`);
-      console.log(`    confidence=${(c.confidence * 100).toFixed(1)}%  evidence=${c.evidence_count}  prevented_failures=${c.failure_prevented}`);
+      console.log(
+        `    confidence=${(c.confidence * 100).toFixed(1)}%  `
+        + `evidence=${c.evidence_count}  prevented_failures=${c.failure_prevented}`
+      );
     }
     if (result.dry_run) {
       console.log('');
@@ -1189,6 +1521,13 @@ if (isDirectRun) {
     install();
   } else if (subcommand === 'uninstall') {
     uninstall();
+  } else if (subcommand === 'mcp-config') {
+    printMcpConfig();
+  } else if (subcommand === 'demo') {
+    runDemoCommand().catch(err => {
+      console.error('[audrey] demo failed:', err);
+      process.exit(1);
+    });
   } else if (subcommand === 'reembed') {
     reembed().catch(err => {
       console.error('[audrey] reembed failed:', err);

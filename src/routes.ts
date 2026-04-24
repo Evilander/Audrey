@@ -1,18 +1,71 @@
 import { Hono } from 'hono';
 import type { Audrey } from './audrey.js';
+import type { PreflightOptions } from './preflight.js';
 import { VERSION } from '../mcp-server/config.js';
 
 export interface AppOptions {
   apiKey?: string;
 }
 
+type RouteBody = {
+  action?: string;
+  query?: string;
+  tool?: string;
+  session_id?: string;
+  sessionId?: string;
+  cwd?: string;
+  files?: string[];
+  strict?: boolean;
+  limit?: number;
+  budget_chars?: number;
+  budgetChars?: number;
+  mode?: PreflightOptions['mode'];
+  failure_window_hours?: number;
+  recent_failure_window_hours?: number;
+  recentFailureWindowHours?: number;
+  recent_change_window_hours?: number;
+  recentChangeWindowHours?: number;
+  include_capsule?: boolean;
+  includeCapsule?: boolean;
+  include_status?: boolean;
+  includeStatus?: boolean;
+  record_event?: boolean;
+  recordEvent?: boolean;
+  include_preflight?: boolean;
+  includePreflight?: boolean;
+};
+
+function actionFromBody(body: RouteBody): unknown {
+  return body.action ?? body.query;
+}
+
+function preflightOptionsFromBody(body: RouteBody): PreflightOptions {
+  return {
+    tool: body.tool,
+    sessionId: body.session_id ?? body.sessionId,
+    cwd: body.cwd,
+    files: body.files,
+    strict: body.strict,
+    limit: body.limit,
+    budgetChars: body.budget_chars ?? body.budgetChars,
+    mode: body.mode,
+    recentFailureWindowHours: body.failure_window_hours
+      ?? body.recent_failure_window_hours
+      ?? body.recentFailureWindowHours,
+    recentChangeWindowHours: body.recent_change_window_hours ?? body.recentChangeWindowHours,
+    includeCapsule: body.include_capsule ?? body.includeCapsule,
+    includeStatus: body.include_status ?? body.includeStatus,
+    recordEvent: body.record_event ?? body.recordEvent,
+  };
+}
+
 export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   const app = new Hono();
 
-  // Health check — no auth required.
+  // Health check - no auth required.
   // Fields kept for backward compatibility across Audrey client surfaces:
-  //   status  / healthy — original TS-era field names (tests/http-api.test.js)
-  //   ok      / version — Python SDK HealthResponse contract
+  //   status  / healthy - original TS-era field names (tests/http-api.test.js)
+  //   ok      / version - Python SDK HealthResponse contract
   //                       (python/audrey_memory/types.py)
   app.get('/health', (c) => {
     try {
@@ -33,7 +86,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
-  // API key middleware — only if apiKey is configured
+  // API key middleware - only if apiKey is configured
   if (options.apiKey) {
     app.use('/v1/*', async (c, next) => {
       const auth = c.req.header('Authorization');
@@ -77,6 +130,67 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
+  // POST /v1/capsule
+  app.post('/v1/capsule', async (c) => {
+    try {
+      const body = await c.req.json();
+      if (typeof body.query !== 'string' || body.query.trim().length === 0) {
+        return c.json({ error: 'query must be a non-empty string' }, 400);
+      }
+
+      const result = await audrey.capsule(body.query, {
+        limit: body.limit,
+        budgetChars: body.budget_chars ?? body.budgetChars,
+        mode: body.mode,
+        recentChangeWindowHours: body.recent_change_window_hours ?? body.recentChangeWindowHours,
+        includeRisks: body.include_risks ?? body.includeRisks,
+        includeContradictions: body.include_contradictions ?? body.includeContradictions,
+        recall: body.recall,
+      });
+      return c.json(result);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  // POST /v1/preflight
+  app.post('/v1/preflight', async (c) => {
+    try {
+      const body = await c.req.json();
+      const action = actionFromBody(body);
+      if (typeof action !== 'string' || action.trim().length === 0) {
+        return c.json({ error: 'action must be a non-empty string' }, 400);
+      }
+
+      const result = await audrey.preflight(action, preflightOptionsFromBody(body));
+      return c.json(result);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  // POST /v1/reflexes
+  app.post('/v1/reflexes', async (c) => {
+    try {
+      const body = await c.req.json();
+      const action = actionFromBody(body);
+      if (typeof action !== 'string' || action.trim().length === 0) {
+        return c.json({ error: 'action must be a non-empty string' }, 400);
+      }
+
+      const result = await audrey.reflexes(action, {
+        ...preflightOptionsFromBody(body),
+        includePreflight: body.include_preflight ?? body.includePreflight,
+      });
+      return c.json(result);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+  });
+
   // POST /v1/consolidate
   app.post('/v1/consolidate', async (c) => {
     try {
@@ -101,7 +215,6 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
-  // GET /v1/introspect
   app.get('/v1/introspect', (c) => {
     try {
       const result = audrey.introspect();
@@ -124,7 +237,6 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
-  // GET /v1/export
   app.get('/v1/export', (c) => {
     try {
       const snapshot = audrey.export();
@@ -195,7 +307,6 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
-  // GET /v1/status
   app.get('/v1/status', (c) => {
     try {
       const result = audrey.memoryStatus();

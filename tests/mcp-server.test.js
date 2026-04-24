@@ -3,7 +3,17 @@ import { z } from 'zod';
 import { EventEmitter } from 'node:events';
 import { Audrey } from '../dist/src/index.js';
 import { readStoredDimensions } from '../dist/src/db.js';
-import { buildAudreyConfig, buildInstallArgs, DEFAULT_DATA_DIR, MCP_ENTRYPOINT, SERVER_NAME, VERSION } from '../dist/mcp-server/config.js';
+import {
+  buildAudreyConfig,
+  buildInstallArgs,
+  buildStdioMcpServerConfig,
+  DEFAULT_AGENT,
+  DEFAULT_DATA_DIR,
+  formatMcpHostConfig,
+  MCP_ENTRYPOINT,
+  SERVER_NAME,
+  VERSION,
+} from '../dist/mcp-server/config.js';
 import {
   MAX_MEMORY_CONTENT_LENGTH,
   buildStatusReport,
@@ -12,9 +22,12 @@ import {
   memoryEncodeToolSchema,
   memoryForgetToolSchema,
   memoryImportToolSchema,
+  memoryPreflightToolSchema,
   memoryRecallToolSchema,
+  memoryReflexesToolSchema,
   registerShutdownHandlers,
   registerDreamTool,
+  runDemoCommand,
   runStatusCommand,
   validateForgetSelection,
 } from '../dist/mcp-server/index.js';
@@ -54,7 +67,7 @@ describe('MCP CLI: buildAudreyConfig', () => {
   it('uses defaults when no env vars set', () => {
     const config = buildAudreyConfig();
     expect(config.dataDir).toBe(DEFAULT_DATA_DIR);
-    expect(config.agent).toBe('claude-code');
+    expect(config.agent).toBe(DEFAULT_AGENT);
     expect(config.embedding.provider).toBe('local');
     expect(config.embedding.dimensions).toBe(384);
     expect(config.llm).toBeUndefined();
@@ -179,6 +192,59 @@ describe('MCP CLI: buildInstallArgs', () => {
     const firstEnvIdx = args.indexOf('-e');
     expect(nameIdx).toBeLessThan(firstEnvIdx);
   });
+
+  it('keeps claude-code as the agent name for the Claude CLI installer', () => {
+    const args = buildInstallArgs({});
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    expect(envPairsStr).toContain('AUDREY_AGENT=claude-code');
+  });
+});
+
+describe('MCP CLI: host-neutral config output', () => {
+  it('builds a generic stdio config with the local-agent default', () => {
+    const config = buildStdioMcpServerConfig({});
+    expect(config.command).toBe(process.execPath);
+    expect(config.args).toEqual([MCP_ENTRYPOINT]);
+    expect(config.env.AUDREY_AGENT).toBe(DEFAULT_AGENT);
+    expect(config.env.AUDREY_EMBEDDING_PROVIDER).toBe('local');
+  });
+
+  it('formats Codex TOML with a codex agent identity', () => {
+    const text = formatMcpHostConfig('codex', {});
+    expect(text).toContain(`[mcp_servers.${SERVER_NAME}]`);
+    expect(text).toContain('AUDREY_AGENT = "codex"');
+    expect(text).toContain('AUDREY_EMBEDDING_PROVIDER = "local"');
+  });
+
+  it('formats VS Code MCP JSON using the servers envelope', () => {
+    const text = formatMcpHostConfig('vscode', {});
+    const parsed = JSON.parse(text);
+    expect(parsed.servers[SERVER_NAME].type).toBe('stdio');
+    expect(parsed.servers[SERVER_NAME].env.AUDREY_AGENT).toBe('vscode-copilot');
+  });
+
+  it('does not print provider secrets in generated host configs', () => {
+    const text = formatMcpHostConfig('codex', {
+      ANTHROPIC_API_KEY: 'sk-ant-secret',
+      OPENAI_API_KEY: 'sk-openai-secret',
+    });
+    expect(text).not.toContain('sk-ant-secret');
+    expect(text).not.toContain('sk-openai-secret');
+    expect(text).not.toContain('ANTHROPIC_API_KEY');
+    expect(text).not.toContain('OPENAI_API_KEY');
+  });
+});
+
+describe('MCP CLI: demo command', () => {
+  it('prints a self-contained memory demo without external services', async () => {
+    const lines = [];
+    await runDemoCommand({ out: (...args) => lines.push(args.join(' ')) });
+    const output = lines.join('\n');
+    expect(output).toContain('Audrey 60-second memory demo');
+    expect(output).toContain('Capsule highlights:');
+    expect(output).toContain('Recall proof:');
+    expect(output).toContain('npx audrey mcp-config codex');
+  });
 });
 
 describe('MCP validation hardening', () => {
@@ -208,6 +274,31 @@ describe('MCP validation hardening', () => {
     expect(schema.safeParse({ query: 'test', limit: 0 }).success).toBe(false);
     expect(schema.safeParse({ query: 'test', limit: 51 }).success).toBe(false);
     expect(schema.safeParse({ query: 'test', limit: 50 }).success).toBe(true);
+  });
+
+  it('memory_preflight rejects empty actions and accepts strict risk checks', () => {
+    const schema = z.object(memoryPreflightToolSchema);
+    expect(schema.safeParse({ action: '', tool: 'Bash' }).success).toBe(false);
+    expect(schema.safeParse({
+      action: 'run npm test',
+      tool: 'npm test',
+      strict: true,
+      failure_window_hours: 24,
+      record_event: true,
+      include_capsule: false,
+    }).success).toBe(true);
+  });
+
+  it('memory_reflexes accepts preflight inputs plus include_preflight', () => {
+    const schema = z.object(memoryReflexesToolSchema);
+    expect(schema.safeParse({ action: '', tool: 'Bash' }).success).toBe(false);
+    expect(schema.safeParse({
+      action: 'deploy Audrey',
+      tool: 'deploy',
+      strict: true,
+      include_preflight: true,
+      include_capsule: false,
+    }).success).toBe(true);
   });
 
   it('memory_import accepts consolidationMetrics snapshots', () => {
@@ -888,5 +979,3 @@ describe('MCP tool: memory_status', () => {
     expect(status.healthy).toBe(false);
   });
 });
-
-
