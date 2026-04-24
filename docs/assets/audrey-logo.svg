@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="300" viewBox="0 0 960 300" role="img" aria-labelledby="title desc">
+  <title id="title">Audrey logo</title>
+  <desc id="desc">A luminous memory orb and Audrey wordmark for a local-first AI memory runtime.</desc>
+  <defs>
+    <radialGradient id="orb" cx="42%" cy="35%" r="70%">
+      <stop offset="0%" stop-color="#f7dfad"/>
+      <stop offset="42%" stop-color="#d08f61"/>
+      <stop offset="78%" stop-color="#3b5f72"/>
+      <stop offset="100%" stop-color="#172a31"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="68" x2="242" y1="56" y2="238" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f2c777"/>
+      <stop offset="50%" stop-color="#78a6ad"/>
+      <stop offset="100%" stop-color="#273d45"/>
+    </linearGradient>
+    <linearGradient id="word" x1="302" x2="814" y1="94" y2="218" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f4d7a1"/>
+      <stop offset="46%" stop-color="#d08f61"/>
+      <stop offset="100%" stop-color="#85aeb2"/>
+    </linearGradient>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="960" height="300" rx="36" fill="#0f171a"/>
+  <path d="M54 228C131 266 220 247 274 181C324 120 320 61 270 42C224 25 154 50 103 99C56 144 30 193 54 228Z" fill="#122126"/>
+  <circle cx="158" cy="150" r="74" fill="url(#orb)" filter="url(#softGlow)"/>
+  <path d="M105 163C126 138 151 128 180 134C204 139 219 154 222 177" fill="none" stroke="#f8e7c7" stroke-width="8" stroke-linecap="round"/>
+  <path d="M98 132C123 106 153 98 188 108C214 115 233 132 244 159" fill="none" stroke="#1d3037" stroke-width="10" stroke-linecap="round"/>
+  <path d="M84 190C113 207 145 212 180 205C217 197 247 176 269 142" fill="none" stroke="url(#ring)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M86 109C113 78 149 60 194 57C231 55 261 66 284 90" fill="none" stroke="url(#ring)" stroke-width="4" stroke-linecap="round" opacity="0.85"/>
+  <circle cx="83" cy="190" r="7" fill="#f2c777"/>
+  <circle cx="284" cy="90" r="6" fill="#85aeb2"/>
+  <circle cx="269" cy="142" r="5" fill="#f8e7c7"/>
+
+  <text x="320" y="150" fill="url(#word)" font-family="Georgia, 'Times New Roman', serif" font-size="88" font-weight="700" letter-spacing="-3">Audrey</text>
+  <text x="326" y="198" fill="#c7d0cc" font-family="'Segoe UI', Candara, sans-serif" font-size="24" letter-spacing="4">LOCAL-FIRST MEMORY FOR AGENTS</text>
+  <path d="M327 219H811" stroke="#30484d" stroke-width="2"/>
+  <text x="326" y="250" fill="#8ea19b" font-family="'Segoe UI', Candara, sans-serif" font-size="20">recall / preflight / reflexes / consolidation / one SQLite brain</text>
+</svg>
