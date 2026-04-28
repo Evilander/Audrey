@@ -45,13 +45,15 @@ export async function detectResonance(
   episodeId: string,
   params: { content: string; affect?: Affect },
   config: ResonanceConfig = {},
+  embedding?: { vector?: number[]; buffer?: Buffer },
 ): Promise<ResonanceResult[]> {
   const { enabled = true, k = 5, threshold = 0.5, affectThreshold = 0.6 } = config;
   const { content, affect } = params;
   if (!enabled || !affect || affect.valence === undefined) return [];
 
-  const vector = await embeddingProvider.embed(content);
-  const buffer = embeddingProvider.vectorToBuffer(vector);
+  const buffer = embedding?.buffer ?? embeddingProvider.vectorToBuffer(
+    embedding?.vector ?? await embeddingProvider.embed(content)
+  );
 
   const matches = db.prepare(`
     SELECT e.*, (1.0 - v.distance) AS similarity

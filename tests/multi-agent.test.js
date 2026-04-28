@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Skipped: multi-agent scoping is planned in docs/plans/audrey-1.0-continuity-os-2026-04-22.md (scope: global|repo|agent|user in the claims layer).
+// Skipped: multi-agent scoping is planned for the claims layer (scope: global|repo|agent|user).
 describe.skip('multi-agent memory', () => {
   let audreyA;
   let audreyB;

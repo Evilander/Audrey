@@ -16,7 +16,6 @@ Do not open a public GitHub issue for a security vulnerability.
 Report vulnerabilities through one of these channels:
 
 - GitHub Security Advisories for this repository
-- email: `j.tyler.eveland@gmail.com`
 
 Include:
 

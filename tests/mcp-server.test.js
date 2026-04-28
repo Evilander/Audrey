@@ -298,6 +298,23 @@ describe('MCP validation hardening', () => {
     expect(schema.safeParse({ query: 'test', limit: 50 }).success).toBe(true);
   });
 
+  it('memory_recall accepts public retrieval modes', () => {
+    const schema = z.object(memoryRecallToolSchema);
+    expect(schema.safeParse({ query: 'test', retrieval: 'hybrid' }).success).toBe(true);
+    expect(schema.safeParse({ query: 'test', retrieval: 'vector' }).success).toBe(true);
+    expect(schema.safeParse({ query: 'test', retrieval: 'hybrid_strict' }).success).toBe(true);
+    expect(schema.safeParse({ query: 'test', retrieval: 'keyword' }).success).toBe(false);
+  });
+
+  it('memory_encode accepts wait_for_consolidation', () => {
+    const schema = z.object(memoryEncodeToolSchema);
+    expect(schema.safeParse({
+      content: 'wait for post encode work',
+      source: 'direct-observation',
+      wait_for_consolidation: true,
+    }).success).toBe(true);
+  });
+
   it('memory_preflight rejects empty actions and accepts strict risk checks', () => {
     const schema = z.object(memoryPreflightToolSchema);
     expect(schema.safeParse({ action: '', tool: 'Bash' }).success).toBe(false);
@@ -383,6 +400,41 @@ describe('MCP lifecycle hardening', () => {
     expect(audrey.close).toHaveBeenCalledOnce();
     expect(fakeProcess.exit).toHaveBeenCalledWith(1);
     expect(logger).toHaveBeenCalled();
+  });
+
+  it('drains Audrey post-encode queue before closing on shutdown', async () => {
+    const fakeProcess = new EventEmitter();
+    fakeProcess.exit = vi.fn();
+    const audrey = {
+      drainPostEncodeQueue: vi.fn().mockResolvedValue({ drained: true, pendingIds: [] }),
+      close: vi.fn(),
+    };
+
+    registerShutdownHandlers(fakeProcess, audrey, vi.fn());
+    fakeProcess.emit('SIGTERM');
+    await Promise.resolve();
+
+    expect(audrey.drainPostEncodeQueue).toHaveBeenCalledWith(5000);
+    expect(audrey.close).toHaveBeenCalledOnce();
+    expect(fakeProcess.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('logs pending row ids when post-encode queue does not drain before shutdown timeout', async () => {
+    const fakeProcess = new EventEmitter();
+    fakeProcess.exit = vi.fn();
+    const audrey = {
+      drainPostEncodeQueue: vi.fn().mockResolvedValue({ drained: false, pendingIds: ['ep-a', 'ep-b'] }),
+      close: vi.fn(),
+    };
+    const logger = vi.fn();
+
+    registerShutdownHandlers(fakeProcess, audrey, logger);
+    fakeProcess.emit('SIGTERM');
+    await Promise.resolve();
+
+    expect(logger).toHaveBeenCalledWith(expect.stringContaining('ep-a, ep-b'));
+    expect(audrey.close).toHaveBeenCalledOnce();
+    expect(fakeProcess.exit).toHaveBeenCalledWith(0);
   });
 });
 
@@ -1057,6 +1109,10 @@ describe('MCP tool: memory_status', () => {
     expect(status.dimensions).toBe(8);
     expect(status.schema_version).toBe(11);
     expect(status.healthy).toBe(true);
+    expect(status.pending_consolidation_count).toBeGreaterThanOrEqual(0);
+    expect(status.embedding_warm).toBe(false);
+    expect(status.warmup_duration_ms).toBeNull();
+    expect(status.default_retrieval_mode).toBe('hybrid');
   });
 
   it('reports unhealthy when vec counts diverge', () => {

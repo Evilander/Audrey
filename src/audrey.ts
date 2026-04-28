@@ -16,6 +16,7 @@ import type {
   IntrospectResult,
   LLMProvider,
   MemoryStatusResult,
+  PublicRetrievalMode,
   PurgeResult,
   RecallOptions,
   RecallResult,
@@ -65,6 +66,8 @@ import { renderAllRules, type RuleDoc } from './rules-compiler.js';
 import { insertEvent } from './events.js';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve as pathResolve } from 'node:path';
+import { ProfileRecorder, type ProfileDiagnostics } from './profile.js';
+import { performance } from 'node:perf_hooks';
 
 interface ConfigRow {
   value: string;
@@ -78,12 +81,34 @@ interface ContentRow {
   content: string;
 }
 
+function roundMs(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
 interface StatusRow {
   status: string;
 }
 
 interface AffectRow {
   affect: string;
+}
+
+interface EncodedEmbedding {
+  vector?: number[];
+  buffer?: Buffer;
+}
+
+export interface PostEncodeQueueDrainResult {
+  drained: boolean;
+  pendingIds: string[];
+}
+
+export interface PostEncodeQueueEvent {
+  episodeId: string;
+  queued_ms: number;
+  processing_ms: number;
+  total_ms: number;
+  pending_consolidation_count: number;
 }
 
 interface GreetingEpisodeRow {
@@ -135,11 +160,17 @@ export class Audrey extends EventEmitter {
     arousalWeight: number;
     resonance: { enabled: boolean; k: number; threshold: number; affectThreshold: number };
   };
+  defaultRetrievalMode: PublicRetrievalMode;
   autoReflect: boolean;
 
   private _migrationPending: boolean;
   private _autoConsolidateTimer: ReturnType<typeof setInterval> | null;
   private _closed: boolean;
+  private _postEncodeQueue: Promise<void>;
+  private _pendingPostEncodeIds: Set<string>;
+  private _embeddingWarm: boolean;
+  private _embeddingWarmupPromise: Promise<void> | null;
+  private _warmupDurationMs: number | null;
 
   constructor({
     dataDir = './audrey-data',
@@ -208,7 +239,13 @@ export class Audrey extends EventEmitter {
         affectThreshold: affect.resonance?.affectThreshold ?? 0.6,
       },
     };
+    this.defaultRetrievalMode = 'hybrid';
     this.autoReflect = autoReflect;
+    this._postEncodeQueue = Promise.resolve();
+    this._pendingPostEncodeIds = new Set();
+    this._embeddingWarm = false;
+    this._embeddingWarmupPromise = null;
+    this._warmupDurationMs = null;
   }
 
   async _ensureMigrated(): Promise<void> {
@@ -218,54 +255,208 @@ export class Audrey extends EventEmitter {
     this.emit('migration', counts);
   }
 
-  _emitValidation(id: string, params: EncodeParams): void {
-    validateMemory(this.db, this.embeddingProvider, { id, ...params }, {
-      llmProvider: this.llmProvider,
-    })
-      .then(validation => {
-        if (validation.action === 'reinforced') {
-          this.emit('reinforcement', {
-            episodeId: id,
-            targetId: validation.semanticId,
-            similarity: validation.similarity,
-          });
-        } else if (validation.action === 'contradiction') {
-          this.emit('contradiction', {
-            episodeId: id,
-            contradictionId: validation.contradictionId,
-            semanticId: validation.semanticId,
-            similarity: validation.similarity,
-            resolution: validation.resolution,
-          });
-        }
+  startEmbeddingWarmup(text = 'warmup'): Promise<void> {
+    if (this._embeddingWarm) return Promise.resolve();
+    if (this._embeddingWarmupPromise) return this._embeddingWarmupPromise;
+
+    const startedAt = performance.now();
+    this._embeddingWarmupPromise = (async () => {
+      if (typeof this.embeddingProvider.ready === 'function') {
+        await this.embeddingProvider.ready();
+      }
+      await this.embeddingProvider.embed(text);
+      this._embeddingWarm = true;
+    })()
+      .catch(err => {
+        this._emitQueueError(err);
+        throw err;
       })
-      .catch(err => this.emit('error', err));
+      .finally(() => {
+        this._warmupDurationMs = roundMs(performance.now() - startedAt);
+      });
+    return this._embeddingWarmupPromise;
+  }
+
+  async _waitForEmbeddingWarmup(profile?: ProfileRecorder, spanName = 'embedding.wait_for_warmup'): Promise<void> {
+    if (!this._embeddingWarmupPromise || this._embeddingWarm) return;
+    const wait = async (): Promise<void> => {
+      try {
+        await this._embeddingWarmupPromise;
+      } catch {
+        // Warmup failure should not poison the foreground call; the foreground
+        // embed path will surface provider errors if the provider is truly broken.
+      }
+    };
+    if (profile) await profile.measure(spanName, wait);
+    else await wait();
+  }
+
+  async _validateEncodedMemory(id: string, params: EncodeParams, embedding?: EncodedEmbedding): Promise<void> {
+    const validation = await validateMemory(this.db, this.embeddingProvider, { id, ...params }, {
+      llmProvider: this.llmProvider,
+      embeddingVector: embedding?.vector,
+      embeddingBuffer: embedding?.buffer,
+    });
+    if (validation.action === 'reinforced') {
+      this.emit('reinforcement', {
+        episodeId: id,
+        targetId: validation.semanticId,
+        similarity: validation.similarity,
+      });
+    } else if (validation.action === 'contradiction') {
+      this.emit('contradiction', {
+        episodeId: id,
+        contradictionId: validation.contradictionId,
+        semanticId: validation.semanticId,
+        similarity: validation.similarity,
+        resolution: validation.resolution,
+      });
+    }
+  }
+
+  _emitValidation(id: string, params: EncodeParams, embedding?: EncodedEmbedding): void {
+    this._validateEncodedMemory(id, params, embedding).catch(err => this.emit('error', err));
+  }
+
+  async _runPostEncodeStage(name: string, run: () => Promise<void>): Promise<void> {
+    try {
+      await run();
+    } catch (err) {
+      this._emitQueueError(Object.assign(err instanceof Error ? err : new Error(String(err)), {
+        stage: name,
+      }));
+    }
+  }
+
+  async _runPostEncode(id: string, params: EncodeParams, embedding: EncodedEmbedding): Promise<void> {
+    if (this.interferenceConfig.enabled) {
+      await this._runPostEncodeStage('interference', async () => {
+        const affected = await applyInterference(this.db, this.embeddingProvider, id, params, this.interferenceConfig, embedding);
+        if (affected.length > 0) {
+          this.emit('interference', { episodeId: id, affected });
+        }
+      });
+    }
+
+    if (this.affectConfig.enabled && this.affectConfig.resonance.enabled && params.affect?.valence !== undefined) {
+      await this._runPostEncodeStage('resonance', async () => {
+        const echoes = await detectResonance(this.db, this.embeddingProvider, id, params, this.affectConfig.resonance, embedding);
+        if (echoes.length > 0) {
+          this.emit('resonance', { episodeId: id, affect: params.affect, echoes });
+        }
+      });
+    }
+
+    await this._runPostEncodeStage('validation', async () => {
+      await this._validateEncodedMemory(id, params, embedding);
+    });
+  }
+
+  _enqueuePostEncode(id: string, params: EncodeParams, embedding: EncodedEmbedding): Promise<void> {
+    const enqueuedAt = performance.now();
+    this._pendingPostEncodeIds.add(id);
+
+    const run = async (): Promise<void> => {
+      const startedAt = performance.now();
+      try {
+        if (!this._closed) {
+          await this._runPostEncode(id, params, embedding);
+        }
+      } finally {
+        const finishedAt = performance.now();
+        this._pendingPostEncodeIds.delete(id);
+        this.emit('post-encode-complete', {
+          episodeId: id,
+          queued_ms: roundMs(startedAt - enqueuedAt),
+          processing_ms: roundMs(finishedAt - startedAt),
+          total_ms: roundMs(finishedAt - enqueuedAt),
+          pending_consolidation_count: this._pendingPostEncodeIds.size,
+        } satisfies PostEncodeQueueEvent);
+      }
+    };
+
+    const task = this._postEncodeQueue.then(run, run);
+    this._postEncodeQueue = task.catch(err => {
+      this._emitQueueError(err);
+    });
+    return task;
+  }
+
+  _emitQueueError(err: unknown): void {
+    if (this.listenerCount('error') > 0) {
+      this.emit('error', err);
+    }
+  }
+
+  pendingConsolidationIds(): string[] {
+    return [...this._pendingPostEncodeIds];
+  }
+
+  async drainPostEncodeQueue(timeoutMs = 5000): Promise<PostEncodeQueueDrainResult> {
+    if (this._pendingPostEncodeIds.size === 0) {
+      return { drained: true, pendingIds: [] };
+    }
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = Symbol('timed-out');
+    const timeoutPromise = new Promise<typeof timedOut>(resolve => {
+      timeout = setTimeout(() => resolve(timedOut), timeoutMs);
+    });
+
+    const result = await Promise.race([
+      this._postEncodeQueue.then(() => true),
+      timeoutPromise,
+    ]);
+    if (timeout) clearTimeout(timeout);
+
+    const drained = result === true && this._pendingPostEncodeIds.size === 0;
+    return {
+      drained,
+      pendingIds: this.pendingConsolidationIds(),
+    };
   }
 
   async encode(params: EncodeParams): Promise<string> {
-    await this._ensureMigrated();
+    return this._encodeInternal(params);
+  }
+
+  async encodeWithDiagnostics(params: EncodeParams): Promise<{ id: string; diagnostics: ProfileDiagnostics }> {
+    const profile = new ProfileRecorder('memory_encode');
+    const id = await this._encodeInternal(params, profile);
+    return { id, diagnostics: profile.finish() };
+  }
+
+  async _encodeInternal(params: EncodeParams, profile?: ProfileRecorder): Promise<string> {
+    await this._waitForEmbeddingWarmup(profile, 'encode.wait_for_warmup');
+    if (profile) await profile.measure('encode.ensure_migrated', () => this._ensureMigrated());
+    else await this._ensureMigrated();
+
     const encodeParams = { ...params, arousalWeight: this.affectConfig.arousalWeight };
-    const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams);
+    let encodedVector: number[] | undefined;
+    let encodedBuffer: Buffer | undefined;
+    const id = profile
+      ? await profile.measure('encode.episode', () => encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
+        profile,
+        onVector: (vector, buffer) => {
+          encodedVector = vector;
+          encodedBuffer = buffer;
+        },
+      }))
+      : await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
+        onVector: (vector, buffer) => {
+          encodedVector = vector;
+          encodedBuffer = buffer;
+        },
+      });
+    const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
     this.emit('encode', { id, ...params });
-    if (this.interferenceConfig.enabled) {
-      applyInterference(this.db, this.embeddingProvider, id, params, this.interferenceConfig)
-        .then(affected => {
-          if (affected.length > 0) {
-            this.emit('interference', { episodeId: id, affected });
-          }
-        })
-        .catch(err => this.emit('error', err));
+    const postEncodeTask = profile
+      ? profile.measureSync('encode.enqueue_background', () => this._enqueuePostEncode(id, params, encodedEmbedding))
+      : this._enqueuePostEncode(id, params, encodedEmbedding);
+    if (params.waitForConsolidation) {
+      if (profile) await profile.measure('encode.wait_for_consolidation', () => postEncodeTask);
+      else await postEncodeTask;
     }
-    if (this.affectConfig.enabled && this.affectConfig.resonance.enabled && params.affect?.valence !== undefined) {
-      detectResonance(this.db, this.embeddingProvider, id, params, this.affectConfig.resonance)
-        .then(echoes => {
-          if (echoes.length > 0) {
-            this.emit('resonance', { episodeId: id, affect: params.affect, echoes });
-          }
-        })
-        .catch(err => this.emit('error', err));
-    }
-    this._emitValidation(id, params);
     return id;
   }
 
@@ -327,10 +518,32 @@ export class Audrey extends EventEmitter {
   }
 
   async recall(query: string, options: RecallOptions = {}): Promise<RecallResult[]> {
-    await this._ensureMigrated();
+    return this._recallInternal(query, options);
+  }
+
+  async recallWithDiagnostics(
+    query: string,
+    options: RecallOptions = {},
+  ): Promise<{ results: RecallResult[]; diagnostics: ProfileDiagnostics }> {
+    const profile = new ProfileRecorder('memory_recall');
+    const results = await this._recallInternal(query, options, profile);
+    return { results, diagnostics: profile.finish() };
+  }
+
+  async _recallInternal(
+    query: string,
+    options: RecallOptions = {},
+    profile?: ProfileRecorder,
+  ): Promise<RecallResult[]> {
+    await this._waitForEmbeddingWarmup(profile, 'recall.wait_for_warmup');
+    if (profile) await profile.measure('recall.ensure_migrated', () => this._ensureMigrated());
+    else await this._ensureMigrated();
+
     return recallFn(this.db, this.embeddingProvider, query, {
       ...options,
+      retrieval: options.retrieval ?? this.defaultRetrievalMode,
       confidenceConfig: this._recallConfig(options),
+      profile,
     });
   }
 
@@ -338,6 +551,7 @@ export class Audrey extends EventEmitter {
     await this._ensureMigrated();
     yield* recallStreamFn(this.db, this.embeddingProvider, query, {
       ...options,
+      retrieval: options.retrieval ?? this.defaultRetrievalMode,
       confidenceConfig: this._recallConfig(options),
     });
   }
@@ -490,6 +704,10 @@ export class Audrey extends EventEmitter {
       device: device ?? null,
       healthy,
       reembed_recommended: reembedRecommended,
+      pending_consolidation_count: this._pendingPostEncodeIds.size,
+      embedding_warm: this._embeddingWarm,
+      warmup_duration_ms: this._warmupDurationMs,
+      default_retrieval_mode: this.defaultRetrievalMode,
     };
   }
 
@@ -629,7 +847,7 @@ export class Audrey extends EventEmitter {
   }
 
   async waitForIdle(): Promise<void> {
-    return Promise.resolve();
+    await this._postEncodeQueue;
   }
 
   observeTool(input: ObserveToolInput): ObserveToolResult {

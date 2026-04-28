@@ -46,6 +46,11 @@ describe('FTS5 full-text search', () => {
     expect(results.length).toBeGreaterThan(0);
   });
 
+  it('hybrid_strict recall preserves full hybrid fusion behavior', async () => {
+    const results = await audrey.recall('stripe rate limit 429', { retrieval: 'hybrid_strict', limit: 5 });
+    expect(results.length).toBeGreaterThan(0);
+  });
+
   it('hybrid recall finds more relevant results than vector alone', async () => {
     const vectorOnly = await audrey.recall('VACUUM ANALYZE', { retrieval: 'vector', limit: 5 });
     const hybrid = await audrey.recall('VACUUM ANALYZE', { retrieval: 'hybrid', limit: 5 });

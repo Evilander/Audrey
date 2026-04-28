@@ -1,6 +1,6 @@
 {
   "name": "audrey",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "Local-first memory runtime for AI agents with recall, consolidation, memory reflexes, contradiction detection, and tool-trace learning",
   "type": "module",
   "main": "dist/src/index.js",
@@ -25,12 +25,6 @@
   },
   "files": [
     "dist/",
-    "docs/production-readiness.md",
-    "docs/benchmarking.md",
-    "docs/audrey-for-dummies.md",
-    "docs/future-of-llm-memory.md",
-    "docs/mcp-hosts.md",
-    "docs/ollama-local-agents.md",
     "docs/assets/audrey-feature-grid.jpg",
     "docs/assets/audrey-logo.svg",
     "docs/assets/audrey-wordmark.png",
@@ -43,12 +37,13 @@
   "scripts": {
     "build": "tsc",
     "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "pretest": "npm run build",
+    "pretest": "npm run build && npm run bench:perf",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepack": "npm run build",
     "pack:check": "npm pack --dry-run",
     "bench:memory": "node benchmarks/run.js",
+    "bench:perf": "node benchmarks/perf.bench.js",
     "bench:memory:retrieval": "node benchmarks/run.js --suite retrieval",
     "bench:memory:operations": "node benchmarks/run.js --suite operations",
     "bench:memory:json": "node benchmarks/run.js --json",
@@ -128,7 +123,6 @@
     "vitest": "^4.0.18"
   },
   "directories": {
-    "doc": "docs",
     "example": "examples",
     "test": "tests"
   }
