@@ -18,13 +18,15 @@ export async function applyInterference(
   episodeId: string,
   params: { content: string },
   config: InterferenceConfig = {},
+  embedding?: { vector?: number[]; buffer?: Buffer },
 ): Promise<InterferenceHit[]> {
   const { enabled = true, k = 5, threshold = 0.6, weight = 0.1 } = config;
 
   if (!enabled) return [];
 
-  const vector = await embeddingProvider.embed(params.content);
-  const buffer = embeddingProvider.vectorToBuffer(vector);
+  const buffer = embedding?.buffer ?? embeddingProvider.vectorToBuffer(
+    embedding?.vector ?? await embeddingProvider.embed(params.content)
+  );
 
   const semanticHits = db.prepare(`
     SELECT s.id, s.interference_count, (1.0 - v.distance) AS similarity

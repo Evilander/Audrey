@@ -34,3 +34,4 @@ python/**/__pycache__/
 pip-*/
 build-env-*/
 build-reqs-*.txt
+.codex

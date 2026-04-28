@@ -58,13 +58,15 @@ export interface EncodeParams {
   affect?: Affect;
   arousalWeight?: number;
   private?: boolean;
+  waitForConsolidation?: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Recall
 // ---------------------------------------------------------------------------
 
-export type RetrievalMode = 'vector' | 'keyword' | 'hybrid';
+export type PublicRetrievalMode = 'vector' | 'hybrid' | 'hybrid_strict';
+export type RetrievalMode = PublicRetrievalMode | 'keyword';
 
 export interface RecallOptions {
   minConfidence?: number;
@@ -539,6 +541,10 @@ export interface MemoryStatusResult {
   device: string | null;
   healthy: boolean;
   reembed_recommended: boolean;
+  pending_consolidation_count: number;
+  embedding_warm: boolean;
+  warmup_duration_ms: number | null;
+  default_retrieval_mode: PublicRetrievalMode;
 }
 
 export interface ForgetResult {

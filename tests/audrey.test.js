@@ -76,6 +76,165 @@ describe('Audrey', () => {
     expect(Array.isArray(results)).toBe(true);
   });
 
+  it('returns encode diagnostics on the profiled path without changing encode()', async () => {
+    const plainId = await brain.encode({
+      content: 'plain encode diagnostics control',
+      source: 'direct-observation',
+    });
+    const profiled = await brain.encodeWithDiagnostics({
+      content: 'profiled encode diagnostics test',
+      source: 'direct-observation',
+    });
+
+    expect(typeof plainId).toBe('string');
+    expect(typeof profiled.id).toBe('string');
+    expect(profiled.diagnostics.operation).toBe('memory_encode');
+    expect(profiled.diagnostics.total_ms).toBeGreaterThanOrEqual(0);
+    expect(profiled.diagnostics.spans.map(span => span.name)).toEqual(
+      expect.arrayContaining([
+        'encode.ensure_migrated',
+        'encode.episode',
+        'encode.embedding',
+        'encode.write_episode',
+        'encode.enqueue_background',
+      ])
+    );
+  });
+
+  it('returns recall diagnostics on the profiled path without changing recall()', async () => {
+    await brain.encode({ content: 'profiled recall diagnostics test', source: 'direct-observation' });
+
+    const plainResults = await brain.recall('profiled recall diagnostics', { limit: 5 });
+    const profiled = await brain.recallWithDiagnostics('profiled recall diagnostics', { limit: 5 });
+
+    expect(Array.isArray(plainResults)).toBe(true);
+    expect(Array.isArray(profiled.results)).toBe(true);
+    expect(profiled.diagnostics.operation).toBe('memory_recall');
+    expect(profiled.diagnostics.total_ms).toBeGreaterThanOrEqual(0);
+    expect(profiled.diagnostics.spans.map(span => span.name)).toEqual(
+      expect.arrayContaining([
+        'recall.ensure_migrated',
+        'recall.embedding',
+        'recall.episodic_knn',
+        'recall.fts_lookup',
+        'recall.fuse_results',
+        'recall.result_guards',
+      ])
+    );
+  });
+
+  it('reuses the main encode vector for post-encode checks', async () => {
+    const embedSpy = vi.spyOn(brain.embeddingProvider, 'embed');
+
+    await brain.encode({
+      content: 'post-encode vector reuse test',
+      source: 'direct-observation',
+      affect: { valence: 0.2, arousal: 0.4 },
+    });
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    expect(embedSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('tracks queued post-encode work and waitForIdle drains it', async () => {
+    let releasePostEncode;
+    const postEncodeDone = new Promise(resolve => {
+      releasePostEncode = resolve;
+    });
+    brain._runPostEncode = vi.fn(async () => {
+      await postEncodeDone;
+    });
+
+    const id = await brain.encode({
+      content: 'queued post encode status test',
+      source: 'direct-observation',
+    });
+
+    expect(typeof id).toBe('string');
+    expect(brain.memoryStatus().pending_consolidation_count).toBe(1);
+
+    releasePostEncode();
+    await brain.waitForIdle();
+
+    expect(brain.memoryStatus().pending_consolidation_count).toBe(0);
+  });
+
+  it('waitForConsolidation waits for that row downstream work', async () => {
+    let releasePostEncode;
+    const postEncodeDone = new Promise(resolve => {
+      releasePostEncode = resolve;
+    });
+    let settled = false;
+    brain._runPostEncode = vi.fn(async () => {
+      await postEncodeDone;
+    });
+
+    const encodePromise = brain.encode({
+      content: 'wait for consolidation test',
+      source: 'direct-observation',
+      waitForConsolidation: true,
+    }).then(id => {
+      settled = true;
+      return id;
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    expect(brain.memoryStatus().pending_consolidation_count).toBe(1);
+
+    releasePostEncode();
+    const id = await encodePromise;
+
+    expect(typeof id).toBe('string');
+    expect(brain.memoryStatus().pending_consolidation_count).toBe(0);
+  });
+
+  it('tracks embedding warmup status', async () => {
+    expect(brain.memoryStatus().embedding_warm).toBe(false);
+    expect(brain.memoryStatus().warmup_duration_ms).toBeNull();
+
+    await brain.startEmbeddingWarmup();
+
+    const status = brain.memoryStatus();
+    expect(status.embedding_warm).toBe(true);
+    expect(status.warmup_duration_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('foreground encode waits for an in-flight embedding warmup', async () => {
+    const originalEmbed = brain.embeddingProvider.embed.bind(brain.embeddingProvider);
+    let releaseWarmup;
+    const warmupGate = new Promise(resolve => {
+      releaseWarmup = resolve;
+    });
+    vi.spyOn(brain.embeddingProvider, 'embed').mockImplementation(async text => {
+      if (text === 'warmup') {
+        await warmupGate;
+      }
+      return originalEmbed(text);
+    });
+
+    const warmup = brain.startEmbeddingWarmup();
+    let settled = false;
+    const encodePromise = brain.encode({
+      content: 'encode waits for warmup',
+      source: 'direct-observation',
+    }).then(id => {
+      settled = true;
+      return id;
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+
+    releaseWarmup();
+    await warmup;
+    const id = await encodePromise;
+
+    expect(typeof id).toBe('string');
+    expect(settled).toBe(true);
+    expect(brain.memoryStatus().embedding_warm).toBe(true);
+  });
+
   it('does not leave partial state when embedding fails during encode', async () => {
     brain.embeddingProvider = {
       ...brain.embeddingProvider,
@@ -108,7 +267,7 @@ describe('Audrey', () => {
   });
 
   // Skipped: _trackAsync / _pending are not yet implemented in the TS Audrey class.
-  // Planned in docs/plans/audrey-1.0-continuity-os-2026-04-22.md as part of correctness hardening.
+  // Planned as part of correctness hardening.
   it.skip('waitForIdle drains tracked background work', async () => {
     let releasePending;
     const pending = new Promise(resolve => {

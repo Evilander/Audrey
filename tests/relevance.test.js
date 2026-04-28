@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Skipped: implicit relevance feedback (markUsed/usage_count) is planned in docs/plans/audrey-1.0-continuity-os-2026-04-22.md as an input to the Memory-to-Behavior Compiler.
+// Skipped: implicit relevance feedback (markUsed/usage_count) is planned as an input to the Memory-to-Behavior Compiler.
 describe.skip('implicit relevance feedback', () => {
   let audrey;
   let dataDir;

@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Audrey } from '../src/index.js';
 import { readStoredDimensions } from '../src/db.js';
+import { isAudreyProfileEnabled, type ProfileDiagnostics } from '../src/profile.js';
 import type { AudreyConfig, EmbeddingProvider, IntrospectResult, MemoryStatusResult } from '../src/types.js';
 import {
   VERSION,
@@ -63,6 +64,11 @@ export async function initializeEmbeddingProvider(provider: EmbeddingProvider): 
   }
 }
 
+function isEmbeddingWarmupDisabled(env: Record<string, string | undefined> = process.env): boolean {
+  const value = env['AUDREY_DISABLE_WARMUP'];
+  return value === '1' || value?.toLowerCase() === 'true' || value?.toLowerCase() === 'yes';
+}
+
 export const memoryEncodeToolSchema = {
   content: z.string()
     .max(MAX_MEMORY_CONTENT_LENGTH)
@@ -80,6 +86,9 @@ export const memoryEncodeToolSchema = {
     label: z.string().optional().describe('Human-readable emotion label (e.g., "curiosity", "frustration", "relief")'),
   }).optional().describe('Emotional affect - how this memory feels'),
   private: z.boolean().optional().describe('If true, memory is only visible to the AI and excluded from public recall results'),
+  wait_for_consolidation: z.boolean().optional().describe(
+    'If true, wait for post-encode validation/interference/resonance work before returning. Defaults to false.'
+  ),
 };
 
 export const memoryRecallToolSchema = {
@@ -96,6 +105,9 @@ export const memoryRecallToolSchema = {
     valence: z.number().min(-1).max(1).describe('Current emotional valence: -1 (negative) to 1 (positive)'),
     arousal: z.number().min(0).max(1).optional().describe('Current arousal: 0 (calm) to 1 (activated)'),
   }).optional().describe('Current mood - boosts recall of memories encoded in similar emotional state'),
+  retrieval: z.enum(['hybrid', 'vector', 'hybrid_strict']).optional().describe(
+    'Retrieval strategy. hybrid is the default/current behavior; vector bypasses FTS/BM25 for lower latency but loses lexical exact-match signal; hybrid_strict runs full vector plus FTS fusion/reranking.'
+  ),
 };
 
 export const memoryImportToolSchema = {
@@ -1099,8 +1111,15 @@ function doctor(): void {
   }
 }
 
-function toolResult(data: unknown): { content: Array<{ type: 'text'; text: string }> } {
-  return { content: [{ type: 'text' as const, text: JSON.stringify(data) }] };
+function toolResult(
+  data: unknown,
+  diagnostics?: ProfileDiagnostics,
+): { content: Array<{ type: 'text'; text: string }>; _meta?: { diagnostics: ProfileDiagnostics } } {
+  const result: { content: Array<{ type: 'text'; text: string }>; _meta?: { diagnostics: ProfileDiagnostics } } = {
+    content: [{ type: 'text' as const, text: JSON.stringify(data) }],
+  };
+  if (diagnostics) result._meta = { diagnostics };
+  return result;
 }
 
 function toolError(err: unknown): { isError: boolean; content: Array<{ type: 'text'; text: string }> } {
@@ -1111,40 +1130,52 @@ export function registerShutdownHandlers(
   processRef: NodeJS.Process,
   audrey: Audrey,
   logger: (...args: unknown[]) => void = console.error,
-): (message?: string, exitCode?: number) => void {
+): (message?: string, exitCode?: number) => Promise<void> {
   let closed = false;
 
-  const shutdown = (message?: string, exitCode = 0): void => {
+  const shutdown = async (message?: string, exitCode = 0, shouldExit = true): Promise<void> => {
     if (message) {
       logger(message);
     }
     if (!closed) {
       closed = true;
       try {
+        if (typeof audrey.drainPostEncodeQueue === 'function') {
+          const drain = await audrey.drainPostEncodeQueue(5000);
+          if (!drain.drained && drain.pendingIds.length > 0) {
+            logger(
+              `[audrey-mcp] post-encode queue did not drain within 5000ms; `
+              + `pending ids: ${drain.pendingIds.join(', ')}`
+            );
+          }
+        }
         audrey.close();
       } catch (err) {
         logger(`[audrey-mcp] shutdown error: ${(err as Error).message || String(err)}`);
         exitCode = exitCode === 0 ? 1 : exitCode;
       }
     }
-    if (typeof processRef.exit === 'function') {
+    if (shouldExit && typeof processRef.exit === 'function') {
       processRef.exit(exitCode);
     }
   };
 
-  processRef.once('SIGINT', () => shutdown('[audrey-mcp] received SIGINT, shutting down'));
-  processRef.once('SIGTERM', () => shutdown('[audrey-mcp] received SIGTERM, shutting down'));
-  processRef.once('SIGHUP', () => shutdown('[audrey-mcp] received SIGHUP, shutting down'));
+  processRef.once('SIGINT', () => { void shutdown('[audrey-mcp] received SIGINT, shutting down'); });
+  processRef.once('SIGTERM', () => { void shutdown('[audrey-mcp] received SIGTERM, shutting down'); });
+  processRef.once('SIGHUP', () => { void shutdown('[audrey-mcp] received SIGHUP, shutting down'); });
   processRef.once('uncaughtException', (err: Error) => {
     logger('[audrey-mcp] uncaught exception:', err);
-    shutdown(undefined, 1);
+    void shutdown(undefined, 1);
   });
   processRef.once('unhandledRejection', (reason: unknown) => {
     logger('[audrey-mcp] unhandled rejection:', reason);
-    shutdown(undefined, 1);
+    void shutdown(undefined, 1);
+  });
+  processRef.once('beforeExit', () => {
+    void shutdown(undefined, 0, false);
   });
 
-  return shutdown;
+  return (message?: string, exitCode = 0) => shutdown(message, exitCode);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1180,6 +1211,7 @@ async function main(): Promise<void> {
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
   const config = buildAudreyConfig();
   const audrey = new Audrey(config);
+  const profileEnabled = isAudreyProfileEnabled(process.env);
 
   const embLabel = config.embedding?.provider === 'mock'
     ? 'mock embeddings - set OPENAI_API_KEY for real semantic search'
@@ -1191,10 +1223,41 @@ async function main(): Promise<void> {
     version: VERSION,
   });
 
-  server.tool('memory_encode', memoryEncodeToolSchema, async ({ content, source, tags, salience, private: isPrivate, context, affect }) => {
+  server.tool('memory_encode', memoryEncodeToolSchema, async ({
+    content,
+    source,
+    tags,
+    salience,
+    private: isPrivate,
+    context,
+    affect,
+    wait_for_consolidation,
+  }) => {
     try {
       validateMemoryContent(content);
-      const id = await audrey.encode({ content, source, tags, salience, private: isPrivate, context, affect });
+      if (profileEnabled) {
+        const { id, diagnostics } = await audrey.encodeWithDiagnostics({
+          content,
+          source,
+          tags,
+          salience,
+          private: isPrivate,
+          context,
+          affect,
+          waitForConsolidation: wait_for_consolidation,
+        });
+        return toolResult({ id, content, source, private: isPrivate ?? false }, diagnostics);
+      }
+      const id = await audrey.encode({
+        content,
+        source,
+        tags,
+        salience,
+        private: isPrivate,
+        context,
+        affect,
+        waitForConsolidation: wait_for_consolidation,
+      });
       return toolResult({ id, content, source, private: isPrivate ?? false });
     } catch (err) {
       return toolError(err);
@@ -1212,9 +1275,10 @@ async function main(): Promise<void> {
     before,
     context,
     mood,
+    retrieval,
   }) => {
     try {
-      const results = await audrey.recall(query, {
+      const recallOptions = {
         limit: limit ?? 10,
         types,
         minConfidence: min_confidence,
@@ -1224,7 +1288,13 @@ async function main(): Promise<void> {
         before,
         context,
         mood,
-      });
+        retrieval,
+      };
+      if (profileEnabled) {
+        const { results, diagnostics } = await audrey.recallWithDiagnostics(query, recallOptions);
+        return toolResult(results, diagnostics);
+      }
+      const results = await audrey.recall(query, recallOptions);
       return toolResult(results);
     } catch (err) {
       return toolError(err);
@@ -1569,6 +1639,16 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('[audrey-mcp] connected via stdio');
+  if (!isEmbeddingWarmupDisabled(process.env)) {
+    void audrey.startEmbeddingWarmup()
+      .then(() => {
+        const status = audrey.memoryStatus();
+        console.error(`[audrey-mcp] embedding warmup completed in ${status.warmup_duration_ms ?? 0}ms`);
+      })
+      .catch(err => {
+        console.error(`[audrey-mcp] embedding warmup failed: ${(err as Error).message || String(err)}`);
+      });
+  }
   registerShutdownHandlers(process, audrey);
 }
 

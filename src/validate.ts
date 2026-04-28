@@ -31,16 +31,21 @@ export async function validateMemory(
     threshold?: number;
     contradictionThreshold?: number;
     llmProvider?: LLMProvider | null;
+    embeddingVector?: number[];
+    embeddingBuffer?: Buffer;
   } = {},
 ): Promise<ValidateResult> {
   const {
     threshold = REINFORCEMENT_THRESHOLD,
     contradictionThreshold = CONTRADICTION_THRESHOLD,
     llmProvider,
+    embeddingVector,
+    embeddingBuffer,
   } = options;
 
-  const episodeVector = await embeddingProvider.embed(episode.content);
-  const episodeBuffer = embeddingProvider.vectorToBuffer(episodeVector);
+  const episodeBuffer = embeddingBuffer ?? embeddingProvider.vectorToBuffer(
+    embeddingVector ?? await embeddingProvider.embed(episode.content)
+  );
 
   const nearestSemantic = db.prepare(`
     SELECT s.*, (1.0 - v.distance) AS similarity

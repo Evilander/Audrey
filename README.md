@@ -209,8 +209,6 @@ Production controls you still own:
 - Run `npx audrey dream` on a schedule so consolidation and decay stay current.
 - Add application-level encryption, retention, access control, and audit logging for regulated environments.
 
-Read the full guide: [docs/production-readiness.md](docs/production-readiness.md).
-
 ## Benchmarks
 
 Audrey ships with a benchmark harness and release gate:
@@ -224,7 +222,7 @@ Current repo snapshot:
 
 ![Audrey local benchmark](docs/assets/benchmarks/local-benchmark.svg)
 
-The benchmark suite covers retrieval behavior, overwrite behavior, delete/abstain behavior, and semantic/procedural merge behavior. For methodology and comparison anchors, see [docs/benchmarking.md](docs/benchmarking.md).
+The benchmark suite covers retrieval behavior, overwrite behavior, delete/abstain behavior, and semantic/procedural merge behavior.
 
 ## Command Reference
 
@@ -257,13 +255,8 @@ docker compose up -d --build
 
 ## Documentation
 
-- [Audrey for Dummies](docs/audrey-for-dummies.md)
-- [MCP host guide](docs/mcp-hosts.md)
-- [Ollama and local agents](docs/ollama-local-agents.md)
-- [Production readiness](docs/production-readiness.md)
-- [Future of LLM memory](docs/future-of-llm-memory.md)
-- [Benchmarking](docs/benchmarking.md)
 - [Security policy](SECURITY.md)
+- Public setup, runtime, benchmark, and command guidance is maintained in this README.
 
 ## Development
 
