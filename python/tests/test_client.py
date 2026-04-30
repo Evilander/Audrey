@@ -83,26 +83,26 @@ class AudreyClientUnitTests(unittest.TestCase):
 
 class AudreyAsyncClientUnitTests(unittest.IsolatedAsyncioTestCase):
     async def test_async_client_parses_recall_response(self) -> None:
+        # The TS server's POST /v1/recall returns a bare list of RecallResult.
+        # The Python client wraps it into RecallResponse client-side. Pre-fix,
+        # this test handler returned a {results: [...]} object — that matched
+        # the Python types but did not match what the server actually sends.
         def handler(request: httpx.Request) -> httpx.Response:
             payload = json.loads(request.content.decode("utf-8"))
             self.assertEqual(payload["query"], "stripe rate limits")
             self.assertEqual(payload["limit"], 2)
             return httpx.Response(
                 200,
-                json={
-                    "results": [
-                        {
-                            "id": "mem_1",
-                            "content": "Stripe returns HTTP 429 above 100 req/s",
-                            "type": "episodic",
-                            "confidence": 0.92,
-                            "score": 0.88,
-                            "source": "direct-observation",
-                        }
-                    ],
-                    "partialFailure": False,
-                    "errors": [],
-                },
+                json=[
+                    {
+                        "id": "mem_1",
+                        "content": "Stripe returns HTTP 429 above 100 req/s",
+                        "type": "episodic",
+                        "confidence": 0.92,
+                        "score": 0.88,
+                        "source": "direct-observation",
+                    }
+                ],
             )
 
         client = AsyncAudrey(

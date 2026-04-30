@@ -3,7 +3,71 @@
 Generated: 2026-04-30 by /superskills:production-autopilot pass.
 Source agents: ultrareview (10 reviewers), security-sentinel, bug-hunter,
 performance-oracle, architecture-strategist, adversary, plus 4 research
-agents (arXiv/HF, competitive, deps, user research).
+agents (arXiv/HF, competitive, deps, user research). Strategic frame
+contributed by Tyler in-session (the "memory before action" wedge).
+
+## The wedge (Tyler's harder framing, 2026-04-30)
+
+Audrey's real shot is not "another AI memory framework." That category is
+crowded, benchmark-dominated, and increasingly backed by teams with cloud
+products, papers, plugins, connectors, and serious distribution.
+
+Audrey's real shot is sharper:
+
+> **Audrey is the local-first memory firewall and reflex layer for agents
+> before they touch tools.** Memory before action.
+
+That framing is commercially legible in a way "memory control plane" isn't.
+A coding agent that forgets your repo setup is annoying. An agent that
+repeats a destructive command, retries a broken deployment path, leaks a
+secret into memory, or ignores a known customer workflow is **expensive.**
+Audrey should own that pain.
+
+What this means for the roadmap:
+
+1. **Stop fighting head-on for "best generic memory."** Don't chase mem0's
+   LongMemEval leaderboard climb, Cognee's connector breadth, or
+   Supermemory's multimodal extractors. Those are arms races Audrey loses.
+2. **Lean into preflight + reflexes + tool-trace as the product.** The
+   repo already has all three (`/v1/preflight`, `/v1/reflexes`,
+   `/v1/encode` with redacted tool-trace). They're currently positioned as
+   features. They should be the headline.
+3. **The killer demo is not "Audrey remembers your favorite color."** It's
+   "Codex is about to run a command that previously broke this repo. Audrey
+   catches it, explains why, shows the evidence, and suggests the safe
+   path." Even better: "Audrey catches the error once, learns the rule,
+   writes a Memory Capsule, converts it into a reflex, and later promotes
+   the lesson into a project rule." That's the loop that gets retweeted.
+4. **First market: developers and small technical teams running multiple
+   agents locally.** Not enterprise governance. Not consumer. Not
+   regulated industries first. The audience that already feels the pain —
+   Claude Code + Codex + Cursor + Ollama users who hate re-explaining repo
+   quirks and watching their agents repeat failed commands.
+5. **Pricing math (devtool norms):**
+   - 2,000 developers × $49/mo = ~$1.18M ARR
+   - 1,000 small teams × $99/mo = ~$1.19M ARR
+   - 200 serious teams × $500/mo = ~$1.20M ARR
+   The hard part is making Audrey trusted enough that teams *depend* on it.
+6. **OSS keeps the trust. Paid tier ships:** dashboard, memory diff/rollback,
+   policy editor, team scopes, audit log, encrypted stores, benchmark runner,
+   hosted relay for remote agents, signed memory passport bundles, CI gates,
+   integrations + support.
+
+## What this autopilot already shipped against the wedge
+
+- Closed 2 critical + 4 high security findings (privacy-ACL leak, LAN bind,
+  timing-safe auth, promote project_dir guard, doctor serve-bind-safety).
+  Audrey can't be a "firewall" if its own surface leaks.
+- Fixed 4 SDK contract drift bugs (Python URL default `3487`→`7437`,
+  `/v1/recall` array shape, `/v1/import` snapshot-wrap, removed false
+  README claim about `/openapi.json` and `/docs`). Tyler's harder
+  assessment called these out by name as "the kind of thing that kills
+  trust in an SDK. Fix this before chasing more architecture." Done.
+- First-contact UX cleanup (help/version, ONNX silence, boot-log gating)
+  removed the #1 evaluator-bounce trigger.
+- close-on-pending-work race fixed (data integrity for the firewall
+  promise; can't market "checks before tools act" if encode→close drops
+  consolidation work).
 
 This is the work that did **not** ship in the 0.22.1 release because it
 was outside the 2-hour autopilot window. Items are scoped, prioritized,
