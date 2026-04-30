@@ -191,13 +191,20 @@ class Audrey:
         return _validate(OperationResult, data)
 
     def mark_used(self, memory_id: str) -> AckResponse:
-        # Not yet exposed by the TypeScript REST sidecar. Tracked as P0#1
-        # in docs/PRODUCTION_BACKLOG.md (closed-loop memory_validate primitive).
-        del memory_id
-        raise NotImplementedError(
-            "audrey.mark_used() requires /v1/mark-used on the REST sidecar, "
-            "which is not yet implemented. See docs/PRODUCTION_BACKLOG.md (P0#1)."
-        )
+        request = MarkUsedRequest(id=memory_id)
+        data = _decode_json(self._client.post("/v1/mark-used", json=_dump_payload(request)))
+        return _validate(AckResponse, data)
+
+    def validate(self, memory_id: str, outcome: str = "used") -> dict[str, Any]:
+        """Closed-loop feedback. outcome ∈ {"used","helpful","wrong"}.
+
+        "helpful" reinforces salience and retrieval. "wrong" decreases
+        salience and bumps challenge_count for semantic memories. "used"
+        is a neutral signal that the memory was referenced.
+        """
+        if outcome not in ("used", "helpful", "wrong"):
+            raise ValueError(f"outcome must be used|helpful|wrong, got {outcome!r}")
+        return _decode_json(self._client.post("/v1/validate", json={"id": memory_id, "outcome": outcome}))
 
     def forget(
         self,
@@ -301,11 +308,15 @@ class AsyncAudrey:
         return _validate(OperationResult, data)
 
     async def mark_used(self, memory_id: str) -> AckResponse:
-        del memory_id
-        raise NotImplementedError(
-            "audrey.mark_used() requires /v1/mark-used on the REST sidecar, "
-            "which is not yet implemented. See docs/PRODUCTION_BACKLOG.md (P0#1)."
-        )
+        request = MarkUsedRequest(id=memory_id)
+        data = _decode_json(await self._client.post("/v1/mark-used", json=_dump_payload(request)))
+        return _validate(AckResponse, data)
+
+    async def validate(self, memory_id: str, outcome: str = "used") -> dict[str, Any]:
+        """Closed-loop feedback. See sync validate()."""
+        if outcome not in ("used", "helpful", "wrong"):
+            raise ValueError(f"outcome must be used|helpful|wrong, got {outcome!r}")
+        return _decode_json(await self._client.post("/v1/validate", json={"id": memory_id, "outcome": outcome}))
 
     async def forget(
         self,

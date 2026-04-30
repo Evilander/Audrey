@@ -36,6 +36,7 @@ import { runConsolidation } from './consolidate.js';
 import { applyDecay } from './decay.js';
 import { rollbackConsolidation, getConsolidationHistory } from './rollback.js';
 import { forgetMemory, forgetByQuery as forgetByQueryFn, purgeMemories } from './forget.js';
+import { applyFeedback, type MemoryValidateInput, type MemoryValidateResult } from './feedback.js';
 import { introspect as introspectFn } from './introspect.js';
 import { buildContextResolutionPrompt, buildReflectionPrompt } from './prompts.js';
 import { exportMemories } from './export.js';
@@ -835,6 +836,12 @@ export class Audrey extends EventEmitter {
 
   suggestConsolidationParams(): { minClusterSize: number; similarityThreshold: number; confidence: string } {
     return suggestParamsFn(this.db);
+  }
+
+  validate(input: MemoryValidateInput): MemoryValidateResult | null {
+    const result = applyFeedback(this.db, input);
+    if (result) this.emit('validate', result);
+    return result;
   }
 
   forget(id: string, options: { purge?: boolean } = {}): ForgetResult {

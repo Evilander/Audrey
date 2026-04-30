@@ -1801,3 +1801,93 @@ describe('export/import roundtrip', () => {
     }
   });
 });
+
+describe('Audrey closed-loop feedback (memory_validate)', () => {
+  let brain;
+  const TEST_DIR = './test-validate';
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'validate-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('returns null when validating an unknown id', () => {
+    const result = brain.validate({ id: 'not-a-real-id', outcome: 'helpful' });
+    expect(result).toBeNull();
+  });
+
+  it("'helpful' bumps an episodic memory's salience and usage_count", async () => {
+    const id = await brain.encode({
+      content: 'Stripe rate limit observation',
+      source: 'direct-observation',
+      salience: 0.5,
+    });
+
+    const result = brain.validate({ id, outcome: 'helpful' });
+    expect(result).not.toBeNull();
+    expect(result.id).toBe(id);
+    expect(result.type).toBe('episodic');
+    expect(result.outcome).toBe('helpful');
+    expect(result.salience).toBeGreaterThan(0.5);
+    expect(result.usageCount).toBe(1);
+  });
+
+  it("'wrong' decreases salience and is clamped at 0", async () => {
+    const id = await brain.encode({
+      content: 'Test memory',
+      source: 'told-by-user',
+      salience: 0.05,  // start near floor
+    });
+
+    const result = brain.validate({ id, outcome: 'wrong' });
+    expect(result.salience).toBe(0);  // clamped, not negative
+    expect(result.usageCount).toBe(1);
+  });
+
+  it('repeated helpful calls compound salience, with ceiling at 1.0', async () => {
+    const id = await brain.encode({
+      content: 'Repeatedly validated memory',
+      source: 'direct-observation',
+      salience: 0.9,
+    });
+
+    let last = null;
+    for (let i = 0; i < 10; i++) {
+      last = brain.validate({ id, outcome: 'helpful' });
+    }
+    expect(last.salience).toBe(1.0);  // clamped at ceiling
+    expect(last.usageCount).toBe(10);
+  });
+
+  it('emits a "validate" event with the result', async () => {
+    const id = await brain.encode({
+      content: 'Event-emitting memory',
+      source: 'direct-observation',
+    });
+    const events = [];
+    brain.on('validate', evt => events.push(evt));
+
+    const result = brain.validate({ id, outcome: 'used' });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(result);
+  });
+
+  it("'used' is a smaller delta than 'helpful'", async () => {
+    const idA = await brain.encode({ content: 'memory A', source: 'direct-observation', salience: 0.5 });
+    const idB = await brain.encode({ content: 'memory B', source: 'direct-observation', salience: 0.5 });
+
+    const usedResult = brain.validate({ id: idA, outcome: 'used' });
+    const helpfulResult = brain.validate({ id: idB, outcome: 'helpful' });
+
+    expect(helpfulResult.salience).toBeGreaterThan(usedResult.salience);
+  });
+});

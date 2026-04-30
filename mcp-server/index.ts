@@ -131,6 +131,13 @@ export const memoryForgetToolSchema = {
   purge: z.boolean().optional().describe('Hard-delete the memory permanently (default false, soft-delete)'),
 };
 
+export const memoryValidateToolSchema = {
+  id: z.string().describe('ID of the memory to validate'),
+  outcome: z.enum(['used', 'helpful', 'wrong']).describe(
+    'How the memory played out: "used" (referenced without obvious value), "helpful" (drove a correct action — reinforces salience and retrieval), "wrong" (memory was misleading — bumps challenge_count and decreases salience).',
+  ),
+};
+
 export const memoryPreflightToolSchema = {
   action: z.string()
     .refine(isNonEmptyText, 'Action must not be empty')
@@ -1395,6 +1402,16 @@ async function main(): Promise<void> {
         }
       }
       return toolResult({ forgotten: true, ...result });
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+
+  server.tool('memory_validate', memoryValidateToolSchema, async ({ id, outcome }) => {
+    try {
+      const result = audrey.validate({ id, outcome });
+      if (!result) return toolResult({ validated: false, reason: `No memory found with id ${id}` });
+      return toolResult({ validated: true, ...result });
     } catch (err) {
       return toolError(err);
     }
