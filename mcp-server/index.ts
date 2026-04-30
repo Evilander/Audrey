@@ -1036,6 +1036,29 @@ export function buildDoctorReport({
     addDoctorCheck(checks, 'host-config-generation', false, 'error', message);
   }
 
+  const serveHost = env.AUDREY_HOST;
+  const serveAuth = env.AUDREY_API_KEY;
+  const serveAllowNoAuth = env.AUDREY_ALLOW_NO_AUTH === '1';
+  const isLoopback = !serveHost || serveHost === '127.0.0.1' || serveHost === '::1' || serveHost === 'localhost';
+  if (!isLoopback && !serveAuth && !serveAllowNoAuth) {
+    addDoctorCheck(
+      checks, 'serve-bind-safety', false, 'error',
+      `AUDREY_HOST=${serveHost} without AUDREY_API_KEY — REST sidecar will refuse to start.`,
+      'Set AUDREY_API_KEY (recommended) or AUDREY_ALLOW_NO_AUTH=1.',
+    );
+  } else if (!isLoopback && !serveAuth && serveAllowNoAuth) {
+    addDoctorCheck(
+      checks, 'serve-bind-safety', false, 'warning',
+      `AUDREY_HOST=${serveHost} without auth (AUDREY_ALLOW_NO_AUTH=1) — anyone on this network can read or modify memories.`,
+      'Set AUDREY_API_KEY=<token> instead of AUDREY_ALLOW_NO_AUTH.',
+    );
+  } else {
+    addDoctorCheck(
+      checks, 'serve-bind-safety', true, 'info',
+      isLoopback ? 'loopback only' : 'non-loopback bind with API key',
+    );
+  }
+
   const ok = checks.every(check => check.ok || check.severity !== 'error');
   return {
     generatedAt: new Date().toISOString(),
