@@ -105,8 +105,8 @@ export const memoryRecallToolSchema = {
     valence: z.number().min(-1).max(1).describe('Current emotional valence: -1 (negative) to 1 (positive)'),
     arousal: z.number().min(0).max(1).optional().describe('Current arousal: 0 (calm) to 1 (activated)'),
   }).optional().describe('Current mood - boosts recall of memories encoded in similar emotional state'),
-  retrieval: z.enum(['hybrid', 'vector', 'hybrid_strict']).optional().describe(
-    'Retrieval strategy. hybrid is the default/current behavior; vector bypasses FTS/BM25 for lower latency but loses lexical exact-match signal; hybrid_strict runs full vector plus FTS fusion/reranking.'
+  retrieval: z.enum(['hybrid', 'vector']).optional().describe(
+    'Retrieval strategy. hybrid is the default (vector + FTS/BM25 fusion); vector bypasses FTS for lower latency but loses lexical exact-match signal.'
   ),
 };
 

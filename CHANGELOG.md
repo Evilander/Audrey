@@ -12,7 +12,7 @@
 ### Added
 
 - Added `memory_encode.wait_for_consolidation` parameter, default `false`, for opt-in read-after-write semantics.
-- Added `memory_recall.retrieval` parameter with `"hybrid"` default, `"vector"`, and `"hybrid_strict"` modes.
+- Added `memory_recall.retrieval` parameter with `"hybrid"` default and `"vector"` (FTS-bypass fast path).
 - Added `pending_consolidation_count`, `embedding_warm`, `warmup_duration_ms`, and `default_retrieval_mode` to `memory_status`.
 - Added background embedding pipeline warmup after MCP `server.connect()`.
 - Added `AUDREY_PROFILE=1` for per-stage timings in MCP `_meta.diagnostics`.

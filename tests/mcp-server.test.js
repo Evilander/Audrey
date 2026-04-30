@@ -35,13 +35,14 @@ import {
   runStatusCommand,
   validateForgetSelection,
 } from '../dist/mcp-server/index.js';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 
 const TEST_DIR = './test-mcp-server';
 
 describe('MCP config', () => {
-  it('VERSION is 0.21.0', () => {
-    expect(VERSION).toBe('0.21.0');
+  it('VERSION matches package.json', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    expect(VERSION).toBe(pkg.version);
   });
 });
 
@@ -302,8 +303,8 @@ describe('MCP validation hardening', () => {
     const schema = z.object(memoryRecallToolSchema);
     expect(schema.safeParse({ query: 'test', retrieval: 'hybrid' }).success).toBe(true);
     expect(schema.safeParse({ query: 'test', retrieval: 'vector' }).success).toBe(true);
-    expect(schema.safeParse({ query: 'test', retrieval: 'hybrid_strict' }).success).toBe(true);
     expect(schema.safeParse({ query: 'test', retrieval: 'keyword' }).success).toBe(false);
+    expect(schema.safeParse({ query: 'test', retrieval: 'hybrid_strict' }).success).toBe(false);
   });
 
   it('memory_encode accepts wait_for_consolidation', () => {

@@ -314,10 +314,6 @@ export class Audrey extends EventEmitter {
     }
   }
 
-  _emitValidation(id: string, params: EncodeParams, embedding?: EncodedEmbedding): void {
-    this._validateEncodedMemory(id, params, embedding).catch(err => this.emit('error', err));
-  }
-
   async _runPostEncodeStage(name: string, run: () => Promise<void>): Promise<void> {
     try {
       await run();
@@ -383,6 +379,10 @@ export class Audrey extends EventEmitter {
   }
 
   _emitQueueError(err: unknown): void {
+    const stage = (err as { stage?: string })?.stage;
+    const prefix = stage ? `[audrey:post-encode:${stage}]` : '[audrey:post-encode]';
+    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    console.error(`${prefix} ${message}`);
     if (this.listenerCount('error') > 0) {
       this.emit('error', err);
     }
@@ -502,16 +502,28 @@ export class Audrey extends EventEmitter {
   }
 
   async encodeBatch(paramsList: EncodeParams[]): Promise<string[]> {
+    await this._waitForEmbeddingWarmup();
     await this._ensureMigrated();
     const ids: string[] = [];
+    const tasks: Array<Promise<void>> = [];
     for (const params of paramsList) {
-      const id = await encodeEpisode(this.db, this.embeddingProvider, params);
+      const encodeParams = { ...params, arousalWeight: this.affectConfig.arousalWeight };
+      let encodedVector: number[] | undefined;
+      let encodedBuffer: Buffer | undefined;
+      const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
+        onVector: (vector, buffer) => {
+          encodedVector = vector;
+          encodedBuffer = buffer;
+        },
+      });
       ids.push(id);
       this.emit('encode', { id, ...params });
+      const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
+      tasks.push(this._enqueuePostEncode(id, params, encodedEmbedding));
     }
 
-    for (let i = 0; i < ids.length; i++) {
-      this._emitValidation(ids[i]!, paramsList[i]!);
+    if (paramsList.some(p => p.waitForConsolidation)) {
+      await Promise.all(tasks);
     }
 
     return ids;
