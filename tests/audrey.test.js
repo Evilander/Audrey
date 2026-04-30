@@ -159,6 +159,51 @@ describe('Audrey', () => {
     expect(brain.memoryStatus().pending_consolidation_count).toBe(0);
   });
 
+  it('closeAsync drains the post-encode queue before closing the database', async () => {
+    let releasePostEncode;
+    const postEncodeDone = new Promise(resolve => { releasePostEncode = resolve; });
+    let postEncodeCompleted = false;
+    const originalRunPostEncode = brain._runPostEncode.bind(brain);
+    brain._runPostEncode = vi.fn(async (...args) => {
+      await postEncodeDone;
+      postEncodeCompleted = true;
+      return originalRunPostEncode(...args);
+    });
+
+    await brain.encode({ content: 'pre-close encode', source: 'direct-observation' });
+    expect(brain.memoryStatus().pending_consolidation_count).toBe(1);
+
+    // Race: caller invokes closeAsync while a post-encode task is in flight.
+    // closeAsync must wait for the queue to drain before closing the DB.
+    const closePromise = brain.closeAsync();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(postEncodeCompleted).toBe(false);  // still draining
+
+    releasePostEncode();
+    const result = await closePromise;
+    expect(postEncodeCompleted).toBe(true);
+    expect(result?.drained).toBe(true);
+  });
+
+  it('close() warns when called with pending post-encode work', async () => {
+    let releasePostEncode;
+    brain._runPostEncode = vi.fn(async () => {
+      await new Promise(resolve => { releasePostEncode = resolve; });
+    });
+    await brain.encode({ content: 'sync close warn', source: 'direct-observation' });
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      brain.close();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('called with 1 pending post-encode tasks'),
+      );
+    } finally {
+      errorSpy.mockRestore();
+      releasePostEncode?.();
+    }
+  });
+
   it('waitForConsolidation waits for that row downstream work', async () => {
     let releasePostEncode;
     const postEncodeDone = new Promise(resolve => {
