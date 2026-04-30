@@ -24,6 +24,7 @@ import {
   initializeEmbeddingProvider,
   memoryEncodeToolSchema,
   memoryForgetToolSchema,
+  memoryValidateToolSchema,
   memoryImportToolSchema,
   memoryPreflightToolSchema,
   memoryRecallToolSchema,
@@ -403,6 +404,15 @@ describe('MCP validation hardening', () => {
       'min_similarity',
       'purge',
     ]);
+  });
+
+  it('memory_validate accepts the closed-loop outcome enum', () => {
+    const schema = z.object(memoryValidateToolSchema);
+    expect(schema.safeParse({ id: 'mem_1', outcome: 'helpful' }).success).toBe(true);
+    expect(schema.safeParse({ id: 'mem_1', outcome: 'used' }).success).toBe(true);
+    expect(schema.safeParse({ id: 'mem_1', outcome: 'wrong' }).success).toBe(true);
+    expect(schema.safeParse({ id: 'mem_1', outcome: 'maybe' }).success).toBe(false);
+    expect(schema.safeParse({ outcome: 'helpful' }).success).toBe(false);  // id required
   });
 });
 

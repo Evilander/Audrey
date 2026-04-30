@@ -75,16 +75,20 @@ and traceable back to the agent that surfaced them.
 
 ## P0 — required to clear the autopilot rubric (ALIVE 4 → 7+, MONEY 3 → 7+, ORIGINAL 7 → 9)
 
-### 1. Closed feedback loop: `memory_validate(id, outcome)` + retrieval reinforcement
+### 1. Closed feedback loop: `memory_validate(id, outcome)` + retrieval reinforcement ✅ **SHIPPED in 0.22.1**
 - **Source**: adversary review (5/5 dimensions point at this)
-- **Why it's the wedge**: Audrey today stores and decays. It does not learn from being used. The math already exists in `src/confidence.ts` (`retrievalReinforcement`); the missing piece is a feedback channel that closes the loop. No competitor has shipped this.
-- **Concrete shape**:
-  - New MCP tool `memory_validate(id, outcome: 'used' | 'helpful' | 'wrong')`.
-  - Hooks into existing `confidence.retrievalReinforcement` so 'helpful' marks reinforce above the spaced-repetition baseline.
-  - 'wrong' marks demote (don't delete) and surface in `audrey introspect --weakest`.
-  - New `audrey impact` CLI command: "23 memories validated this week, 14 reflexes prevented known-bad actions, 3 procedures auto-promoted."
-- **Demo asset**: 90-second screencast — clean SQLite, 7 days of agent work, day-7 `audrey impact` output. This is the clip that gets retweeted.
-- **Effort**: 2 days code + 1 day demo capture.
+- **Why it was the wedge**: Audrey stored and decayed but didn't learn from being used. The math already lived in `src/confidence.ts`; the missing piece was a feedback channel that closed the loop.
+- **What shipped (commit on `autopilot/v0.22.x-production-pass`)**:
+  - New `src/feedback.ts` module with `applyFeedback()` primitive (kept out of `audrey.ts` per architecture review).
+  - `Audrey.validate({ id, outcome })` SDK method emits `'validate'` event.
+  - MCP tool `memory_validate(id, outcome: 'used' | 'helpful' | 'wrong')`.
+  - REST endpoints `POST /v1/validate` (canonical) and `POST /v1/mark-used` (legacy alias).
+  - Python client `validate()` + re-wired `mark_used()` (no longer `NotImplementedError`).
+  - 10 new tests (6 SDK math, 1 MCP enum, 3 HTTP including 404 path).
+- **Still to do (deferred)**:
+  - `audrey impact` CLI command — "X reflexes prevented known-bad actions this week, Y procedures auto-promoted." This is the marketing surface; the underlying data is now there but the report tool isn't wired.
+  - 90-second demo screencast: clean SQLite, 7 days of agent work, day-7 `audrey impact` output. This is the clip that gets retweeted.
+  - "weakest memories" surface in `audrey introspect --weakest` so wrong-validations are visible to humans.
 
 ### 2. Publish benchmark numbers (LongMemEval / LoCoMo / MemoryAgentBench)
 - **Source**: arXiv research (#3) + competitive analysis (#1) + architecture review (P0)

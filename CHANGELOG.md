@@ -2,6 +2,20 @@
 
 ## 0.22.1 - Unreleased
 
+### Added — closed-loop feedback (the "memory before action" wedge)
+
+- New `memory_validate(id, outcome)` MCP tool. `outcome` is one of:
+  - `"helpful"` — the recalled memory drove a correct action. Reinforces salience and bumps `retrieval_count` for semantic/procedural rows.
+  - `"wrong"` — the memory was misleading. Decreases salience and bumps `challenge_count` for semantic memories.
+  - `"used"` — neutral signal that the memory was referenced (smaller salience delta than `helpful`).
+- New REST endpoints `POST /v1/validate` (canonical) and `POST /v1/mark-used` (legacy alias defaulting to `outcome=used`).
+- New `Audrey.validate({ id, outcome })` SDK method emits a `'validate'` event so consumers can audit feedback flow.
+- New `src/feedback.ts` module with the `applyFeedback()` primitive — kept out of `audrey.ts` per architecture review (god-class concern).
+- Python client `mark_used()` is no longer a `NotImplementedError`; calls `/v1/mark-used`. New `validate(memory_id, outcome="used"|"helpful"|"wrong")` method on both sync and async clients.
+- 10 new tests (6 SDK math, 1 MCP enum, 3 HTTP roundtrip including 404 path).
+
+This is the P0#1 item from `docs/PRODUCTION_BACKLOG.md` — the closed feedback loop that lifts the autopilot rubric's ALIVE dimension from 4 to 7+. The math reuses the existing `confidence.ts` reinforcement formula; the new column work is a no-op (`usage_count` and `last_used_at` were already added by migration 10 in v0.21).
+
 ### Security
 
 - HTTP `/v1/recall` and `/v1/capsule` no longer body-spread caller options into `audrey.recall()`. Pre-fix, `includePrivate: true` and `confidenceConfig` overrides could be passed in HTTP bodies, bypassing the private-memory ACL and integrity controls. The new `sanitizeRecallOptions()` allowlist drops anything not in a known-safe key set.

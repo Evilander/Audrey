@@ -282,6 +282,57 @@ describe('HTTP API', () => {
     expect((await baseline.json()).map(r => r.id)).toEqual((await tampered.json()).map(r => r.id));
   });
 
+  it('POST /v1/validate adjusts salience and returns the new state', async () => {
+    const encodeRes = await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'closed-loop test memory', source: 'direct-observation', salience: 0.5 }),
+    });
+    const { id } = await encodeRes.json();
+
+    const validateRes = await app.request('/v1/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, outcome: 'helpful' }),
+    });
+    expect(validateRes.status).toBe(200);
+    const body = await validateRes.json();
+    expect(body.ok).toBe(true);
+    expect(body.id).toBe(id);
+    expect(body.type).toBe('episodic');
+    expect(body.salience).toBeGreaterThan(0.5);
+    expect(body.usageCount).toBe(1);
+  });
+
+  it('POST /v1/validate returns 404 for unknown id', async () => {
+    const res = await app.request('/v1/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'nonexistent_id', outcome: 'helpful' }),
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+  });
+
+  it('POST /v1/mark-used is the legacy alias defaulting outcome to "used"', async () => {
+    const encodeRes = await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'mark-used legacy test', source: 'direct-observation' }),
+    });
+    const { id } = await encodeRes.json();
+
+    const res = await app.request('/v1/mark-used', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
   it('POST /v1/recall accepts allowlisted retrieval mode but rejects keyword', async () => {
     const r1 = await app.request('/v1/recall', {
       method: 'POST',

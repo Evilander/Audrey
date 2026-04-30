@@ -179,6 +179,41 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
+  // POST /v1/validate — closed-loop feedback. Agents tell Audrey how a
+  // recalled memory played out (used | helpful | wrong) and Audrey nudges
+  // salience + retrieval bookkeeping accordingly.
+  app.post('/v1/validate', async (c) => {
+    try {
+      const body = await c.req.json();
+      const id = typeof body.id === 'string' ? body.id : null;
+      if (!id) return c.json({ error: 'id is required' }, 400);
+      const outcome = body.outcome === 'used' || body.outcome === 'helpful' || body.outcome === 'wrong'
+        ? body.outcome
+        : 'used';
+      const result = audrey.validate({ id, outcome });
+      if (!result) return c.json({ ok: false, error: `no memory with id ${id}` }, 404);
+      return c.json({ ok: true, ...result });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  // Legacy alias for the Python client's mark_used() — defaults outcome to "used".
+  app.post('/v1/mark-used', async (c) => {
+    try {
+      const body = await c.req.json();
+      const id = typeof body.id === 'string' ? body.id : null;
+      if (!id) return c.json({ error: 'id is required' }, 400);
+      const result = audrey.validate({ id, outcome: 'used' });
+      if (!result) return c.json({ ok: false, error: `no memory with id ${id}` }, 404);
+      return c.json({ ok: true });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+  });
+
   // POST /v1/capsule
   app.post('/v1/capsule', async (c) => {
     try {
