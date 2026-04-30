@@ -1891,3 +1891,55 @@ describe('Audrey closed-loop feedback (memory_validate)', () => {
     expect(helpfulResult.salience).toBeGreaterThan(usedResult.salience);
   });
 });
+
+describe('Audrey impact report', () => {
+  let brain;
+  const TEST_DIR = './test-impact';
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'impact-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('reports zero counts on a fresh store', () => {
+    const report = brain.impact();
+    expect(report.totals).toEqual({ episodic: 0, semantic: 0, procedural: 0 });
+    expect(report.validatedTotal).toBe(0);
+    expect(report.validatedInWindow).toBe(0);
+    expect(report.topUsed).toEqual([]);
+  });
+
+  it('counts validated memories and surfaces the top usage_count rows', async () => {
+    const ids = await Promise.all([
+      brain.encode({ content: 'memory one', source: 'direct-observation' }),
+      brain.encode({ content: 'memory two', source: 'direct-observation' }),
+      brain.encode({ content: 'memory three', source: 'direct-observation' }),
+    ]);
+    for (let i = 0; i < 3; i++) brain.validate({ id: ids[0], outcome: 'helpful' });
+    brain.validate({ id: ids[1], outcome: 'used' });
+
+    const report = brain.impact();
+    expect(report.totals.episodic).toBe(3);
+    expect(report.validatedTotal).toBe(2);
+    expect(report.validatedInWindow).toBe(2);
+    expect(report.topUsed[0].id).toBe(ids[0]);
+    expect(report.topUsed[0].usage_count).toBe(3);
+  });
+
+  it('weakest list surfaces low-salience memories first', async () => {
+    const lowId = await brain.encode({ content: 'low salience', source: 'direct-observation', salience: 0.1 });
+    await brain.encode({ content: 'high salience', source: 'direct-observation', salience: 0.9 });
+    const report = brain.impact();
+    expect(report.weakest[0].id).toBe(lowId);
+    expect(report.weakest[0].salience).toBeCloseTo(0.1, 5);
+  });
+});

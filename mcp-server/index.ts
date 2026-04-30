@@ -294,6 +294,34 @@ async function dream(): Promise<void> {
   }
 }
 
+async function impact(): Promise<void> {
+  const dataDir = resolveDataDir(process.env);
+  if (!existsSync(dataDir)) {
+    console.log('[audrey] No data yet — encode some memories and validate them with memory_validate to see impact.');
+    return;
+  }
+
+  const audrey = new Audrey({ dataDir, agent: 'impact' });
+  try {
+    const argv = process.argv;
+    const windowIdx = argv.indexOf('--window');
+    const limitIdx = argv.indexOf('--limit');
+    const windowDays = windowIdx >= 0 ? parseInt(argv[windowIdx + 1] ?? '7', 10) : 7;
+    const limit = limitIdx >= 0 ? parseInt(argv[limitIdx + 1] ?? '5', 10) : 5;
+    const wantsJson = cliHasFlag('--json', argv);
+
+    const report = audrey.impact({ windowDays, limit });
+    if (wantsJson) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      const { formatImpactReport } = await import('../src/impact.js');
+      console.log(formatImpactReport(report));
+    }
+  } finally {
+    await audrey.closeAsync();
+  }
+}
+
 async function greeting(): Promise<void> {
   const dataDir = resolveDataDir(process.env);
   const contextArg = process.argv[3] || undefined;
@@ -1929,7 +1957,7 @@ const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPat
 
 const KNOWN_SUBCOMMANDS = [
   'install', 'uninstall', 'mcp-config', 'demo', 'reembed', 'dream',
-  'greeting', 'reflect', 'serve', 'status', 'doctor', 'observe-tool', 'promote',
+  'greeting', 'reflect', 'serve', 'status', 'doctor', 'observe-tool', 'promote', 'impact',
 ] as const;
 
 function printHelp(): void {
@@ -1950,6 +1978,7 @@ Commands:
   greeting                      Emit session-start briefing (used by host hooks)
   reflect                       End-of-session memory capture from stdin transcript
   observe-tool                  Record a tool-trace event (--event, --tool, --outcome)
+  impact                        Show closed-loop feedback metrics (--window N, --limit N, --json)
   promote                       Promote rules from observed traces (--dry-run to preview)
 
   (no command)                  Start the MCP stdio server (used by MCP hosts)
@@ -2034,6 +2063,11 @@ if (isDirectRun) {
   } else if (subcommand === 'observe-tool') {
     observeToolCli().catch(err => {
       console.error('[audrey] observe-tool failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'impact') {
+    impact().catch(err => {
+      console.error('[audrey] impact failed:', err);
       process.exit(1);
     });
   } else if (subcommand === 'promote') {

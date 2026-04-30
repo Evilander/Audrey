@@ -37,6 +37,7 @@ import { applyDecay } from './decay.js';
 import { rollbackConsolidation, getConsolidationHistory } from './rollback.js';
 import { forgetMemory, forgetByQuery as forgetByQueryFn, purgeMemories } from './forget.js';
 import { applyFeedback, type MemoryValidateInput, type MemoryValidateResult } from './feedback.js';
+import { buildImpactReport, type ImpactReport } from './impact.js';
 import { introspect as introspectFn } from './introspect.js';
 import { buildContextResolutionPrompt, buildReflectionPrompt } from './prompts.js';
 import { exportMemories } from './export.js';
@@ -842,6 +843,10 @@ export class Audrey extends EventEmitter {
     const result = applyFeedback(this.db, input);
     if (result) this.emit('validate', result);
     return result;
+  }
+
+  impact(options: { windowDays?: number; limit?: number } = {}): ImpactReport {
+    return buildImpactReport(this.db, options.windowDays ?? 7, options.limit ?? 5);
   }
 
   forget(id: string, options: { purge?: boolean } = {}): ForgetResult {
