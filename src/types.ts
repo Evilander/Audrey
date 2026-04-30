@@ -65,7 +65,7 @@ export interface EncodeParams {
 // Recall
 // ---------------------------------------------------------------------------
 
-export type PublicRetrievalMode = 'vector' | 'hybrid' | 'hybrid_strict';
+export type PublicRetrievalMode = 'vector' | 'hybrid';
 export type RetrievalMode = PublicRetrievalMode | 'keyword';
 
 export interface RecallOptions {
