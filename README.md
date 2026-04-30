@@ -209,6 +209,27 @@ Production controls you still own:
 - Run `npx audrey dream` on a schedule so consolidation and decay stay current.
 - Add application-level encryption, retention, access control, and audit logging for regulated environments.
 
+## Environment Variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUDREY_DATA_DIR` | `~/.audrey/data` | SQLite memory store path. Use one per tenant or agent identity for isolation. |
+| `AUDREY_AGENT` | `local-agent` | Logical agent identity stamped on writes. |
+| `AUDREY_EMBEDDING_PROVIDER` | auto | `local`, `gemini`, `openai`, or `mock`. Auto-detects from API keys when unset. |
+| `AUDREY_LLM_PROVIDER` | auto | `anthropic`, `gemini`, `openai`, or `none`. |
+| `AUDREY_DEVICE` | `gpu` | Local embedding device (`gpu` or `cpu`). Falls back to CPU if GPU init fails. |
+| `AUDREY_PORT` | `7437` | REST sidecar port. |
+| `AUDREY_HOST` | `127.0.0.1` | REST sidecar bind address. Set to `0.0.0.0` only with `AUDREY_API_KEY`. |
+| `AUDREY_API_KEY` | unset | Bearer token required for non-loopback REST traffic. |
+| `AUDREY_ALLOW_NO_AUTH` | `0` | Set to `1` to allow non-loopback bind without an API key. Don't. |
+| `AUDREY_PROMOTE_ROOTS` | unset | Colon/semicolon-separated extra roots for `audrey promote --yes` writes. By default writes are restricted to `process.cwd()`. |
+| `AUDREY_DEBUG` | `0` | Set to `1` to print MCP info logs (server started, warmup completed). Errors always log. |
+| `AUDREY_PROFILE` | `0` | Set to `1` to emit per-stage timings via MCP `_meta.diagnostics`. |
+| `AUDREY_DISABLE_WARMUP` | `0` | Set to `1` to skip background embedding warmup at MCP boot. |
+| `AUDREY_ONNX_VERBOSE` | `0` | Set to `1` to restore ONNX runtime EP-assignment warnings (suppressed by default). |
+| `AUDREY_PRAGMA_DEFAULTS` | `1` | Set to `0` to revert SQLite PRAGMA tuning to better-sqlite3 defaults. |
+| `AUDREY_CONTEXT_BUDGET_CHARS` | `4000` | Default Memory Capsule character budget. |
+
 ## Benchmarks
 
 Audrey ships with a benchmark harness and release gate:
