@@ -115,7 +115,7 @@ Core sidecar tools:
 |---|---|
 | MCP stdio server | 19 tools, resources, and prompt templates |
 | CLI | `doctor`, `demo`, `install`, `mcp-config`, `status`, `dream`, `reembed`, `observe-tool`, `promote` |
-| REST API | Hono server with `/health`, `/openapi.json`, `/docs`, and `/v1/*` routes |
+| REST API | Hono server with `/health` and `/v1/*` routes |
 | JavaScript SDK | Direct TypeScript/Node import from `audrey` |
 | Python client | `pip install audrey-memory`, calls the REST sidecar |
 | Storage | Local SQLite plus `sqlite-vec`, no hosted database required |

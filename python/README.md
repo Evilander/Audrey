@@ -29,7 +29,7 @@ Then use the client:
 from audrey_memory import Audrey
 
 brain = Audrey(
-    base_url="http://127.0.0.1:3487",
+    base_url="http://127.0.0.1:7437",
     api_key="secret",
     agent="support-agent",
 )
@@ -55,7 +55,7 @@ from audrey_memory import AsyncAudrey
 
 
 async def main() -> None:
-    async with AsyncAudrey(base_url="http://127.0.0.1:3487") as brain:
+    async with AsyncAudrey(base_url="http://127.0.0.1:7437") as brain:
         await brain.health()
         await brain.encode("Deploy failed due to OOM", source="direct-observation")
         await brain.recall("deploy failure", limit=3)
