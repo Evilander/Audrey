@@ -1943,3 +1943,46 @@ describe('Audrey impact report', () => {
     expect(report.weakest[0].salience).toBeCloseTo(0.1, 5);
   });
 });
+
+describe('Audrey impact outcome breakdown', () => {
+  let brain;
+  const TEST_DIR = './test-impact-audit';
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'impact-audit-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('outcome breakdown counts helpful/wrong/used events from the audit trail', async () => {
+    const id1 = await brain.encode({ content: 'one', source: 'direct-observation' });
+    const id2 = await brain.encode({ content: 'two', source: 'direct-observation' });
+    brain.validate({ id: id1, outcome: 'helpful' });
+    brain.validate({ id: id1, outcome: 'helpful' });
+    brain.validate({ id: id2, outcome: 'wrong' });
+    brain.validate({ id: id2, outcome: 'used' });
+
+    const report = brain.impact();
+    expect(report.outcomeBreakdownInWindow).toEqual({ helpful: 2, wrong: 1, used: 1 });
+  });
+
+  it('outcome breakdown respects the time window', async () => {
+    const id = await brain.encode({ content: 'test', source: 'direct-observation' });
+    brain.validate({ id, outcome: 'helpful' });
+
+    const recent = brain.impact({ windowDays: 7 });
+    expect(recent.outcomeBreakdownInWindow.helpful).toBe(1);
+
+    // Negative window puts the cutoff in the future — nothing is in-range.
+    const future = brain.impact({ windowDays: -1 });
+    expect(future.outcomeBreakdownInWindow.helpful).toBe(0);
+  });
+});
