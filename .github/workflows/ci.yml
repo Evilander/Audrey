@@ -14,8 +14,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # package.json declares engines.node >=20 (since v0.22.0). Node 18
+        # is intentionally omitted: vitest 4.1+ uses node:util.styleText,
+        # which only exists in Node 20.12+, and we don't ship a Node-18
+        # supported runtime.
         node:
-          - 18
           - 20
           - 22
 
