@@ -65,7 +65,7 @@ import {
 import { renderAllRules, type RuleDoc } from './rules-compiler.js';
 import { insertEvent } from './events.js';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { dirname, join, resolve as pathResolve } from 'node:path';
+import { dirname, join, resolve as pathResolve, relative, isAbsolute as pathIsAbsolute } from 'node:path';
 import { ProfileRecorder, type ProfileDiagnostics } from './profile.js';
 import { performance } from 'node:perf_hooks';
 
@@ -379,13 +379,18 @@ export class Audrey extends EventEmitter {
   }
 
   _emitQueueError(err: unknown): void {
+    if (this.listenerCount('error') > 0) {
+      // Caller has opted into error handling; let them route logging.
+      this.emit('error', err);
+      return;
+    }
+    // Standard EventEmitter idiom: log only when nobody is listening, so we
+    // surface failures by default but don't double-log for apps with structured
+    // error pipelines. The MCP server registers a logger listener at startup.
     const stage = (err as { stage?: string })?.stage;
     const prefix = stage ? `[audrey:post-encode:${stage}]` : '[audrey:post-encode]';
     const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
     console.error(`${prefix} ${message}`);
-    if (this.listenerCount('error') > 0) {
-      this.emit('error', err);
-    }
   }
 
   pendingConsolidationIds(): string[] {
@@ -855,7 +860,27 @@ export class Audrey extends EventEmitter {
     if (this._closed) return;
     this._closed = true;
     this.stopAutoConsolidate();
+    if (this._pendingPostEncodeIds.size > 0) {
+      // Sync close() can't await; emit a clear signal so callers can spot data loss.
+      // Use closeAsync() (preferred) or call drainPostEncodeQueue() before close() to avoid this.
+      console.error(
+        `[audrey] close() called with ${this._pendingPostEncodeIds.size} pending post-encode tasks ` +
+        `(use closeAsync() or await drainPostEncodeQueue() first to avoid losing consolidation work)`,
+      );
+    }
     closeDatabase(this.db);
+  }
+
+  async closeAsync(timeoutMs = 5000): Promise<PostEncodeQueueDrainResult | undefined> {
+    if (this._closed) return undefined;
+    let result: PostEncodeQueueDrainResult | undefined;
+    if (this._pendingPostEncodeIds.size > 0) {
+      result = await this.drainPostEncodeQueue(timeoutMs);
+    }
+    this._closed = true;
+    this.stopAutoConsolidate();
+    closeDatabase(this.db);
+    return result;
   }
 
   async waitForIdle(): Promise<void> {
@@ -920,6 +945,30 @@ export class Audrey extends EventEmitter {
 
     const dryRun = options.dryRun ?? !options.yes;
     const projectDir = pathResolve(options.projectDir ?? process.cwd());
+    // Guard against malicious project_dir from MCP/HTTP callers writing
+    // .claude/rules/*.md to arbitrary locations — those files are read by
+    // Claude Code on the next session, making this a persistent
+    // prompt-injection vector. By default the path must be under cwd or one
+    // of the explicit AUDREY_PROMOTE_ROOTS entries.
+    if (!dryRun) {
+      const allowedRoots = [pathResolve(process.cwd())];
+      const extra = process.env.AUDREY_PROMOTE_ROOTS;
+      if (extra) {
+        for (const root of extra.split(/[:;]/).map(s => s.trim()).filter(Boolean)) {
+          allowedRoots.push(pathResolve(root));
+        }
+      }
+      const isUnderAllowedRoot = allowedRoots.some(root => {
+        const rel = relative(root, projectDir);
+        return rel === '' || (!rel.startsWith('..') && !pathIsAbsolute(rel));
+      });
+      if (!isUnderAllowedRoot) {
+        throw new Error(
+          `promote: refusing to write to ${projectDir} — path is outside cwd and AUDREY_PROMOTE_ROOTS. ` +
+          `Set AUDREY_PROMOTE_ROOTS=<path1>:<path2> to allow additional locations.`,
+        );
+      }
+    }
     const promotedAt = new Date().toISOString();
     const docs = renderAllRules(candidates, promotedAt);
 

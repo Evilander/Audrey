@@ -46,6 +46,36 @@ describe('MCP config', () => {
   });
 });
 
+describe('CLI surface', () => {
+  // Spawning the CLI exercises the dispatcher in mcp-server/index.ts. Without these,
+  // a future refactor could silently re-introduce the bug where `audrey --help`
+  // dropped the user into an MCP stdio server waiting on stdin.
+  const { spawnSync } = require('node:child_process');
+  const path = require('node:path');
+  const cli = path.resolve('dist/mcp-server/index.js');
+
+  it('--help prints help and exits 0', () => {
+    const r = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8', timeout: 10000 });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('Usage: audrey');
+    expect(r.stdout).toContain('doctor');
+    expect(r.stdout).toContain('demo');
+  });
+
+  it('--version prints version and exits 0', () => {
+    const r = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8', timeout: 10000 });
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe(`audrey ${VERSION}`);
+  });
+
+  it('unknown subcommand exits 2 with help on stderr', () => {
+    const r = spawnSync(process.execPath, [cli, 'definitelynotacommand'], { encoding: 'utf8', timeout: 10000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("unknown command 'definitelynotacommand'");
+    expect(r.stdout).toContain('Usage: audrey');
+  });
+});
+
 describe('MCP CLI: buildAudreyConfig', () => {
   const envBackup = {};
   const envKeys = [

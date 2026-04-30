@@ -1,7 +1,49 @@
 import { Hono } from 'hono';
+import { timingSafeEqual } from 'node:crypto';
 import type { Audrey } from './audrey.js';
 import type { PreflightOptions } from './preflight.js';
+import type { RecallOptions, MemoryType, PublicRetrievalMode } from './types.js';
 import { VERSION } from '../mcp-server/config.js';
+
+// Allowlist of recall option keys safe to accept from untrusted HTTP callers.
+// Spreading the request body directly into recall() lets a caller flip
+// `includePrivate:true` or swap `confidenceConfig` weights — both bypass
+// privacy/integrity controls. Whitelist only, never blacklist.
+const SAFE_RECALL_KEYS = new Set([
+  'minConfidence', 'min_confidence', 'types', 'limit',
+  'includeProvenance', 'include_provenance', 'includeDormant', 'include_dormant',
+  'tags', 'sources', 'after', 'before', 'context', 'mood', 'retrieval',
+]);
+
+function sanitizeRecallOptions(raw: unknown): RecallOptions {
+  if (!raw || typeof raw !== 'object') return {};
+  const opts: RecallOptions = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!SAFE_RECALL_KEYS.has(key)) continue;
+    if (key === 'minConfidence' || key === 'min_confidence') {
+      if (typeof value === 'number') opts.minConfidence = value;
+    } else if (key === 'types') {
+      if (Array.isArray(value)) opts.types = value as MemoryType[];
+    } else if (key === 'limit') {
+      if (typeof value === 'number') opts.limit = value;
+    } else if (key === 'includeProvenance' || key === 'include_provenance') {
+      if (typeof value === 'boolean') opts.includeProvenance = value;
+    } else if (key === 'includeDormant' || key === 'include_dormant') {
+      if (typeof value === 'boolean') opts.includeDormant = value;
+    } else if (key === 'tags' || key === 'sources') {
+      if (Array.isArray(value)) (opts as Record<string, unknown>)[key] = value;
+    } else if (key === 'after' || key === 'before') {
+      if (typeof value === 'string') (opts as Record<string, unknown>)[key] = value;
+    } else if (key === 'context') {
+      if (value && typeof value === 'object') opts.context = value as Record<string, string>;
+    } else if (key === 'mood') {
+      if (value && typeof value === 'object') opts.mood = value as RecallOptions['mood'];
+    } else if (key === 'retrieval') {
+      if (value === 'hybrid' || value === 'vector') opts.retrieval = value as PublicRetrievalMode;
+    }
+  }
+  return opts;
+}
 
 export interface AppOptions {
   apiKey?: string;
@@ -86,11 +128,18 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
-  // API key middleware - only if apiKey is configured
+  // API key middleware - only if apiKey is configured.
+  // The auth comparison is constant-time to avoid leaking the prefix-match
+  // length through response timing on local untrusted callers.
   if (options.apiKey) {
+    const expected = Buffer.from(`Bearer ${options.apiKey}`, 'utf8');
     app.use('/v1/*', async (c, next) => {
       const auth = c.req.header('Authorization');
-      if (!auth || auth !== `Bearer ${options.apiKey}`) {
+      if (!auth) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+      const provided = Buffer.from(auth, 'utf8');
+      if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
       await next();
@@ -121,8 +170,8 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   app.post('/v1/recall', async (c) => {
     try {
       const body = await c.req.json();
-      const { query, ...opts } = body;
-      const results = await audrey.recall(query, opts);
+      const { query, ...rest } = body;
+      const results = await audrey.recall(query, sanitizeRecallOptions(rest));
       return c.json(results);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -145,7 +194,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         recentChangeWindowHours: body.recent_change_window_hours ?? body.recentChangeWindowHours,
         includeRisks: body.include_risks ?? body.includeRisks,
         includeContradictions: body.include_contradictions ?? body.includeContradictions,
-        recall: body.recall,
+        recall: sanitizeRecallOptions(body.recall),
       });
       return c.json(result);
     } catch (err: unknown) {

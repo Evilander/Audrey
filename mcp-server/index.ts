@@ -37,7 +37,7 @@ const VALID_TYPES = {
 
 export const MAX_MEMORY_CONTENT_LENGTH = 50_000;
 
-const subcommand = process.argv[2];
+const subcommand = (process.argv[2] || '').trim() || undefined;
 
 function isNonEmptyText(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0;
@@ -205,11 +205,14 @@ async function serveHttp(): Promise<void> {
   const config = buildAudreyConfig();
   const port = parseInt(process.env.AUDREY_PORT || '7437', 10);
   const apiKey = process.env.AUDREY_API_KEY;
+  const hostname = process.env.AUDREY_HOST || '127.0.0.1';
 
-  const server = await startServer({ port, config, apiKey });
-  console.error(`[audrey-http] v${VERSION} serving on port ${server.port}`);
+  const server = await startServer({ port, hostname, config, apiKey });
+  console.error(`[audrey-http] v${VERSION} serving on ${server.hostname}:${server.port}`);
   if (apiKey) {
     console.error('[audrey-http] API key authentication enabled');
+  } else if (server.hostname === '127.0.0.1' || server.hostname === '::1' || server.hostname === 'localhost') {
+    console.error('[audrey-http] no API key set (loopback only — set AUDREY_API_KEY to enable network access)');
   }
 }
 
@@ -232,7 +235,7 @@ async function reembed(): Promise<void> {
     const counts = await reembedAll(audrey.db, audrey.embeddingProvider, { dropAndRecreate: dimensionsChanged });
     console.log(`Done. Re-embedded: ${counts.episodes} episodes, ${counts.semantics} semantics, ${counts.procedures} procedures`);
   } finally {
-    audrey.close();
+    await audrey.closeAsync();
   }
 }
 
@@ -280,7 +283,7 @@ async function dream(): Promise<void> {
     );
     console.log('[audrey] Dream complete.');
   } finally {
-    audrey.close();
+    await audrey.closeAsync();
   }
 }
 
@@ -393,7 +396,7 @@ async function greeting(): Promise<void> {
 
     console.log(lines.join('\n'));
   } finally {
-    audrey.close();
+    await audrey.closeAsync();
   }
 }
 
@@ -469,7 +472,7 @@ async function reflect(): Promise<void> {
     );
     console.log('[audrey] Dream complete.');
   } finally {
-    audrey.close();
+    await audrey.closeAsync();
   }
 }
 
@@ -803,7 +806,7 @@ export async function runDemoCommand({
       out(`- Demo data kept at: ${demoDir}`);
     }
   } finally {
-    audrey.close();
+    await audrey.closeAsync();
     if (!keep) {
       rmSync(demoDir, { recursive: true, force: true });
     }
@@ -1216,7 +1219,9 @@ async function main(): Promise<void> {
   const embLabel = config.embedding?.provider === 'mock'
     ? 'mock embeddings - set OPENAI_API_KEY for real semantic search'
     : `${config.embedding?.provider} embeddings (${config.embedding?.dimensions}d)`;
-  console.error(`[audrey-mcp] v${VERSION} started - agent=${config.agent} dataDir=${config.dataDir} (${embLabel})`);
+  if (process.env.AUDREY_DEBUG === '1') {
+    console.error(`[audrey-mcp] v${VERSION} started - agent=${config.agent} dataDir=${config.dataDir} (${embLabel})`);
+  }
 
   const server = new McpServer({
     name: SERVER_NAME,
@@ -1638,14 +1643,20 @@ async function main(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[audrey-mcp] connected via stdio');
+  if (process.env.AUDREY_DEBUG === '1') {
+    console.error('[audrey-mcp] connected via stdio');
+  }
   if (!isEmbeddingWarmupDisabled(process.env)) {
     void audrey.startEmbeddingWarmup()
       .then(() => {
-        const status = audrey.memoryStatus();
-        console.error(`[audrey-mcp] embedding warmup completed in ${status.warmup_duration_ms ?? 0}ms`);
+        if (process.env.AUDREY_DEBUG === '1') {
+          const status = audrey.memoryStatus();
+          console.error(`[audrey-mcp] embedding warmup completed in ${status.warmup_duration_ms ?? 0}ms`);
+        }
       })
       .catch(err => {
+        // Warmup failure is always logged — it indicates real misconfiguration
+        // and the foreground embed call will retry the same failure.
         console.error(`[audrey-mcp] embedding warmup failed: ${(err as Error).message || String(err)}`);
       });
   }
@@ -1787,7 +1798,7 @@ async function observeToolCli(): Promise<void> {
     };
     console.log(JSON.stringify(summary));
   } finally {
-    audrey.close();
+    await audrey.closeAsync();
   }
 }
 
@@ -1870,14 +1881,77 @@ async function promoteCli(): Promise<void> {
       console.log('  Re-run with --yes to write these rules to disk.');
     }
   } finally {
-    audrey.close();
+    await audrey.closeAsync();
   }
 }
 
 const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
+const KNOWN_SUBCOMMANDS = [
+  'install', 'uninstall', 'mcp-config', 'demo', 'reembed', 'dream',
+  'greeting', 'reflect', 'serve', 'status', 'doctor', 'observe-tool', 'promote',
+] as const;
+
+function printHelp(): void {
+  process.stdout.write(`audrey ${VERSION} — local-first memory runtime for AI agents
+
+Usage: audrey <command> [options]
+
+Commands:
+  doctor                        Verify Node, MCP entrypoint, providers, and store health
+  demo                          Run a no-key, no-network proof of recall + reflexes
+  status                        Print store health (add --json --fail-on-unhealthy for CI)
+  install [--host <h>]          Register Audrey with an MCP host (codex, claude-code, generic)
+  uninstall                     Remove Audrey from a host's MCP config
+  mcp-config <host>             Print raw MCP config block for a host (codex|generic|vscode)
+  serve                         Start the REST sidecar (default port 7437; AUDREY_API_KEY recommended)
+  dream                         Run consolidation + decay sweep
+  reembed                       Recompute vectors after dimension/provider change
+  greeting                      Emit session-start briefing (used by host hooks)
+  reflect                       End-of-session memory capture from stdin transcript
+  observe-tool                  Record a tool-trace event (--event, --tool, --outcome)
+  promote                       Promote rules from observed traces (--dry-run to preview)
+
+  (no command)                  Start the MCP stdio server (used by MCP hosts)
+
+Common options:
+  -h, --help                    Print this help and exit
+  -v, --version                 Print version and exit
+
+Environment:
+  AUDREY_DATA_DIR               Path to SQLite memory store (default: ~/.audrey/data)
+  AUDREY_AGENT                  Logical agent identity (default: local-agent)
+  AUDREY_EMBEDDING_PROVIDER     local | gemini | openai | mock
+  AUDREY_LLM_PROVIDER           anthropic | gemini | openai | none
+  AUDREY_PORT                   REST sidecar port (default: 7437)
+  AUDREY_API_KEY                Bearer token required for non-loopback REST traffic
+  AUDREY_PROFILE=1              Emit per-stage timings via _meta.diagnostics
+  AUDREY_DISABLE_WARMUP=1       Skip background embedding warmup
+  AUDREY_ONNX_VERBOSE=1         Show ONNX runtime warnings (off by default)
+
+Quick start:
+  npx audrey doctor
+  npx audrey demo
+  npx audrey install --host codex --dry-run
+
+Docs: https://github.com/Evilander/Audrey
+`);
+}
+
+function printVersion(): void {
+  process.stdout.write(`audrey ${VERSION}\n`);
+}
+
 if (isDirectRun) {
-  if (subcommand === 'install') {
+  // Help / version flags MUST short-circuit before falling through to the MCP server.
+  // A user running `audrey --help` should see help, not be dropped into a stdio loop.
+  if (subcommand === '--help' || subcommand === '-h' || subcommand === 'help') {
+    printHelp();
+    process.exit(0);
+  } else if (subcommand === '--version' || subcommand === '-v' || subcommand === 'version') {
+    printVersion();
+    process.exit(0);
+  } else if (subcommand === 'install') {
     install();
   } else if (subcommand === 'uninstall') {
     uninstall();
@@ -1928,6 +2002,18 @@ if (isDirectRun) {
       process.exit(1);
     });
   } else {
+    // Unknown subcommand or no subcommand. The MCP server reads stdio from the host
+    // process. If a human runs `audrey` interactively (TTY), they almost certainly
+    // wanted help — falling through silently makes the binary look hung.
+    if (subcommand && !(KNOWN_SUBCOMMANDS as readonly string[]).includes(subcommand)) {
+      process.stderr.write(`audrey: unknown command '${subcommand}'\n\n`);
+      printHelp();
+      process.exit(2);
+    }
+    if (!subcommand && process.stdin.isTTY) {
+      printHelp();
+      process.exit(0);
+    }
     main().catch(err => {
       console.error('[audrey-mcp] fatal:', err);
       process.exit(1);

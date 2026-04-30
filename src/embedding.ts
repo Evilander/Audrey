@@ -134,16 +134,29 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
   ready(): Promise<void> {
     if (!this._readyPromise) {
       this._readyPromise = (async () => {
-        const pipeline = this.pipelineFactory || (await import('@huggingface/transformers')).pipeline;
+        let pipeline: NonNullable<typeof this.pipelineFactory>;
+        if (this.pipelineFactory) {
+          pipeline = this.pipelineFactory;
+        } else {
+          const tx = await import('@huggingface/transformers');
+          pipeline = tx.pipeline as unknown as NonNullable<typeof this.pipelineFactory>;
+        }
+        // Suppress per-session ONNX EP-assignment warnings. Per-session is the
+        // safe scope: it doesn't mutate the transformers global env (which would
+        // affect other consumers in the same process). AUDREY_ONNX_VERBOSE=1 opts out.
+        const verbose = process.env.AUDREY_ONNX_VERBOSE === '1';
+        const sessionOptions = verbose ? undefined : { logSeverityLevel: 3 };
         try {
           this._pipeline = await pipeline('feature-extraction', this.model, {
             dtype: 'fp32', device: this.device as 'gpu' | 'cpu',
-          });
+            ...(sessionOptions ? { session_options: sessionOptions } : {}),
+          } as Parameters<typeof pipeline>[2]);
           this._actualDevice = this.device;
         } catch {
           this._pipeline = await pipeline('feature-extraction', this.model, {
             dtype: 'fp32', device: 'cpu',
-          });
+            ...(sessionOptions ? { session_options: sessionOptions } : {}),
+          } as Parameters<typeof pipeline>[2]);
           this._actualDevice = 'cpu';
         }
       })();

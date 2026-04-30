@@ -377,6 +377,15 @@ export function createDatabase(
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
+  // Tuned for memory-store workloads (synchronous=NORMAL is durable under WAL,
+  // 64 MiB page cache + 256 MiB mmap reduce read syscalls on hot recall paths).
+  // AUDREY_PRAGMA_DEFAULTS=0 reverts to better-sqlite3 defaults.
+  if (process.env.AUDREY_PRAGMA_DEFAULTS !== '0') {
+    db.pragma('synchronous = NORMAL');
+    db.pragma('cache_size = -65536');
+    db.pragma('mmap_size = 268435456');
+    db.pragma('temp_store = MEMORY');
+  }
   db.exec(SCHEMA);
   runMigrations(db);
 
