@@ -24,6 +24,12 @@ export interface ImpactReport {
     semantic: { validated: number; recent: number; challenged: number };
     procedural: { validated: number; recent: number };
   };
+  /** Per-outcome breakdown over the configured window, sourced from memory_events. */
+  outcomeBreakdownInWindow: {
+    helpful: number;
+    wrong: number;
+    used: number;
+  };
   topUsed: ImpactRow[];
   weakest: ImpactRow[];
   recentActivity: ImpactRow[];
@@ -109,6 +115,26 @@ export function buildImpactReport(db: Database.Database, windowDays = 7, limit =
 
   const challenged = ((db.prepare("SELECT SUM(challenge_count) as c FROM semantics WHERE state != 'rolled_back'").get()) as ChallengedRow).c ?? 0;
 
+  // Per-outcome breakdown comes from the memory_events audit trail. Each
+  // memory_validate call writes a row with metadata.outcome = used|helpful|wrong.
+  // Cumulative counters on the memories tables can't distinguish outcomes,
+  // hence the audit trail.
+  const validateEvents = db.prepare(
+    "SELECT metadata FROM memory_events WHERE event_type = 'Validate' AND created_at >= ?"
+  ).all(sinceISO) as Array<{ metadata: string | null }>;
+  const outcomeBreakdownInWindow = { helpful: 0, wrong: 0, used: 0 };
+  for (const evt of validateEvents) {
+    if (!evt.metadata) continue;
+    try {
+      const meta = JSON.parse(evt.metadata) as { outcome?: string };
+      if (meta.outcome === 'helpful') outcomeBreakdownInWindow.helpful++;
+      else if (meta.outcome === 'wrong') outcomeBreakdownInWindow.wrong++;
+      else if (meta.outcome === 'used') outcomeBreakdownInWindow.used++;
+    } catch {
+      // Skip malformed metadata silently — audit reports shouldn't fail on bad rows.
+    }
+  }
+
   return {
     generatedAt: now.toISOString(),
     windowDays,
@@ -124,6 +150,7 @@ export function buildImpactReport(db: Database.Database, windowDays = 7, limit =
       semantic: { validated: validatedSem, recent: recentSem, challenged },
       procedural: { validated: validatedProc, recent: recentProc },
     },
+    outcomeBreakdownInWindow,
     topUsed: topAcrossTables(db, 'usage_count DESC, id', 'usage_count > 0', limit),
     weakest: topAcrossTables(db, 'salience ASC, id', 'salience IS NOT NULL', limit),
     recentActivity: topAcrossTables(db, 'last_used_at DESC, id', 'last_used_at IS NOT NULL', limit),
@@ -144,6 +171,10 @@ export function formatImpactReport(report: ImpactReport): string {
   const totalMemories = report.totals.episodic + report.totals.semantic + report.totals.procedural;
   lines.push(`Memories: ${totalMemories} total (${report.totals.episodic} episodic, ${report.totals.semantic} semantic, ${report.totals.procedural} procedural)`);
   lines.push(`Validated: ${report.validatedTotal} all-time, ${report.validatedInWindow} in last ${report.windowDays} days`);
+  const o = report.outcomeBreakdownInWindow;
+  if (o.helpful + o.wrong + o.used > 0) {
+    lines.push(`Outcomes (last ${report.windowDays} days): ${o.helpful} helpful, ${o.wrong} wrong, ${o.used} used`);
+  }
   lines.push('');
 
   lines.push('By type:');

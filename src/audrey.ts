@@ -841,7 +841,30 @@ export class Audrey extends EventEmitter {
 
   validate(input: MemoryValidateInput): MemoryValidateResult | null {
     const result = applyFeedback(this.db, input);
-    if (result) this.emit('validate', result);
+    if (result) {
+      // Audit row in memory_events so audrey impact can show
+      // helpful-vs-wrong breakdown over a window. Outcome is mapped onto the
+      // events-table enum: helpful → succeeded, wrong → failed, used → unknown.
+      // The original outcome string is preserved in metadata.
+      const eventOutcome = input.outcome === 'helpful' ? 'succeeded'
+        : input.outcome === 'wrong' ? 'failed'
+        : 'unknown';
+      insertEvent(this.db, {
+        eventType: 'Validate',
+        source: 'memory_validate',
+        actorAgent: this.agent,
+        outcome: eventOutcome,
+        redactionState: 'clean',
+        metadata: {
+          memory_id: result.id,
+          memory_type: result.type,
+          outcome: input.outcome,
+          salience_after: result.salience,
+          usage_count_after: result.usageCount,
+        },
+      });
+      this.emit('validate', result);
+    }
     return result;
   }
 
