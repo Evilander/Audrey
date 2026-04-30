@@ -86,9 +86,15 @@ and traceable back to the agent that surfaced them.
   - Python client `validate()` + re-wired `mark_used()` (no longer `NotImplementedError`).
   - 10 new tests (6 SDK math, 1 MCP enum, 3 HTTP including 404 path).
 - **Still to do (deferred)**:
-  - `audrey impact` CLI command — "X reflexes prevented known-bad actions this week, Y procedures auto-promoted." This is the marketing surface; the underlying data is now there but the report tool isn't wired.
   - 90-second demo screencast: clean SQLite, 7 days of agent work, day-7 `audrey impact` output. This is the clip that gets retweeted.
-  - "weakest memories" surface in `audrey introspect --weakest` so wrong-validations are visible to humans.
+  - Wire `memory_validate` into Claude Code / Codex hook integrations so agents auto-validate by default.
+  - Per-event audit log in `memory_events` (so `audrey impact` can show 'helpful vs wrong' breakdown over a window — currently only cumulative state is queryable).
+
+### 1a. `audrey impact` CLI ✅ **SHIPPED in 0.22.1**
+- Visible surface for the closed-loop math. `npx audrey impact` (or `--json`).
+- Reports: totals by type, all-time validated, recent validations (configurable window), top-N most-used, weakest-N by salience, recent activity timeline.
+- New `src/impact.ts` (`buildImpactReport`, `formatImpactReport`), `Audrey.impact()` SDK method, 3 new tests.
+- Adversary's #2 hit-list ("doctor outputs CI verdict where it should output vital signs") — closing this gap.
 
 ### 2. Publish benchmark numbers (LongMemEval / LoCoMo / MemoryAgentBench)
 - **Source**: arXiv research (#3) + competitive analysis (#1) + architecture review (P0)

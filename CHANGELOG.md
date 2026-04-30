@@ -2,6 +2,13 @@
 
 ## 0.22.1 - Unreleased
 
+### Added — `audrey impact` report
+
+- New `audrey impact` CLI command (also `--json` for automation, `--window N` for the lookback window in days, `--limit N` for how many rows in each list).
+- Shows: total memories by type, all-time validated count, recent validations, top-N most-used memories, weakest-N (lowest salience — candidates to forget), and recent activity timeline.
+- Backed by `src/impact.ts` (`buildImpactReport`, `formatImpactReport`) and `Audrey.impact({ windowDays, limit })`.
+- This is the marketing surface the adversary called for: vital signs over CI verdicts. As agents start calling `memory_validate`, the report accumulates the "X failures prevented this week, Y procedures auto-promoted" story.
+
 ### Added — closed-loop feedback (the "memory before action" wedge)
 
 - New `memory_validate(id, outcome)` MCP tool. `outcome` is one of:
