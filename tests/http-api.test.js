@@ -38,7 +38,7 @@ describe('HTTP API', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        content: 'Tyler prefers ES modules',
+        content: 'Test user prefers ES modules',
         source: 'told-by-user',
       }),
     });
@@ -46,7 +46,7 @@ describe('HTTP API', () => {
     const body = await res.json();
     expect(typeof body.id).toBe('string');
     expect(body.id.length).toBeGreaterThan(0);
-    expect(body.content).toBe('Tyler prefers ES modules');
+    expect(body.content).toBe('Test user prefers ES modules');
     expect(body.source).toBe('told-by-user');
   });
 
@@ -249,7 +249,7 @@ describe('HTTP API', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        content: 'PRIVATE: Tyler\'s API token is sk-secret-xxxx',
+        content: 'PRIVATE: test API token is sk-secret-xxxx',
         source: 'told-by-user',
         private: true,
       }),
@@ -260,7 +260,7 @@ describe('HTTP API', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        query: 'tyler api token sk-secret',
+        query: 'test api token sk-secret',
         includePrivate: true,
         limit: 10,
       }),

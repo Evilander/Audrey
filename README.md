@@ -48,7 +48,7 @@ npx audrey demo
 Expected first-run shape:
 
 ```text
-Audrey Doctor v0.22.1
+Audrey Doctor v0.22.2
 Store health: not initialized
 Verdict: ready
 ```
@@ -233,18 +233,36 @@ Production controls you still own:
 
 ## Benchmarks
 
-Audrey ships with a benchmark harness and release gate:
+Audrey ships two benchmark commands.
+
+### Performance snapshot
+
+`npm run bench:perf-snapshot` measures encode and hybrid recall latency at multiple corpus sizes against the in-process mock provider. It reports p50/p95/p99 plus machine provenance so the numbers are reproducible and honest about what they cover.
 
 ```bash
-npm run bench:memory
-npm run bench:memory:check
+npm run build
+npm run bench:perf-snapshot                                 # default sizes 100, 1000, 5000
+node benchmarks/perf-snapshot.js --sizes 1000,10000 --json  # custom shape
 ```
 
-Current repo snapshot:
+Sample output from `benchmarks/snapshots/perf-0.22.2.json` (24-core Ryzen 9 7900X3D, Node 25.5.0, mock 64-dim embedding, hybrid recall, limit 5):
 
-![Audrey local benchmark](docs/assets/benchmarks/local-benchmark.svg)
+| Corpus size | Encode p50 (ms) | Encode p95 (ms) | Recall p50 (ms) | Recall p95 (ms) | Recall p99 (ms) |
+|---|---|---|---|---|---|
+| 100 | 0.33 | 0.63 | 0.52 | 1.3 | 3.1 |
+| 1,000 | 0.31 | 1.3 | 0.63 | 0.99 | 7.0 |
+| 5,000 | 0.29 | 1.7 | 2.1 | 2.5 | 18.0 |
 
-The benchmark suite covers retrieval behavior, overwrite behavior, delete/abstain behavior, and semantic/procedural merge behavior.
+These numbers cover Audrey's own pipeline (SQLite + sqlite-vec + hybrid ranking) and exclude embedding-provider cost. Real-world recall p95 with a local 384-dim provider is typically 5–15× higher; with a hosted provider it is dominated by the API round-trip. Run on your own hardware before quoting numbers anywhere.
+
+### Behavioral regression suite
+
+`npm run bench:memory:check` is a release gate. It runs a small set of retrieval and lifecycle scenarios (information extraction, knowledge updates, multi-session reasoning, conflict resolution, privacy boundary, overwrite, delete-and-abstain, semantic/procedural merge) against Audrey and three weak baselines (vector-only, keyword+recency, recent-window) and asserts Audrey doesn't regress. The baseline comparisons exist to catch correctness regressions in retrieval logic, not to make marketing claims.
+
+```bash
+npm run bench:memory          # full regression suite (writes JSON + report)
+npm run bench:memory:check    # release gate, exits non-zero on regression
+```
 
 ## Command Reference
 
