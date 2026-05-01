@@ -4,6 +4,13 @@ import { generateId } from './ulid.js';
 import { sourceReliability } from './confidence.js';
 import { arousalSalienceBoost } from './affect.js';
 import { insertFTSEpisode } from './fts.js';
+import type { ProfileRecorder } from './profile.js';
+
+export interface EncodeEpisodeOptions {
+  profile?: ProfileRecorder;
+  vector?: number[];
+  onVector?: (vector: number[], buffer: Buffer) => void;
+}
 
 export async function encodeEpisode(
   db: Database.Database,
@@ -11,6 +18,7 @@ export async function encodeEpisode(
   {
     content,
     source,
+    agent = 'default',
     salience = 0.5,
     causal,
     tags,
@@ -22,6 +30,7 @@ export async function encodeEpisode(
   }: {
     content: string;
     source: SourceType;
+    agent?: string;
     salience?: number;
     causal?: CausalParams;
     tags?: string[];
@@ -31,14 +40,21 @@ export async function encodeEpisode(
     arousalWeight?: number;
     private?: boolean;
   },
+  options: EncodeEpisodeOptions = {},
 ): Promise<string> {
   if (!content || typeof content !== 'string') throw new Error('content must be a non-empty string');
   if (salience < 0 || salience > 1) throw new Error('salience must be between 0 and 1');
   if (tags && !Array.isArray(tags)) throw new Error('tags must be an array');
 
   const reliability = sourceReliability(source);
-  const vector = await embeddingProvider.embed(content);
-  const embeddingBuffer = embeddingProvider.vectorToBuffer(vector);
+  const profile = options.profile;
+  const vector = options.vector ?? (profile
+    ? await profile.measure('encode.embedding', () => embeddingProvider.embed(content))
+    : await embeddingProvider.embed(content));
+  const embeddingBuffer = profile
+    ? profile.measureSync('encode.vector_to_buffer', () => embeddingProvider.vectorToBuffer(vector))
+    : embeddingProvider.vectorToBuffer(vector);
+  options.onVector?.(vector, embeddingBuffer);
   const id = generateId();
   const now = new Date().toISOString();
 
@@ -48,12 +64,12 @@ export async function encodeEpisode(
   const insertAndLink = db.transaction(() => {
     db.prepare(`
       INSERT INTO episodes (
-        id, content, embedding, source, source_reliability, salience, context, affect,
+        id, content, embedding, source, agent, source_reliability, salience, context, affect,
         tags, causal_trigger, causal_consequence, created_at,
         embedding_model, embedding_version, supersedes, "private"
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, content, embeddingBuffer, source, reliability, effectiveSalience,
+      id, content, embeddingBuffer, source, agent, reliability, effectiveSalience,
       JSON.stringify(context),
       JSON.stringify(affect),
       tags ? JSON.stringify(tags) : null,
@@ -71,6 +87,10 @@ export async function encodeEpisode(
     }
   });
 
-  insertAndLink();
+  if (profile) {
+    profile.measureSync('encode.write_episode', () => insertAndLink());
+  } else {
+    insertAndLink();
+  }
   return id;
 }

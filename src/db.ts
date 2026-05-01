@@ -10,6 +10,7 @@ const SCHEMA = `
     content TEXT NOT NULL,
     embedding BLOB,
     source TEXT NOT NULL CHECK(source IN ('direct-observation','told-by-user','tool-result','inference','model-generated')),
+    agent TEXT DEFAULT 'default',
     source_reliability REAL NOT NULL,
     salience REAL DEFAULT 0.5,
     context TEXT DEFAULT '{}',
@@ -30,6 +31,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS semantics (
     id TEXT PRIMARY KEY,
     content TEXT NOT NULL,
+    agent TEXT DEFAULT 'default',
     embedding BLOB,
     state TEXT DEFAULT 'active' CHECK(state IN ('active','disputed','superseded','context_dependent','dormant','rolled_back')),
     conditions TEXT,
@@ -54,6 +56,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS procedures (
     id TEXT PRIMARY KEY,
     content TEXT NOT NULL,
+    agent TEXT DEFAULT 'default',
     embedding BLOB,
     state TEXT DEFAULT 'active' CHECK(state IN ('active','disputed','superseded','context_dependent','dormant','rolled_back')),
     trigger_conditions TEXT,
@@ -377,6 +380,15 @@ export function createDatabase(
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
+  // Tuned for memory-store workloads (synchronous=NORMAL is durable under WAL,
+  // 64 MiB page cache + 256 MiB mmap reduce read syscalls on hot recall paths).
+  // AUDREY_PRAGMA_DEFAULTS=0 reverts to better-sqlite3 defaults.
+  if (process.env.AUDREY_PRAGMA_DEFAULTS !== '0') {
+    db.pragma('synchronous = NORMAL');
+    db.pragma('cache_size = -65536');
+    db.pragma('mmap_size = 268435456');
+    db.pragma('temp_store = MEMORY');
+  }
   db.exec(SCHEMA);
   runMigrations(db);
 

@@ -6,8 +6,8 @@ Security fixes are best-effort for the current published release line and the cu
 
 | Version | Supported |
 |---|---|
-| `0.17.x` | Yes |
-| `< 0.17.0` | No |
+| `0.22.x` | Yes |
+| `< 0.22.0` | No |
 
 ## Reporting a Vulnerability
 
@@ -16,7 +16,6 @@ Do not open a public GitHub issue for a security vulnerability.
 Report vulnerabilities through one of these channels:
 
 - GitHub Security Advisories for this repository
-- email: `j.tyler.eveland@gmail.com`
 
 Include:
 

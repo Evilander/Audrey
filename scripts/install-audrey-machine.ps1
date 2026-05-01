@@ -67,8 +67,7 @@ config.mcpServers["audrey-memory"] = {
     AUDREY_DATA_DIR: storeDir,
     AUDREY_AGENT: agent,
     AUDREY_EMBEDDING_PROVIDER: "local",
-    AUDREY_DEVICE: "gpu",
-    AUDREY_LLM_PROVIDER: "anthropic"
+    AUDREY_DEVICE: "gpu"
   }
 };
 fs.writeFileSync(path, JSON.stringify(config, null, 2));
@@ -164,8 +163,7 @@ function Update-CodexConfig {
     "AUDREY_DATA_DIR = '$StoreDir'",
     "AUDREY_AGENT = 'codex'",
     "AUDREY_EMBEDDING_PROVIDER = 'local'",
-    "AUDREY_DEVICE = 'gpu'",
-    "AUDREY_LLM_PROVIDER = 'anthropic'"
+    "AUDREY_DEVICE = 'gpu'"
   )
 
   $finalLines = New-Object 'System.Collections.Generic.List[string]'

@@ -3,6 +3,11 @@ import type { EmbeddingProvider } from './types.js';
 export function cosineSimilarity(bufA: Buffer, bufB: Buffer, provider: EmbeddingProvider): number {
   const a = provider.bufferToVector(bufA);
   const b = provider.bufferToVector(bufB);
+  if (a.length !== b.length) {
+    throw new Error(
+      `cosineSimilarity: vector length mismatch (a=${a.length}, b=${b.length})`,
+    );
+  }
   let dot = 0, magA = 0, magB = 0;
   for (let i = 0; i < a.length; i++) {
     const ai = a[i]!;
@@ -16,7 +21,11 @@ export function cosineSimilarity(bufA: Buffer, bufB: Buffer, provider: Embedding
 }
 
 export function daysBetween(dateStr: string, now: Date): number {
-  return Math.max(0, (now.getTime() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24));
+  const parsed = new Date(dateStr).getTime();
+  if (Number.isNaN(parsed)) {
+    throw new TypeError(`daysBetween: invalid date string: ${dateStr}`);
+  }
+  return Math.max(0, (now.getTime() - parsed) / (1000 * 60 * 60 * 24));
 }
 
 export function safeJsonParse<T>(str: string | null | undefined, fallback: T): T {

@@ -16,10 +16,12 @@ import type {
   IntrospectResult,
   LLMProvider,
   MemoryStatusResult,
+  PublicRetrievalMode,
   PurgeResult,
   RecallOptions,
   RecallResult,
   ReembedCounts,
+  ReflectMemory,
   ReflectResult,
   TruthResolution,
   ConsolidationRunRow,
@@ -35,6 +37,8 @@ import { runConsolidation } from './consolidate.js';
 import { applyDecay } from './decay.js';
 import { rollbackConsolidation, getConsolidationHistory } from './rollback.js';
 import { forgetMemory, forgetByQuery as forgetByQueryFn, purgeMemories } from './forget.js';
+import { applyFeedback, type MemoryValidateInput, type MemoryValidateResult } from './feedback.js';
+import { buildImpactReport, type ImpactReport } from './impact.js';
 import { introspect as introspectFn } from './introspect.js';
 import { buildContextResolutionPrompt, buildReflectionPrompt } from './prompts.js';
 import { exportMemories } from './export.js';
@@ -64,7 +68,9 @@ import {
 import { renderAllRules, type RuleDoc } from './rules-compiler.js';
 import { insertEvent } from './events.js';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { dirname, join, resolve as pathResolve } from 'node:path';
+import { dirname, join, resolve as pathResolve, relative, isAbsolute as pathIsAbsolute } from 'node:path';
+import { ProfileRecorder, type ProfileDiagnostics } from './profile.js';
+import { performance } from 'node:perf_hooks';
 
 interface ConfigRow {
   value: string;
@@ -78,12 +84,99 @@ interface ContentRow {
   content: string;
 }
 
+function roundMs(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
 interface StatusRow {
   status: string;
 }
 
 interface AffectRow {
   affect: string;
+}
+
+interface EncodedEmbedding {
+  vector?: number[];
+  buffer?: Buffer;
+}
+
+const REFLECTION_SOURCES = new Set<EncodeParams['source']>([
+  'direct-observation',
+  'told-by-user',
+  'inference',
+]);
+
+function boundedString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, maxLength);
+}
+
+function boundedNumber(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeReflectionAffect(raw: unknown): Affect | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const record = raw as Record<string, unknown>;
+  const valence = boundedNumber(record.valence, -1, 1);
+  const arousal = boundedNumber(record.arousal, 0, 1);
+  if (valence === undefined && arousal === undefined) return undefined;
+  const affect: Affect = {};
+  if (valence !== undefined) affect.valence = valence;
+  if (arousal !== undefined) affect.arousal = arousal;
+  const label = boundedString(record.label, 64);
+  if (label) affect.label = label;
+  return affect;
+}
+
+function normalizeReflectionMemory(raw: unknown): ReflectMemory | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  const content = boundedString(record.content, 5000);
+  if (!content) return null;
+  const source = record.source;
+  if (typeof source !== 'string' || !REFLECTION_SOURCES.has(source as EncodeParams['source'])) {
+    return null;
+  }
+
+  const memory: ReflectMemory = {
+    content,
+    source: source as EncodeParams['source'],
+  };
+  const salience = boundedNumber(record.salience, 0, 1);
+  if (salience !== undefined) memory.salience = salience;
+  if (Array.isArray(record.tags)) {
+    const tags = record.tags
+      .map(tag => boundedString(tag, 64))
+      .filter((tag): tag is string => Boolean(tag))
+      .slice(0, 20);
+    if (tags.length > 0) memory.tags = tags;
+  }
+  if (typeof record.private === 'boolean') memory.private = record.private;
+  const affect = normalizeReflectionAffect(record.affect);
+  if (affect) memory.affect = affect;
+  return memory;
+}
+
+function messagesToLegacyPrompt(messages: Array<{ role: string; content: string }>): string {
+  return messages.map(message => `${message.role.toUpperCase()}:\n${message.content}`).join('\n\n');
+}
+
+export interface PostEncodeQueueDrainResult {
+  drained: boolean;
+  pendingIds: string[];
+}
+
+export interface PostEncodeQueueEvent {
+  episodeId: string;
+  queued_ms: number;
+  processing_ms: number;
+  total_ms: number;
+  pending_consolidation_count: number;
 }
 
 interface GreetingEpisodeRow {
@@ -135,11 +228,17 @@ export class Audrey extends EventEmitter {
     arousalWeight: number;
     resonance: { enabled: boolean; k: number; threshold: number; affectThreshold: number };
   };
+  defaultRetrievalMode: PublicRetrievalMode;
   autoReflect: boolean;
 
   private _migrationPending: boolean;
   private _autoConsolidateTimer: ReturnType<typeof setInterval> | null;
   private _closed: boolean;
+  private _postEncodeQueue: Promise<void>;
+  private _pendingPostEncodeIds: Set<string>;
+  private _embeddingWarm: boolean;
+  private _embeddingWarmupPromise: Promise<void> | null;
+  private _warmupDurationMs: number | null;
 
   constructor({
     dataDir = './audrey-data',
@@ -184,7 +283,7 @@ export class Audrey extends EventEmitter {
     this.consolidationConfig = {
       minEpisodes: consolidation.minEpisodes || 3,
     };
-    this.decayConfig = { dormantThreshold: decay.dormantThreshold || 0.1 };
+    this.decayConfig = { dormantThreshold };
     this._autoConsolidateTimer = null;
     this._closed = false;
     this.interferenceConfig = {
@@ -208,7 +307,13 @@ export class Audrey extends EventEmitter {
         affectThreshold: affect.resonance?.affectThreshold ?? 0.6,
       },
     };
+    this.defaultRetrievalMode = 'hybrid';
     this.autoReflect = autoReflect;
+    this._postEncodeQueue = Promise.resolve();
+    this._pendingPostEncodeIds = new Set();
+    this._embeddingWarm = false;
+    this._embeddingWarmupPromise = null;
+    this._warmupDurationMs = null;
   }
 
   async _ensureMigrated(): Promise<void> {
@@ -218,54 +323,213 @@ export class Audrey extends EventEmitter {
     this.emit('migration', counts);
   }
 
-  _emitValidation(id: string, params: EncodeParams): void {
-    validateMemory(this.db, this.embeddingProvider, { id, ...params }, {
-      llmProvider: this.llmProvider,
-    })
-      .then(validation => {
-        if (validation.action === 'reinforced') {
-          this.emit('reinforcement', {
-            episodeId: id,
-            targetId: validation.semanticId,
-            similarity: validation.similarity,
-          });
-        } else if (validation.action === 'contradiction') {
-          this.emit('contradiction', {
-            episodeId: id,
-            contradictionId: validation.contradictionId,
-            semanticId: validation.semanticId,
-            similarity: validation.similarity,
-            resolution: validation.resolution,
-          });
-        }
+  startEmbeddingWarmup(text = 'warmup'): Promise<void> {
+    if (this._embeddingWarm) return Promise.resolve();
+    if (this._embeddingWarmupPromise) return this._embeddingWarmupPromise;
+
+    const startedAt = performance.now();
+    this._embeddingWarmupPromise = (async () => {
+      if (typeof this.embeddingProvider.ready === 'function') {
+        await this.embeddingProvider.ready();
+      }
+      await this.embeddingProvider.embed(text);
+      this._embeddingWarm = true;
+    })()
+      .catch(err => {
+        this._emitQueueError(err);
+        throw err;
       })
-      .catch(err => this.emit('error', err));
+      .finally(() => {
+        this._warmupDurationMs = roundMs(performance.now() - startedAt);
+      });
+    return this._embeddingWarmupPromise;
+  }
+
+  async _waitForEmbeddingWarmup(profile?: ProfileRecorder, spanName = 'embedding.wait_for_warmup'): Promise<void> {
+    if (!this._embeddingWarmupPromise || this._embeddingWarm) return;
+    const wait = async (): Promise<void> => {
+      try {
+        await this._embeddingWarmupPromise;
+      } catch {
+        // Warmup failure should not poison the foreground call; the foreground
+        // embed path will surface provider errors if the provider is truly broken.
+      }
+    };
+    if (profile) await profile.measure(spanName, wait);
+    else await wait();
+  }
+
+  async _validateEncodedMemory(id: string, params: EncodeParams, embedding?: EncodedEmbedding): Promise<void> {
+    const validation = await validateMemory(this.db, this.embeddingProvider, { id, ...params }, {
+      llmProvider: this.llmProvider,
+      embeddingVector: embedding?.vector,
+      embeddingBuffer: embedding?.buffer,
+    });
+    if (validation.action === 'reinforced') {
+      this.emit('reinforcement', {
+        episodeId: id,
+        targetId: validation.semanticId,
+        similarity: validation.similarity,
+      });
+    } else if (validation.action === 'contradiction') {
+      this.emit('contradiction', {
+        episodeId: id,
+        contradictionId: validation.contradictionId,
+        semanticId: validation.semanticId,
+        similarity: validation.similarity,
+        resolution: validation.resolution,
+      });
+    }
+  }
+
+  async _runPostEncodeStage(name: string, run: () => Promise<void>): Promise<void> {
+    try {
+      await run();
+    } catch (err) {
+      this._emitQueueError(Object.assign(err instanceof Error ? err : new Error(String(err)), {
+        stage: name,
+      }));
+    }
+  }
+
+  async _runPostEncode(id: string, params: EncodeParams, embedding: EncodedEmbedding): Promise<void> {
+    if (this.interferenceConfig.enabled) {
+      await this._runPostEncodeStage('interference', async () => {
+        const affected = await applyInterference(this.db, this.embeddingProvider, id, params, this.interferenceConfig, embedding);
+        if (affected.length > 0) {
+          this.emit('interference', { episodeId: id, affected });
+        }
+      });
+    }
+
+    if (this.affectConfig.enabled && this.affectConfig.resonance.enabled && params.affect?.valence !== undefined) {
+      await this._runPostEncodeStage('resonance', async () => {
+        const echoes = await detectResonance(this.db, this.embeddingProvider, id, params, this.affectConfig.resonance, embedding);
+        if (echoes.length > 0) {
+          this.emit('resonance', { episodeId: id, affect: params.affect, echoes });
+        }
+      });
+    }
+
+    await this._runPostEncodeStage('validation', async () => {
+      await this._validateEncodedMemory(id, params, embedding);
+    });
+  }
+
+  _enqueuePostEncode(id: string, params: EncodeParams, embedding: EncodedEmbedding): Promise<void> {
+    const enqueuedAt = performance.now();
+    this._pendingPostEncodeIds.add(id);
+
+    const run = async (): Promise<void> => {
+      const startedAt = performance.now();
+      try {
+        if (!this._closed) {
+          await this._runPostEncode(id, params, embedding);
+        }
+      } finally {
+        const finishedAt = performance.now();
+        this._pendingPostEncodeIds.delete(id);
+        this.emit('post-encode-complete', {
+          episodeId: id,
+          queued_ms: roundMs(startedAt - enqueuedAt),
+          processing_ms: roundMs(finishedAt - startedAt),
+          total_ms: roundMs(finishedAt - enqueuedAt),
+          pending_consolidation_count: this._pendingPostEncodeIds.size,
+        } satisfies PostEncodeQueueEvent);
+      }
+    };
+
+    const task = this._postEncodeQueue.then(run, run);
+    this._postEncodeQueue = task.catch(err => {
+      this._emitQueueError(err);
+    });
+    return task;
+  }
+
+  _emitQueueError(err: unknown): void {
+    if (this.listenerCount('error') > 0) {
+      // Caller has opted into error handling; let them route logging.
+      this.emit('error', err);
+      return;
+    }
+    // Standard EventEmitter idiom: log only when nobody is listening, so we
+    // surface failures by default but don't double-log for apps with structured
+    // error pipelines. The MCP server registers a logger listener at startup.
+    const stage = (err as { stage?: string })?.stage;
+    const prefix = stage ? `[audrey:post-encode:${stage}]` : '[audrey:post-encode]';
+    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    console.error(`${prefix} ${message}`);
+  }
+
+  pendingConsolidationIds(): string[] {
+    return [...this._pendingPostEncodeIds];
+  }
+
+  async drainPostEncodeQueue(timeoutMs = 5000): Promise<PostEncodeQueueDrainResult> {
+    if (this._pendingPostEncodeIds.size === 0) {
+      return { drained: true, pendingIds: [] };
+    }
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = Symbol('timed-out');
+    const timeoutPromise = new Promise<typeof timedOut>(resolve => {
+      timeout = setTimeout(() => resolve(timedOut), timeoutMs);
+    });
+
+    const result = await Promise.race([
+      this._postEncodeQueue.then(() => true),
+      timeoutPromise,
+    ]);
+    if (timeout) clearTimeout(timeout);
+
+    const drained = result === true && this._pendingPostEncodeIds.size === 0;
+    return {
+      drained,
+      pendingIds: this.pendingConsolidationIds(),
+    };
   }
 
   async encode(params: EncodeParams): Promise<string> {
-    await this._ensureMigrated();
-    const encodeParams = { ...params, arousalWeight: this.affectConfig.arousalWeight };
-    const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams);
+    return this._encodeInternal(params);
+  }
+
+  async encodeWithDiagnostics(params: EncodeParams): Promise<{ id: string; diagnostics: ProfileDiagnostics }> {
+    const profile = new ProfileRecorder('memory_encode');
+    const id = await this._encodeInternal(params, profile);
+    return { id, diagnostics: profile.finish() };
+  }
+
+  async _encodeInternal(params: EncodeParams, profile?: ProfileRecorder): Promise<string> {
+    await this._waitForEmbeddingWarmup(profile, 'encode.wait_for_warmup');
+    if (profile) await profile.measure('encode.ensure_migrated', () => this._ensureMigrated());
+    else await this._ensureMigrated();
+
+    const encodeParams = { ...params, agent: params.agent ?? this.agent, arousalWeight: this.affectConfig.arousalWeight };
+    let encodedVector: number[] | undefined;
+    let encodedBuffer: Buffer | undefined;
+    const id = profile
+      ? await profile.measure('encode.episode', () => encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
+        profile,
+        onVector: (vector, buffer) => {
+          encodedVector = vector;
+          encodedBuffer = buffer;
+        },
+      }))
+      : await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
+        onVector: (vector, buffer) => {
+          encodedVector = vector;
+          encodedBuffer = buffer;
+        },
+      });
+    const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
     this.emit('encode', { id, ...params });
-    if (this.interferenceConfig.enabled) {
-      applyInterference(this.db, this.embeddingProvider, id, params, this.interferenceConfig)
-        .then(affected => {
-          if (affected.length > 0) {
-            this.emit('interference', { episodeId: id, affected });
-          }
-        })
-        .catch(err => this.emit('error', err));
+    const postEncodeTask = profile
+      ? profile.measureSync('encode.enqueue_background', () => this._enqueuePostEncode(id, params, encodedEmbedding))
+      : this._enqueuePostEncode(id, params, encodedEmbedding);
+    if (params.waitForConsolidation) {
+      if (profile) await profile.measure('encode.wait_for_consolidation', () => postEncodeTask);
+      else await postEncodeTask;
     }
-    if (this.affectConfig.enabled && this.affectConfig.resonance.enabled && params.affect?.valence !== undefined) {
-      detectResonance(this.db, this.embeddingProvider, id, params, this.affectConfig.resonance)
-        .then(echoes => {
-          if (echoes.length > 0) {
-            this.emit('resonance', { episodeId: id, affect: params.affect, echoes });
-          }
-        })
-        .catch(err => this.emit('error', err));
-    }
-    this._emitValidation(id, params);
     return id;
   }
 
@@ -275,27 +539,34 @@ export class Audrey extends EventEmitter {
     const prompt = buildReflectionPrompt(turns);
     let raw: string;
     try {
-      raw = await this.llmProvider.chat!(prompt as unknown as string) as string;
+      if (typeof this.llmProvider.complete === 'function') {
+        raw = (await this.llmProvider.complete(prompt)).content;
+      } else if (typeof this.llmProvider.chat === 'function') {
+        raw = await this.llmProvider.chat(messagesToLegacyPrompt(prompt));
+      } else {
+        return { encoded: 0, memories: [], skipped: 'llm provider missing completion method' };
+      }
     } catch (err) {
       this.emit('error', err);
       return { encoded: 0, memories: [], skipped: 'llm error' };
     }
 
-    let parsed: { memories?: Array<{ content?: string; source?: string; salience?: number; tags?: string[]; private?: boolean; affect?: Affect }> };
+    let parsed: { memories?: unknown[] };
     try {
       parsed = JSON.parse(raw);
     } catch {
       return { encoded: 0, memories: [], skipped: 'invalid llm response' };
     }
 
-    const memories = parsed.memories ?? [];
+    const memories = Array.isArray(parsed.memories)
+      ? parsed.memories.map(normalizeReflectionMemory).filter((mem): mem is ReflectMemory => mem !== null).slice(0, 50)
+      : [];
     let encoded = 0;
     for (const mem of memories) {
-      if (!mem.content || !mem.source) continue;
       try {
         await this.encode({
           content: mem.content,
-          source: mem.source as EncodeParams['source'],
+          source: mem.source,
           salience: mem.salience,
           tags: mem.tags,
           private: mem.private ?? false,
@@ -307,30 +578,65 @@ export class Audrey extends EventEmitter {
       }
     }
 
-    return { encoded, memories: memories as ReflectResult['memories'] };
+    return { encoded, memories };
   }
 
   async encodeBatch(paramsList: EncodeParams[]): Promise<string[]> {
+    await this._waitForEmbeddingWarmup();
     await this._ensureMigrated();
     const ids: string[] = [];
+    const tasks: Array<Promise<void>> = [];
     for (const params of paramsList) {
-      const id = await encodeEpisode(this.db, this.embeddingProvider, params);
+      const encodeParams = { ...params, agent: params.agent ?? this.agent, arousalWeight: this.affectConfig.arousalWeight };
+      let encodedVector: number[] | undefined;
+      let encodedBuffer: Buffer | undefined;
+      const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
+        onVector: (vector, buffer) => {
+          encodedVector = vector;
+          encodedBuffer = buffer;
+        },
+      });
       ids.push(id);
       this.emit('encode', { id, ...params });
+      const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
+      tasks.push(this._enqueuePostEncode(id, params, encodedEmbedding));
     }
 
-    for (let i = 0; i < ids.length; i++) {
-      this._emitValidation(ids[i]!, paramsList[i]!);
+    if (paramsList.some(p => p.waitForConsolidation)) {
+      await Promise.all(tasks);
     }
 
     return ids;
   }
 
   async recall(query: string, options: RecallOptions = {}): Promise<RecallResult[]> {
-    await this._ensureMigrated();
+    return this._recallInternal(query, options);
+  }
+
+  async recallWithDiagnostics(
+    query: string,
+    options: RecallOptions = {},
+  ): Promise<{ results: RecallResult[]; diagnostics: ProfileDiagnostics }> {
+    const profile = new ProfileRecorder('memory_recall');
+    const results = await this._recallInternal(query, options, profile);
+    return { results, diagnostics: profile.finish() };
+  }
+
+  async _recallInternal(
+    query: string,
+    options: RecallOptions = {},
+    profile?: ProfileRecorder,
+  ): Promise<RecallResult[]> {
+    await this._waitForEmbeddingWarmup(profile, 'recall.wait_for_warmup');
+    if (profile) await profile.measure('recall.ensure_migrated', () => this._ensureMigrated());
+    else await this._ensureMigrated();
+
     return recallFn(this.db, this.embeddingProvider, query, {
       ...options,
+      agent: options.agent ?? this.agent,
+      retrieval: options.retrieval ?? this.defaultRetrievalMode,
       confidenceConfig: this._recallConfig(options),
+      profile,
     });
   }
 
@@ -338,6 +644,8 @@ export class Audrey extends EventEmitter {
     await this._ensureMigrated();
     yield* recallStreamFn(this.db, this.embeddingProvider, query, {
       ...options,
+      agent: this.agent,
+      retrieval: options.retrieval ?? this.defaultRetrievalMode,
       confidenceConfig: this._recallConfig(options),
     });
   }
@@ -358,6 +666,7 @@ export class Audrey extends EventEmitter {
     const result = await runConsolidation(this.db, this.embeddingProvider, {
       minClusterSize: options.minClusterSize || this.consolidationConfig.minEpisodes,
       similarityThreshold: options.similarityThreshold || 0.80,
+      agent: options.agent || this.agent,
       extractPrinciple: options.extractPrinciple,
       llmProvider: options.llmProvider || this.llmProvider || undefined,
     });
@@ -490,29 +799,35 @@ export class Audrey extends EventEmitter {
       device: device ?? null,
       healthy,
       reembed_recommended: reembedRecommended,
+      pending_consolidation_count: this._pendingPostEncodeIds.size,
+      embedding_warm: this._embeddingWarm,
+      warmup_duration_ms: this._warmupDurationMs,
+      default_retrieval_mode: this.defaultRetrievalMode,
     };
   }
 
-  async greeting({ context, recentLimit = 10, principleLimit = 5, identityLimit = 5 }: GreetingOptions = {}): Promise<GreetingResult> {
+  async greeting({ context, recentLimit = 10, principleLimit = 5, identityLimit = 5, scope = 'agent' }: GreetingOptions = {}): Promise<GreetingResult> {
+    const agentClause = scope === 'agent' ? 'AND agent = ?' : '';
+    const agentParam = scope === 'agent' ? [this.agent] : [];
     const recent = this.db.prepare(
-      'SELECT id, content, source, tags, salience, created_at FROM episodes WHERE "private" = 0 ORDER BY created_at DESC LIMIT ?'
-    ).all(recentLimit) as GreetingEpisodeRow[];
+      `SELECT id, content, source, tags, salience, created_at FROM episodes WHERE "private" = 0 ${agentClause} ORDER BY created_at DESC LIMIT ?`
+    ).all(...agentParam, recentLimit) as GreetingEpisodeRow[];
 
     const principles = this.db.prepare(
-      'SELECT id, content, salience, created_at FROM semantics WHERE state = ? ORDER BY salience DESC LIMIT ?'
-    ).all('active', principleLimit) as GreetingPrincipleRow[];
+      `SELECT id, content, salience, created_at FROM semantics WHERE state = ? ${agentClause} ORDER BY salience DESC LIMIT ?`
+    ).all('active', ...agentParam, principleLimit) as GreetingPrincipleRow[];
 
     const identity = this.db.prepare(
-      'SELECT id, content, tags, salience, created_at FROM episodes WHERE "private" = 1 ORDER BY created_at DESC LIMIT ?'
-    ).all(identityLimit) as GreetingIdentityRow[];
+      `SELECT id, content, tags, salience, created_at FROM episodes WHERE "private" = 1 ${agentClause} ORDER BY created_at DESC LIMIT ?`
+    ).all(...agentParam, identityLimit) as GreetingIdentityRow[];
 
     const unresolved = this.db.prepare(
-      "SELECT id, content, tags, salience, created_at FROM episodes WHERE tags LIKE '%unresolved%' AND salience > 0.3 ORDER BY created_at DESC LIMIT 10"
-    ).all() as GreetingUnresolvedRow[];
+      `SELECT id, content, tags, salience, created_at FROM episodes WHERE tags LIKE '%unresolved%' AND salience > 0.3 ${agentClause} ORDER BY created_at DESC LIMIT 10`
+    ).all(...agentParam) as GreetingUnresolvedRow[];
 
     const rawAffectRows = this.db.prepare(
-      "SELECT affect FROM episodes WHERE affect IS NOT NULL AND affect != '{}' ORDER BY created_at DESC LIMIT 20"
-    ).all() as AffectRow[];
+      `SELECT affect FROM episodes WHERE affect IS NOT NULL AND affect != '{}' ${agentClause} ORDER BY created_at DESC LIMIT 20`
+    ).all(...agentParam) as AffectRow[];
 
     const affectParsed = rawAffectRows
       .map(r => { try { return JSON.parse(r.affect) as Affect; } catch { return null; } })
@@ -534,7 +849,7 @@ export class Audrey extends EventEmitter {
     const result: GreetingResult = { recent, principles, mood, unresolved, identity };
 
     if (context) {
-      result.contextual = await this.recall(context, { limit: 5, includePrivate: true });
+      result.contextual = await this.recall(context, { limit: 5, includePrivate: true, scope });
     }
 
     return result;
@@ -602,6 +917,39 @@ export class Audrey extends EventEmitter {
     return suggestParamsFn(this.db);
   }
 
+  validate(input: MemoryValidateInput): MemoryValidateResult | null {
+    const result = applyFeedback(this.db, input);
+    if (result) {
+      // Audit row in memory_events so audrey impact can show
+      // helpful-vs-wrong breakdown over a window. Outcome is mapped onto the
+      // events-table enum: helpful → succeeded, wrong → failed, used → unknown.
+      // The original outcome string is preserved in metadata.
+      const eventOutcome = input.outcome === 'helpful' ? 'succeeded'
+        : input.outcome === 'wrong' ? 'failed'
+        : 'unknown';
+      insertEvent(this.db, {
+        eventType: 'Validate',
+        source: 'memory_validate',
+        actorAgent: this.agent,
+        outcome: eventOutcome,
+        redactionState: 'clean',
+        metadata: {
+          memory_id: result.id,
+          memory_type: result.type,
+          outcome: input.outcome,
+          salience_after: result.salience,
+          usage_count_after: result.usageCount,
+        },
+      });
+      this.emit('validate', result);
+    }
+    return result;
+  }
+
+  impact(options: { windowDays?: number; limit?: number } = {}): ImpactReport {
+    return buildImpactReport(this.db, options.windowDays ?? 7, options.limit ?? 5);
+  }
+
   forget(id: string, options: { purge?: boolean } = {}): ForgetResult {
     const result = forgetMemory(this.db, id, options);
     this.emit('forget', result);
@@ -625,11 +973,31 @@ export class Audrey extends EventEmitter {
     if (this._closed) return;
     this._closed = true;
     this.stopAutoConsolidate();
+    if (this._pendingPostEncodeIds.size > 0) {
+      // Sync close() can't await; emit a clear signal so callers can spot data loss.
+      // Use closeAsync() (preferred) or call drainPostEncodeQueue() before close() to avoid this.
+      console.error(
+        `[audrey] close() called with ${this._pendingPostEncodeIds.size} pending post-encode tasks ` +
+        `(use closeAsync() or await drainPostEncodeQueue() first to avoid losing consolidation work)`,
+      );
+    }
     closeDatabase(this.db);
   }
 
+  async closeAsync(timeoutMs = 5000): Promise<PostEncodeQueueDrainResult | undefined> {
+    if (this._closed) return undefined;
+    let result: PostEncodeQueueDrainResult | undefined;
+    if (this._pendingPostEncodeIds.size > 0) {
+      result = await this.drainPostEncodeQueue(timeoutMs);
+    }
+    this._closed = true;
+    this.stopAutoConsolidate();
+    closeDatabase(this.db);
+    return result;
+  }
+
   async waitForIdle(): Promise<void> {
-    return Promise.resolve();
+    await this._postEncodeQueue;
   }
 
   observeTool(input: ObserveToolInput): ObserveToolResult {
@@ -690,6 +1058,30 @@ export class Audrey extends EventEmitter {
 
     const dryRun = options.dryRun ?? !options.yes;
     const projectDir = pathResolve(options.projectDir ?? process.cwd());
+    // Guard against malicious project_dir from MCP/HTTP callers writing
+    // .claude/rules/*.md to arbitrary locations — those files are read by
+    // Claude Code on the next session, making this a persistent
+    // prompt-injection vector. By default the path must be under cwd or one
+    // of the explicit AUDREY_PROMOTE_ROOTS entries.
+    if (!dryRun) {
+      const allowedRoots = [pathResolve(process.cwd())];
+      const extra = process.env.AUDREY_PROMOTE_ROOTS;
+      if (extra) {
+        for (const root of extra.split(/[:;]/).map(s => s.trim()).filter(Boolean)) {
+          allowedRoots.push(pathResolve(root));
+        }
+      }
+      const isUnderAllowedRoot = allowedRoots.some(root => {
+        const rel = relative(root, projectDir);
+        return rel === '' || (!rel.startsWith('..') && !pathIsAbsolute(rel));
+      });
+      if (!isUnderAllowedRoot) {
+        throw new Error(
+          `promote: refusing to write to ${projectDir} — path is outside cwd and AUDREY_PROMOTE_ROOTS. ` +
+          `Set AUDREY_PROMOTE_ROOTS=<path1>:<path2> to allow additional locations.`,
+        );
+      }
+    }
     const promotedAt = new Date().toISOString();
     const docs = renderAllRules(candidates, promotedAt);
 

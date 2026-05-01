@@ -50,6 +50,7 @@ export interface CausalParams {
 export interface EncodeParams {
   content: string;
   source: SourceType;
+  agent?: string;
   salience?: number;
   causal?: CausalParams;
   tags?: string[];
@@ -58,13 +59,15 @@ export interface EncodeParams {
   affect?: Affect;
   arousalWeight?: number;
   private?: boolean;
+  waitForConsolidation?: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Recall
 // ---------------------------------------------------------------------------
 
-export type RetrievalMode = 'vector' | 'keyword' | 'hybrid';
+export type PublicRetrievalMode = 'vector' | 'hybrid';
+export type RetrievalMode = PublicRetrievalMode | 'keyword';
 
 export interface RecallOptions {
   minConfidence?: number;
@@ -81,6 +84,8 @@ export interface RecallOptions {
   confidenceConfig?: ConfidenceConfig;
   includePrivate?: boolean;
   retrieval?: RetrievalMode;
+  scope?: 'shared' | 'agent';
+  agent?: string;
 }
 
 export interface EpisodicProvenance {
@@ -112,6 +117,7 @@ export interface RecallResult {
   confidence: number;
   score: number;
   source: string;
+  agent?: string;
   createdAt: string;
   state?: MemoryState;
   contextMatch?: number;
@@ -185,6 +191,7 @@ export interface ConsolidationResult {
 export interface ConsolidationOptions {
   similarityThreshold?: number;
   minClusterSize?: number;
+  agent?: string;
   extractPrinciple?: (episodes: EpisodeRow[]) => Promise<ExtractedPrinciple> | ExtractedPrinciple;
   llmProvider?: LLMProvider;
 }
@@ -242,6 +249,7 @@ export interface GreetingOptions {
   recentLimit?: number;
   principleLimit?: number;
   identityLimit?: number;
+  scope?: 'agent' | 'shared';
 }
 
 export interface GreetingResult {
@@ -413,6 +421,7 @@ export interface EpisodeRow {
   content: string;
   embedding: Buffer | null;
   source: string;
+  agent: string;
   source_reliability: number;
   salience: number;
   context: string;       // JSON string
@@ -432,6 +441,7 @@ export interface EpisodeRow {
 export interface SemanticRow {
   id: string;
   content: string;
+  agent: string;
   embedding: Buffer | null;
   state: MemoryState;
   conditions: string | null;           // JSON string
@@ -456,6 +466,7 @@ export interface SemanticRow {
 export interface ProceduralRow {
   id: string;
   content: string;
+  agent: string;
   embedding: Buffer | null;
   state: MemoryState;
   trigger_conditions: string | null;   // JSON string
@@ -539,6 +550,10 @@ export interface MemoryStatusResult {
   device: string | null;
   healthy: boolean;
   reembed_recommended: boolean;
+  pending_consolidation_count: number;
+  embedding_warm: boolean;
+  warmup_duration_ms: number | null;
+  default_retrieval_mode: PublicRetrievalMode;
 }
 
 export interface ForgetResult {

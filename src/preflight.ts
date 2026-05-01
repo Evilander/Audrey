@@ -1,7 +1,7 @@
 import type { Audrey } from './audrey.js';
 import type { CapsuleEntry, CapsuleMode, MemoryCapsule } from './capsule.js';
 import type { FailurePattern } from './events.js';
-import type { MemoryStatusResult } from './types.js';
+import type { MemoryStatusResult, RecallOptions } from './types.js';
 
 export type PreflightDecision = 'go' | 'caution' | 'block';
 export type PreflightSeverity = 'info' | 'low' | 'medium' | 'high';
@@ -28,6 +28,7 @@ export interface PreflightOptions {
   includeCapsule?: boolean;
   includeStatus?: boolean;
   recordEvent?: boolean;
+  scope?: RecallOptions['scope'];
 }
 
 export interface PreflightWarning {
@@ -174,6 +175,7 @@ export async function buildPreflight(
     recentChangeWindowHours: options.recentChangeWindowHours ?? 72,
     includeRisks: true,
     includeContradictions: true,
+    recall: { scope: options.scope ?? 'agent' },
   });
 
   const warnings: PreflightWarning[] = [];

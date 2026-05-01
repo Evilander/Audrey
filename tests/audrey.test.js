@@ -26,6 +26,7 @@ function normalizeSnapshot(snapshot) {
     'contradictions',
     'consolidationRuns',
     'consolidationMetrics',
+    'memoryEvents',
   ]) {
     if (Array.isArray(clone[key])) {
       clone[key].sort((a, b) => String(a.id).localeCompare(String(b.id)));
@@ -76,6 +77,210 @@ describe('Audrey', () => {
     expect(Array.isArray(results)).toBe(true);
   });
 
+  it('returns encode diagnostics on the profiled path without changing encode()', async () => {
+    const plainId = await brain.encode({
+      content: 'plain encode diagnostics control',
+      source: 'direct-observation',
+    });
+    const profiled = await brain.encodeWithDiagnostics({
+      content: 'profiled encode diagnostics test',
+      source: 'direct-observation',
+    });
+
+    expect(typeof plainId).toBe('string');
+    expect(typeof profiled.id).toBe('string');
+    expect(profiled.diagnostics.operation).toBe('memory_encode');
+    expect(profiled.diagnostics.total_ms).toBeGreaterThanOrEqual(0);
+    expect(profiled.diagnostics.spans.map(span => span.name)).toEqual(
+      expect.arrayContaining([
+        'encode.ensure_migrated',
+        'encode.episode',
+        'encode.embedding',
+        'encode.write_episode',
+        'encode.enqueue_background',
+      ])
+    );
+  });
+
+  it('returns recall diagnostics on the profiled path without changing recall()', async () => {
+    await brain.encode({ content: 'profiled recall diagnostics test', source: 'direct-observation' });
+
+    const plainResults = await brain.recall('profiled recall diagnostics', { limit: 5 });
+    const profiled = await brain.recallWithDiagnostics('profiled recall diagnostics', { limit: 5 });
+
+    expect(Array.isArray(plainResults)).toBe(true);
+    expect(Array.isArray(profiled.results)).toBe(true);
+    expect(profiled.diagnostics.operation).toBe('memory_recall');
+    expect(profiled.diagnostics.total_ms).toBeGreaterThanOrEqual(0);
+    expect(profiled.diagnostics.spans.map(span => span.name)).toEqual(
+      expect.arrayContaining([
+        'recall.ensure_migrated',
+        'recall.embedding',
+        'recall.episodic_knn',
+        'recall.fts_lookup',
+        'recall.fuse_results',
+        'recall.result_guards',
+      ])
+    );
+  });
+
+  it('reuses the main encode vector for post-encode checks', async () => {
+    const embedSpy = vi.spyOn(brain.embeddingProvider, 'embed');
+
+    await brain.encode({
+      content: 'post-encode vector reuse test',
+      source: 'direct-observation',
+      affect: { valence: 0.2, arousal: 0.4 },
+    });
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    expect(embedSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('tracks queued post-encode work and waitForIdle drains it', async () => {
+    let releasePostEncode;
+    const postEncodeDone = new Promise(resolve => {
+      releasePostEncode = resolve;
+    });
+    brain._runPostEncode = vi.fn(async () => {
+      await postEncodeDone;
+    });
+
+    const id = await brain.encode({
+      content: 'queued post encode status test',
+      source: 'direct-observation',
+    });
+
+    expect(typeof id).toBe('string');
+    expect(brain.memoryStatus().pending_consolidation_count).toBe(1);
+
+    releasePostEncode();
+    await brain.waitForIdle();
+
+    expect(brain.memoryStatus().pending_consolidation_count).toBe(0);
+  });
+
+  it('closeAsync drains the post-encode queue before closing the database', async () => {
+    let releasePostEncode;
+    const postEncodeDone = new Promise(resolve => { releasePostEncode = resolve; });
+    let postEncodeCompleted = false;
+    const originalRunPostEncode = brain._runPostEncode.bind(brain);
+    brain._runPostEncode = vi.fn(async (...args) => {
+      await postEncodeDone;
+      postEncodeCompleted = true;
+      return originalRunPostEncode(...args);
+    });
+
+    await brain.encode({ content: 'pre-close encode', source: 'direct-observation' });
+    expect(brain.memoryStatus().pending_consolidation_count).toBe(1);
+
+    // Race: caller invokes closeAsync while a post-encode task is in flight.
+    // closeAsync must wait for the queue to drain before closing the DB.
+    const closePromise = brain.closeAsync();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(postEncodeCompleted).toBe(false);  // still draining
+
+    releasePostEncode();
+    const result = await closePromise;
+    expect(postEncodeCompleted).toBe(true);
+    expect(result?.drained).toBe(true);
+  });
+
+  it('close() warns when called with pending post-encode work', async () => {
+    let releasePostEncode;
+    brain._runPostEncode = vi.fn(async () => {
+      await new Promise(resolve => { releasePostEncode = resolve; });
+    });
+    await brain.encode({ content: 'sync close warn', source: 'direct-observation' });
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      brain.close();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('called with 1 pending post-encode tasks'),
+      );
+    } finally {
+      errorSpy.mockRestore();
+      releasePostEncode?.();
+    }
+  });
+
+  it('waitForConsolidation waits for that row downstream work', async () => {
+    let releasePostEncode;
+    const postEncodeDone = new Promise(resolve => {
+      releasePostEncode = resolve;
+    });
+    let settled = false;
+    brain._runPostEncode = vi.fn(async () => {
+      await postEncodeDone;
+    });
+
+    const encodePromise = brain.encode({
+      content: 'wait for consolidation test',
+      source: 'direct-observation',
+      waitForConsolidation: true,
+    }).then(id => {
+      settled = true;
+      return id;
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    expect(brain.memoryStatus().pending_consolidation_count).toBe(1);
+
+    releasePostEncode();
+    const id = await encodePromise;
+
+    expect(typeof id).toBe('string');
+    expect(brain.memoryStatus().pending_consolidation_count).toBe(0);
+  });
+
+  it('tracks embedding warmup status', async () => {
+    expect(brain.memoryStatus().embedding_warm).toBe(false);
+    expect(brain.memoryStatus().warmup_duration_ms).toBeNull();
+
+    await brain.startEmbeddingWarmup();
+
+    const status = brain.memoryStatus();
+    expect(status.embedding_warm).toBe(true);
+    expect(status.warmup_duration_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('foreground encode waits for an in-flight embedding warmup', async () => {
+    const originalEmbed = brain.embeddingProvider.embed.bind(brain.embeddingProvider);
+    let releaseWarmup;
+    const warmupGate = new Promise(resolve => {
+      releaseWarmup = resolve;
+    });
+    vi.spyOn(brain.embeddingProvider, 'embed').mockImplementation(async text => {
+      if (text === 'warmup') {
+        await warmupGate;
+      }
+      return originalEmbed(text);
+    });
+
+    const warmup = brain.startEmbeddingWarmup();
+    let settled = false;
+    const encodePromise = brain.encode({
+      content: 'encode waits for warmup',
+      source: 'direct-observation',
+    }).then(id => {
+      settled = true;
+      return id;
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+
+    releaseWarmup();
+    await warmup;
+    const id = await encodePromise;
+
+    expect(typeof id).toBe('string');
+    expect(settled).toBe(true);
+    expect(brain.memoryStatus().embedding_warm).toBe(true);
+  });
+
   it('does not leave partial state when embedding fails during encode', async () => {
     brain.embeddingProvider = {
       ...brain.embeddingProvider,
@@ -108,7 +313,7 @@ describe('Audrey', () => {
   });
 
   // Skipped: _trackAsync / _pending are not yet implemented in the TS Audrey class.
-  // Planned in docs/plans/audrey-1.0-continuity-os-2026-04-22.md as part of correctness hardening.
+  // Planned as part of correctness hardening.
   it.skip('waitForIdle drains tracked background work', async () => {
     let releasePending;
     const pending = new Promise(resolve => {
@@ -1408,6 +1613,32 @@ describe('reflect()', () => {
     audrey.close();
   });
 
+  it('uses the standard LLM completion interface for reflection', async () => {
+    const tmpDir = join(tmpdir(), `audrey-reflect-complete-${Date.now()}`);
+    const audrey = new Audrey({
+      dataDir: tmpDir,
+      agent: 'test',
+      embedding: { provider: 'mock', dimensions: 8 },
+      llm: {
+        provider: 'mock',
+        responses: {
+          memoryReflection: {
+            memories: [
+              { content: 'reflection via complete works', source: 'inference', salience: 0.6, tags: ['reflect'] },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = await audrey.reflect([{ role: 'assistant', content: 'I should remember this.' }]);
+    expect(result.encoded).toBe(1);
+    const row = audrey.db.prepare("SELECT content, source FROM episodes WHERE content = 'reflection via complete works'").get();
+    expect(row.source).toBe('inference');
+
+    audrey.close();
+  });
+
   it('returns skipped when no llmProvider configured', async () => {
     const tmpDir = join(tmpdir(), `audrey-reflect-nollm-${Date.now()}`);
     const audrey = new Audrey({
@@ -1567,11 +1798,6 @@ describe('export/import roundtrip', () => {
       `).run('con-1', semantic.id, 'semantic', episode.id, 'episodic', 'open', null, now);
 
       source.db.prepare(`
-        INSERT INTO audrey_config (key, value) VALUES ('custom_flag', 'enabled')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-      `).run();
-
-      source.db.prepare(`
         UPDATE consolidation_runs
         SET confidence_deltas = ?, consolidation_prompt_hash = ?
         WHERE id = ?
@@ -1595,5 +1821,190 @@ describe('export/import roundtrip', () => {
       if (existsSync(sourceDir)) rmSync(sourceDir, { recursive: true });
       if (existsSync(destDir)) rmSync(destDir, { recursive: true });
     }
+  });
+});
+
+describe('Audrey closed-loop feedback (memory_validate)', () => {
+  let brain;
+  const TEST_DIR = './test-validate';
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'validate-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('returns null when validating an unknown id', () => {
+    const result = brain.validate({ id: 'not-a-real-id', outcome: 'helpful' });
+    expect(result).toBeNull();
+  });
+
+  it("'helpful' bumps an episodic memory's salience and usage_count", async () => {
+    const id = await brain.encode({
+      content: 'Stripe rate limit observation',
+      source: 'direct-observation',
+      salience: 0.5,
+    });
+
+    const result = brain.validate({ id, outcome: 'helpful' });
+    expect(result).not.toBeNull();
+    expect(result.id).toBe(id);
+    expect(result.type).toBe('episodic');
+    expect(result.outcome).toBe('helpful');
+    expect(result.salience).toBeGreaterThan(0.5);
+    expect(result.usageCount).toBe(1);
+  });
+
+  it("'wrong' decreases salience and is clamped at 0", async () => {
+    const id = await brain.encode({
+      content: 'Test memory',
+      source: 'told-by-user',
+      salience: 0.05,  // start near floor
+    });
+
+    const result = brain.validate({ id, outcome: 'wrong' });
+    expect(result.salience).toBe(0);  // clamped, not negative
+    expect(result.usageCount).toBe(1);
+  });
+
+  it('repeated helpful calls compound salience, with ceiling at 1.0', async () => {
+    const id = await brain.encode({
+      content: 'Repeatedly validated memory',
+      source: 'direct-observation',
+      salience: 0.9,
+    });
+
+    let last = null;
+    for (let i = 0; i < 10; i++) {
+      last = brain.validate({ id, outcome: 'helpful' });
+    }
+    expect(last.salience).toBe(1.0);  // clamped at ceiling
+    expect(last.usageCount).toBe(10);
+  });
+
+  it('emits a "validate" event with the result', async () => {
+    const id = await brain.encode({
+      content: 'Event-emitting memory',
+      source: 'direct-observation',
+    });
+    const events = [];
+    brain.on('validate', evt => events.push(evt));
+
+    const result = brain.validate({ id, outcome: 'used' });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual(result);
+  });
+
+  it("'used' is a smaller delta than 'helpful'", async () => {
+    const idA = await brain.encode({ content: 'memory A', source: 'direct-observation', salience: 0.5 });
+    const idB = await brain.encode({ content: 'memory B', source: 'direct-observation', salience: 0.5 });
+
+    const usedResult = brain.validate({ id: idA, outcome: 'used' });
+    const helpfulResult = brain.validate({ id: idB, outcome: 'helpful' });
+
+    expect(helpfulResult.salience).toBeGreaterThan(usedResult.salience);
+  });
+});
+
+describe('Audrey impact report', () => {
+  let brain;
+  const TEST_DIR = './test-impact';
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'impact-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('reports zero counts on a fresh store', () => {
+    const report = brain.impact();
+    expect(report.totals).toEqual({ episodic: 0, semantic: 0, procedural: 0 });
+    expect(report.validatedTotal).toBe(0);
+    expect(report.validatedInWindow).toBe(0);
+    expect(report.topUsed).toEqual([]);
+  });
+
+  it('counts validated memories and surfaces the top usage_count rows', async () => {
+    const ids = await Promise.all([
+      brain.encode({ content: 'memory one', source: 'direct-observation' }),
+      brain.encode({ content: 'memory two', source: 'direct-observation' }),
+      brain.encode({ content: 'memory three', source: 'direct-observation' }),
+    ]);
+    for (let i = 0; i < 3; i++) brain.validate({ id: ids[0], outcome: 'helpful' });
+    brain.validate({ id: ids[1], outcome: 'used' });
+
+    const report = brain.impact();
+    expect(report.totals.episodic).toBe(3);
+    expect(report.validatedTotal).toBe(2);
+    expect(report.validatedInWindow).toBe(2);
+    expect(report.topUsed[0].id).toBe(ids[0]);
+    expect(report.topUsed[0].usage_count).toBe(3);
+  });
+
+  it('weakest list surfaces low-salience memories first', async () => {
+    const lowId = await brain.encode({ content: 'low salience', source: 'direct-observation', salience: 0.1 });
+    await brain.encode({ content: 'high salience', source: 'direct-observation', salience: 0.9 });
+    const report = brain.impact();
+    expect(report.weakest[0].id).toBe(lowId);
+    expect(report.weakest[0].salience).toBeCloseTo(0.1, 5);
+  });
+});
+
+describe('Audrey impact outcome breakdown', () => {
+  let brain;
+  const TEST_DIR = './test-impact-audit';
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    brain = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'impact-audit-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    brain.close();
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('outcome breakdown counts helpful/wrong/used events from the audit trail', async () => {
+    const id1 = await brain.encode({ content: 'one', source: 'direct-observation' });
+    const id2 = await brain.encode({ content: 'two', source: 'direct-observation' });
+    brain.validate({ id: id1, outcome: 'helpful' });
+    brain.validate({ id: id1, outcome: 'helpful' });
+    brain.validate({ id: id2, outcome: 'wrong' });
+    brain.validate({ id: id2, outcome: 'used' });
+
+    const report = brain.impact();
+    expect(report.outcomeBreakdownInWindow).toEqual({ helpful: 2, wrong: 1, used: 1 });
+  });
+
+  it('outcome breakdown respects the time window', async () => {
+    const id = await brain.encode({ content: 'test', source: 'direct-observation' });
+    brain.validate({ id, outcome: 'helpful' });
+
+    const recent = brain.impact({ windowDays: 7 });
+    expect(recent.outcomeBreakdownInWindow.helpful).toBe(1);
+
+    // Negative window puts the cutoff in the future — nothing is in-range.
+    const future = brain.impact({ windowDays: -1 });
+    expect(future.outcomeBreakdownInWindow.helpful).toBe(0);
   });
 });

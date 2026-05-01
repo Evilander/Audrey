@@ -67,6 +67,7 @@ interface ProceduralRow {
   salience: number;
   created_at: string;
   last_reinforced_at: string | null;
+  trigger_conditions: string | null;
 }
 
 interface EventRow {
@@ -167,7 +168,7 @@ export function findPromotionCandidates(
   // Procedural memories: primary promotion stream
   const procedurals = db.prepare(
     `SELECT id, content, state, success_count, failure_count, retrieval_count,
-            usage_count, salience, created_at, last_reinforced_at
+            usage_count, salience, created_at, last_reinforced_at, trigger_conditions
      FROM procedures
      WHERE state = 'active'`,
   ).all() as ProceduralRow[];
@@ -183,8 +184,7 @@ export function findPromotionCandidates(
     const confidence = evidenceTotal === 0 ? 0 : successes / evidenceTotal;
     if (confidence < minConfidence) continue;
 
-    const tagsRow = db.prepare(`SELECT trigger_conditions FROM procedures WHERE id = ?`).get(row.id) as { trigger_conditions: string | null };
-    const tags = parseTags(tagsRow?.trigger_conditions);
+    const tags = parseTags(row.trigger_conditions);
 
     let failurePrevented = 0;
     for (const f of failures) {

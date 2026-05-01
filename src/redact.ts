@@ -26,7 +26,8 @@ export type RedactionClass =
   | 'cvv'
   | 'us_ssn'
   | 'signed_url_signature'
-  | 'session_cookie';
+  | 'session_cookie'
+  | 'high_entropy_secret';
 
 interface RedactionRule {
   readonly class: RedactionClass;
@@ -47,7 +48,7 @@ export interface RedactionResult {
 
 function tokenPlaceholder(className: RedactionClass, match: string): string {
   const tail = match.slice(-4).replace(/[^A-Za-z0-9]/g, '');
-  const suffix = tail.length === 4 ? `…${tail}` : '';
+  const suffix = tail.length === 4 ? `:${tail}` : '';
   return `[REDACTED:${className}${suffix}]`;
 }
 
@@ -155,9 +156,8 @@ const RULES: RedactionRule[] = [
     },
   },
   {
-    // Keep this last: it is the broadest of the credential classes and can
-    // otherwise shadow more specific token patterns (google_api_key, stripe,
-    // github, openai, etc.) when a caller writes `api_key: <token>`.
+    // Keep this after named credential formats so a caller writing
+    // `api_key: <token>` gets a key-assignment redaction, not a generic one.
     class: 'password_assignment',
     pattern: /(?:\b|_)(?:password|passwd|pwd|secret|api[_-]?key|auth[_-]?token|bearer[_-]?token)\s*[:=]\s*["']?([^\s"'&]{4,})["']?/gi,
     replacement: (match: string) => {
@@ -165,6 +165,13 @@ const RULES: RedactionRule[] = [
       const prefix = split ? split[1] : '';
       return `${prefix}[REDACTED:password_assignment]`;
     },
+  },
+  {
+    class: 'high_entropy_secret',
+    pattern: /(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/=_-]{32,}(?![A-Za-z0-9+/=_-])/g,
+    replacement: (match: string) => (
+      looksLikeHighEntropySecret(match) ? tokenPlaceholder('high_entropy_secret', match) : match
+    ),
   },
 ];
 
@@ -183,6 +190,40 @@ function isLikelyCard(digits: string): boolean {
     shouldDouble = !shouldDouble;
   }
   return sum % 10 === 0;
+}
+
+function shannonEntropy(value: string): number {
+  const counts = new Map<string, number>();
+  for (const ch of value) {
+    counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  }
+
+  let entropy = 0;
+  for (const count of counts.values()) {
+    const p = count / value.length;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+function looksLikeHighEntropySecret(value: string): boolean {
+  if (value.length < 32) return false;
+  const classes = [
+    /[a-z]/.test(value),
+    /[A-Z]/.test(value),
+    /\d/.test(value),
+    /[+/_=-]/.test(value),
+  ].filter(Boolean).length;
+  if (classes < 2) return false;
+
+  const entropy = shannonEntropy(value);
+  if (/^[a-f0-9]+$/i.test(value)) {
+    // Git SHA-1 (40), git tree/blob hashes, SHA-256 hex (64) are not secrets on their
+    // own. Only treat hex strings as secrets if they're long enough that they exceed
+    // common public-hash sizes (>=80 hex chars) AND have hash-grade entropy.
+    return value.length >= 80 && entropy >= 3.3;
+  }
+  return entropy >= 4.0;
 }
 
 export function redact(input: string): RedactionResult {

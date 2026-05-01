@@ -1,6 +1,8 @@
 ﻿import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { z } from 'zod';
 import { EventEmitter } from 'node:events';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { Audrey } from '../dist/src/index.js';
 import { readStoredDimensions } from '../dist/src/db.js';
 import {
@@ -24,10 +26,13 @@ import {
   initializeEmbeddingProvider,
   memoryEncodeToolSchema,
   memoryForgetToolSchema,
+  memoryValidateToolSchema,
   memoryImportToolSchema,
   memoryPreflightToolSchema,
   memoryRecallToolSchema,
   memoryReflexesToolSchema,
+  registerHostPrompts,
+  registerHostResources,
   registerShutdownHandlers,
   registerDreamTool,
   runDemoCommand,
@@ -35,13 +40,42 @@ import {
   runStatusCommand,
   validateForgetSelection,
 } from '../dist/mcp-server/index.js';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 
 const TEST_DIR = './test-mcp-server';
 
 describe('MCP config', () => {
-  it('VERSION is 0.21.0', () => {
-    expect(VERSION).toBe('0.21.0');
+  it('VERSION matches package.json', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    expect(VERSION).toBe(pkg.version);
+  });
+});
+
+describe('CLI surface', () => {
+  // Spawning the CLI exercises the dispatcher in mcp-server/index.ts. Without these,
+  // a future refactor could silently re-introduce the bug where `audrey --help`
+  // dropped the user into an MCP stdio server waiting on stdin.
+  const cli = resolve('dist/mcp-server/index.js');
+
+  it('--help prints help and exits 0', () => {
+    const r = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8', timeout: 10000 });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('Usage: audrey');
+    expect(r.stdout).toContain('doctor');
+    expect(r.stdout).toContain('demo');
+  });
+
+  it('--version prints version and exits 0', () => {
+    const r = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8', timeout: 10000 });
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe(`audrey ${VERSION}`);
+  });
+
+  it('unknown subcommand exits 2 with help on stderr', () => {
+    const r = spawnSync(process.execPath, [cli, 'definitelynotacommand'], { encoding: 'utf8', timeout: 10000 });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("unknown command 'definitelynotacommand'");
+    expect(r.stdout).toContain('Usage: audrey');
   });
 });
 
@@ -50,6 +84,7 @@ describe('MCP CLI: buildAudreyConfig', () => {
   const envKeys = [
     'AUDREY_DATA_DIR', 'AUDREY_AGENT', 'AUDREY_EMBEDDING_PROVIDER',
     'AUDREY_EMBEDDING_DIMENSIONS', 'AUDREY_LLM_PROVIDER',
+    'AUDREY_ENABLE_ADMIN_TOOLS',
     'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'AUDREY_DEVICE',
     'GOOGLE_API_KEY', 'GEMINI_API_KEY',
   ];
@@ -167,8 +202,15 @@ describe('MCP CLI: buildInstallArgs', () => {
     expect(envPairsStr).not.toContain('GOOGLE_API_KEY=google-test');
   });
 
-  it('detects ANTHROPIC_API_KEY and enables LLM provider', () => {
+  it('does not include auto-detected LLM provider secrets by default', () => {
     const args = buildInstallArgs({ ANTHROPIC_API_KEY: 'sk-ant-test' });
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    expect(envPairsStr).not.toContain('AUDREY_LLM_PROVIDER=anthropic');
+    expect(envPairsStr).not.toContain('ANTHROPIC_API_KEY=sk-ant-test');
+  });
+
+  it('includes provider secrets only when explicitly requested', () => {
+    const args = buildInstallArgs({ ANTHROPIC_API_KEY: 'sk-ant-test' }, { includeSecrets: true });
     const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
     expect(envPairsStr).toContain('AUDREY_LLM_PROVIDER=anthropic');
     expect(envPairsStr).toContain('ANTHROPIC_API_KEY=sk-ant-test');
@@ -187,7 +229,7 @@ describe('MCP CLI: buildInstallArgs', () => {
     });
     const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
     expect(envPairsStr).toContain('AUDREY_LLM_PROVIDER=openai');
-    expect(envPairsStr).toContain('OPENAI_API_KEY=sk-openai-test');
+    expect(envPairsStr).not.toContain('OPENAI_API_KEY=sk-openai-test');
   });
 
   it('places server name before -e flags to avoid variadic parsing bug', () => {
@@ -298,6 +340,23 @@ describe('MCP validation hardening', () => {
     expect(schema.safeParse({ query: 'test', limit: 50 }).success).toBe(true);
   });
 
+  it('memory_recall accepts public retrieval modes', () => {
+    const schema = z.object(memoryRecallToolSchema);
+    expect(schema.safeParse({ query: 'test', retrieval: 'hybrid' }).success).toBe(true);
+    expect(schema.safeParse({ query: 'test', retrieval: 'vector' }).success).toBe(true);
+    expect(schema.safeParse({ query: 'test', retrieval: 'keyword' }).success).toBe(false);
+    expect(schema.safeParse({ query: 'test', retrieval: 'hybrid_strict' }).success).toBe(false);
+  });
+
+  it('memory_encode accepts wait_for_consolidation', () => {
+    const schema = z.object(memoryEncodeToolSchema);
+    expect(schema.safeParse({
+      content: 'wait for post encode work',
+      source: 'direct-observation',
+      wait_for_consolidation: true,
+    }).success).toBe(true);
+  });
+
   it('memory_preflight rejects empty actions and accepts strict risk checks', () => {
     const schema = z.object(memoryPreflightToolSchema);
     expect(schema.safeParse({ action: '', tool: 'Bash' }).success).toBe(false);
@@ -329,7 +388,16 @@ describe('MCP validation hardening', () => {
       snapshot: {
         version: '0.15.0',
         episodes: [],
-        consolidationMetrics: [{ id: 'metric-1' }],
+        consolidationMetrics: [{
+          id: 'metric-1',
+          run_id: 'run-1',
+          min_cluster_size: 2,
+          similarity_threshold: 0.7,
+          episodes_evaluated: 4,
+          clusters_found: 1,
+          principles_extracted: 1,
+          created_at: '2026-04-30T00:00:00.000Z',
+        }],
       },
     }).success).toBe(true);
   });
@@ -355,6 +423,74 @@ describe('MCP validation hardening', () => {
       'min_similarity',
       'purge',
     ]);
+  });
+
+  it('memory_validate accepts the closed-loop outcome enum', () => {
+    const schema = z.object(memoryValidateToolSchema);
+    expect(schema.safeParse({ id: 'mem_1', outcome: 'helpful' }).success).toBe(true);
+    expect(schema.safeParse({ id: 'mem_1', outcome: 'used' }).success).toBe(true);
+    expect(schema.safeParse({ id: 'mem_1', outcome: 'wrong' }).success).toBe(true);
+    expect(schema.safeParse({ id: 'mem_1', outcome: 'maybe' }).success).toBe(false);
+    expect(schema.safeParse({ outcome: 'helpful' }).success).toBe(false);  // id required
+  });
+});
+
+describe('MCP host resources and prompts', () => {
+  it('registers host-readable status, recent, and principles resources', async () => {
+    const resources = [];
+    const server = {
+      registerResource: vi.fn((name, uri, metadata, callback) => {
+        resources.push({ name, uri, metadata, callback });
+      }),
+    };
+    const audrey = {
+      memoryStatus: vi.fn(() => ({ healthy: true })),
+      introspect: vi.fn(() => ({ episodes: 2 })),
+      greeting: vi.fn(async ({ recentLimit, principleLimit, identityLimit, scope }) => ({
+        recent: recentLimit ? [{ id: 'ep-1', content: 'recent memory' }] : [],
+        principles: principleLimit ? [{ id: 'sem-1', content: 'ship with proof' }] : [],
+        identity: identityLimit ? [{ id: 'id-1', content: 'agent identity' }] : [],
+        unresolved: [],
+        mood: { valence: 0, arousal: 0, samples: 0 },
+        scope,
+      })),
+    };
+
+    registerHostResources(server, audrey);
+
+    expect(resources.map(resource => resource.uri)).toEqual([
+      'audrey://status',
+      'audrey://recent',
+      'audrey://principles',
+    ]);
+    const status = await resources[0].callback(new URL('audrey://status'));
+    expect(JSON.parse(status.contents[0].text).status.healthy).toBe(true);
+    const recent = await resources[1].callback(new URL('audrey://recent'));
+    expect(JSON.parse(recent.contents[0].text).recent[0].content).toBe('recent memory');
+    expect(audrey.greeting).toHaveBeenCalledWith(expect.objectContaining({ scope: 'agent' }));
+  });
+
+  it('registers reusable prompt templates for briefing, recall, and reflection', () => {
+    const prompts = [];
+    const server = {
+      registerPrompt: vi.fn((name, config, callback) => {
+        prompts.push({ name, config, callback });
+      }),
+    };
+
+    registerHostPrompts(server);
+
+    expect(prompts.map(prompt => prompt.name)).toEqual([
+      'audrey-session-briefing',
+      'audrey-memory-recall',
+      'audrey-memory-reflection',
+    ]);
+    const briefing = prompts[0].callback({ context: 'release pass', scope: 'agent' });
+    expect(briefing.messages[0].content.text).toContain('memory_greeting');
+    expect(briefing.messages[0].content.text).toContain('scope=agent');
+    const recall = prompts[1].callback({ query: 'spawn EPERM', scope: 'agent' });
+    expect(recall.messages[0].content.text).toContain('memory_recall');
+    expect(recall.messages[0].content.text).toContain('spawn EPERM');
   });
 });
 
@@ -383,6 +519,41 @@ describe('MCP lifecycle hardening', () => {
     expect(audrey.close).toHaveBeenCalledOnce();
     expect(fakeProcess.exit).toHaveBeenCalledWith(1);
     expect(logger).toHaveBeenCalled();
+  });
+
+  it('drains Audrey post-encode queue before closing on shutdown', async () => {
+    const fakeProcess = new EventEmitter();
+    fakeProcess.exit = vi.fn();
+    const audrey = {
+      drainPostEncodeQueue: vi.fn().mockResolvedValue({ drained: true, pendingIds: [] }),
+      close: vi.fn(),
+    };
+
+    registerShutdownHandlers(fakeProcess, audrey, vi.fn());
+    fakeProcess.emit('SIGTERM');
+    await Promise.resolve();
+
+    expect(audrey.drainPostEncodeQueue).toHaveBeenCalledWith(5000);
+    expect(audrey.close).toHaveBeenCalledOnce();
+    expect(fakeProcess.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('logs pending row ids when post-encode queue does not drain before shutdown timeout', async () => {
+    const fakeProcess = new EventEmitter();
+    fakeProcess.exit = vi.fn();
+    const audrey = {
+      drainPostEncodeQueue: vi.fn().mockResolvedValue({ drained: false, pendingIds: ['ep-a', 'ep-b'] }),
+      close: vi.fn(),
+    };
+    const logger = vi.fn();
+
+    registerShutdownHandlers(fakeProcess, audrey, logger);
+    fakeProcess.emit('SIGTERM');
+    await Promise.resolve();
+
+    expect(logger).toHaveBeenCalledWith(expect.stringContaining('ep-a, ep-b'));
+    expect(audrey.close).toHaveBeenCalledOnce();
+    expect(fakeProcess.exit).toHaveBeenCalledWith(0);
   });
 });
 
@@ -1057,6 +1228,10 @@ describe('MCP tool: memory_status', () => {
     expect(status.dimensions).toBe(8);
     expect(status.schema_version).toBe(11);
     expect(status.healthy).toBe(true);
+    expect(status.pending_consolidation_count).toBeGreaterThanOrEqual(0);
+    expect(status.embedding_warm).toBe(false);
+    expect(status.warmup_duration_ms).toBeNull();
+    expect(status.default_retrieval_mode).toBe('hybrid');
   });
 
   it('reports unhealthy when vec counts diverge', () => {

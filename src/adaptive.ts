@@ -35,8 +35,10 @@ export function suggestConsolidationParams(db: Database.Database): {
   }
 
   const paramScores = new Map<string, ParamScore>();
+  let validRuns = 0;
   for (const run of runs) {
     if (run.episodes_evaluated === 0) continue;
+    validRuns++;
     const key = `${run.min_cluster_size}:${run.similarity_threshold}`;
     if (!paramScores.has(key)) {
       paramScores.set(key, {
@@ -63,7 +65,7 @@ export function suggestConsolidationParams(db: Database.Database): {
   }
 
   const best = paramScores.get(bestKey)!;
-  const confidence = runs.length >= 5 ? 'high' : runs.length >= 2 ? 'medium' : 'low';
+  const confidence = validRuns >= 5 ? 'high' : validRuns >= 2 ? 'medium' : 'low';
 
   return {
     minClusterSize: best.minClusterSize,

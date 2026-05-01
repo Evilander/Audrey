@@ -73,11 +73,25 @@ export async function articulateCausalLink(
   spurious: boolean;
 }> {
   const messages = buildCausalArticulationPrompt(cause, effect);
-  const result = await llmProvider.json(messages) as {
-    spurious: boolean;
-    mechanism: string;
-    linkType: string;
-    confidence: number;
+  const raw = await llmProvider.json(messages);
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Causal articulation LLM response must be a JSON object');
+  }
+  const candidate = raw as Record<string, unknown>;
+  if (
+    typeof candidate.spurious !== 'boolean' ||
+    typeof candidate.mechanism !== 'string' ||
+    typeof candidate.confidence !== 'number'
+  ) {
+    throw new Error('Causal articulation LLM response is missing required fields');
+  }
+  const result = {
+    spurious: candidate.spurious,
+    mechanism: candidate.mechanism,
+    linkType: typeof candidate.linkType === 'string' && candidate.linkType
+      ? candidate.linkType
+      : 'correlational',
+    confidence: candidate.confidence,
   };
 
   if (result.spurious) {
@@ -93,7 +107,7 @@ export async function articulateCausalLink(
   const linkId = addCausalLink(db, {
     causeId: cause.id,
     effectId: effect.id,
-    linkType: result.linkType || 'correlational',
+    linkType: result.linkType,
     mechanism: result.mechanism,
     confidence: result.confidence,
   });
