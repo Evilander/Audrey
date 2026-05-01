@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Audrey } from './audrey.js';
 import type { PreflightOptions } from './preflight.js';
 import type { RecallOptions, MemoryType, PublicRetrievalMode } from './types.js';
@@ -151,13 +151,15 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // API key middleware - only if apiKey is configured.
-  // We compare SHA-256 digests of the full header + expected value so the
+  // We compare HMAC-SHA256 tags of the full header + expected value so the
   // operands fed to timingSafeEqual are always 32 bytes. This eliminates the
   // length-based early exit (which leaked key length via response timing) and
-  // keeps the comparison constant-time even when the provided header has a
-  // wildly different length from the expected token.
+  // keeps the comparison constant-time when the header length differs from
+  // the expected token. The HMAC key is a per-process random secret; we never
+  // store or persist it, so an attacker cannot precompute tags offline.
   if (options.apiKey) {
-    const expectedDigest = createHash('sha256')
+    const compareKey = randomBytes(32);
+    const expectedTag = createHmac('sha256', compareKey)
       .update(`Bearer ${options.apiKey}`, 'utf8')
       .digest();
     app.use('/v1/*', async (c, next) => {
@@ -165,8 +167,8 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       if (!auth) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
-      const providedDigest = createHash('sha256').update(auth, 'utf8').digest();
-      if (!timingSafeEqual(providedDigest, expectedDigest)) {
+      const providedTag = createHmac('sha256', compareKey).update(auth, 'utf8').digest();
+      if (!timingSafeEqual(providedTag, expectedTag)) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
       await next();
