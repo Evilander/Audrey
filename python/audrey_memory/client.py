@@ -8,7 +8,6 @@ from pydantic import BaseModel
 from ._version import __version__
 from .types import (
     AckResponse,
-    AnalyticsResponse,
     ConsolidateRequest,
     DreamRequest,
     EncodeRequest,
@@ -146,15 +145,22 @@ class Audrey:
     def status(self) -> StatusResponse:
         return _validate(StatusResponse, _decode_json(self._client.get("/v1/status")))
 
-    def analytics(self) -> AnalyticsResponse:
-        # Not yet exposed by the TypeScript REST sidecar. Tracked as P1 in
-        # docs/PRODUCTION_BACKLOG.md (analytics surface — memory_validate
-        # itself shipped as P0#1 in 0.22.1). Raising NotImplementedError
-        # instead of letting users hit a confusing 404 from Hono.
-        raise NotImplementedError(
-            "audrey.analytics() requires /v1/analytics on the REST sidecar, "
-            "which is not yet implemented. See docs/PRODUCTION_BACKLOG.md (P1)."
+    def impact(self, *, window_days: int = 7, limit: int = 5) -> dict[str, Any]:
+        """Closed-loop visibility report: validations, decay, promotions over a window.
+
+        Mirrors `audrey impact` and `Audrey.impact()` on the TypeScript side.
+        """
+        return _decode_json(
+            self._client.get(
+                "/v1/impact",
+                params={"windowDays": window_days, "limit": limit},
+            )
         )
+
+    def analytics(self) -> dict[str, Any]:
+        # analytics() is kept as an alias of impact() for callers that already
+        # adopted the older spelling. New code should call impact() directly.
+        return self.impact()
 
     def encode(self, payload: EncodeRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> str:
         request = _build_model_payload(payload, EncodeRequest, "content", kwargs)
@@ -270,12 +276,16 @@ class AsyncAudrey:
     async def status(self) -> StatusResponse:
         return _validate(StatusResponse, _decode_json(await self._client.get("/v1/status")))
 
-    async def analytics(self) -> AnalyticsResponse:
-        # Not yet exposed by the TypeScript REST sidecar. See sync analytics().
-        raise NotImplementedError(
-            "audrey.analytics() requires /v1/analytics on the REST sidecar, "
-            "which is not yet implemented. See docs/PRODUCTION_BACKLOG.md (P1)."
+    async def impact(self, *, window_days: int = 7, limit: int = 5) -> dict[str, Any]:
+        """Closed-loop visibility report — async counterpart of `Audrey.impact`."""
+        response = await self._client.get(
+            "/v1/impact",
+            params={"windowDays": window_days, "limit": limit},
         )
+        return _decode_json(response)
+
+    async def analytics(self) -> dict[str, Any]:
+        return await self.impact()
 
     async def encode(self, payload: EncodeRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> str:
         request = _build_model_payload(payload, EncodeRequest, "content", kwargs)

@@ -281,7 +281,7 @@ export class Audrey extends EventEmitter {
       affectWeight: affect.weight ?? 0.2,
     };
     this.consolidationConfig = {
-      minEpisodes: consolidation.minEpisodes || 3,
+      minEpisodes,
     };
     this.decayConfig = { dormantThreshold };
     this._autoConsolidateTimer = null;
@@ -664,22 +664,23 @@ export class Audrey extends EventEmitter {
 
   async consolidate(options: Partial<ConsolidationOptions> = {}): Promise<ConsolidationResult & { status: string }> {
     await this._ensureMigrated();
+    // Use ?? throughout so 0 / '' are not silently replaced with the default.
     const result = await runConsolidation(this.db, this.embeddingProvider, {
-      minClusterSize: options.minClusterSize || this.consolidationConfig.minEpisodes,
-      similarityThreshold: options.similarityThreshold || 0.80,
-      agent: options.agent || this.agent,
+      minClusterSize: options.minClusterSize ?? this.consolidationConfig.minEpisodes,
+      similarityThreshold: options.similarityThreshold ?? 0.80,
+      agent: options.agent ?? this.agent,
       extractPrinciple: options.extractPrinciple,
-      llmProvider: options.llmProvider || this.llmProvider || undefined,
+      llmProvider: options.llmProvider ?? this.llmProvider ?? undefined,
     });
     const run = db_prepare_get_status(this.db, result.runId);
-    const output = { ...result, status: run?.status || 'completed' };
+    const output = { ...result, status: run?.status ?? 'completed' };
     this.emit('consolidation', output);
     return output;
   }
 
   decay(options: { dormantThreshold?: number; halfLives?: Partial<HalfLives> } = {}): DecayResult {
     const result = applyDecay(this.db, {
-      dormantThreshold: options.dormantThreshold || this.decayConfig.dormantThreshold,
+      dormantThreshold: options.dormantThreshold ?? this.decayConfig.dormantThreshold,
       halfLives: options.halfLives ?? this.confidenceConfig.halfLives,
     });
     this.emit('decay', result);
