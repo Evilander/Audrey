@@ -644,7 +644,7 @@ export class Audrey extends EventEmitter {
     await this._ensureMigrated();
     yield* recallStreamFn(this.db, this.embeddingProvider, query, {
       ...options,
-      agent: this.agent,
+      agent: options.agent ?? this.agent,
       retrieval: options.retrieval ?? this.defaultRetrievalMode,
       confidenceConfig: this._recallConfig(options),
     });
