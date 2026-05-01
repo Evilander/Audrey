@@ -2,7 +2,9 @@
 param(
   [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
   [string]$NodeExe = 'C:\Program Files\nodejs\node.exe',
-  [string]$DataDir = "$env:USERPROFILE\.audrey\data"
+  [string]$DataDir = "$env:USERPROFILE\.audrey\data",
+  [ValidateSet('cpu', 'gpu')]
+  [string]$Device = 'cpu'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,7 +43,8 @@ function Update-JsonMcpEntryWithNode {
     [Parameter(Mandatory = $true)][string]$Entry,
     [Parameter(Mandatory = $true)][string]$Node,
     [Parameter(Mandatory = $true)][string]$StoreDir,
-    [Parameter(Mandatory = $true)][string]$Agent
+    [Parameter(Mandatory = $true)][string]$Agent,
+    [Parameter(Mandatory = $true)][string]$Device
   )
 
   $parent = Split-Path -Parent $Path
@@ -51,7 +54,7 @@ function Update-JsonMcpEntryWithNode {
 
   $patchScript = @'
 import fs from "node:fs";
-const [path, entry, storeDir, agent, nodeExe] = process.argv.slice(2);
+const [path, entry, storeDir, agent, nodeExe, device] = process.argv.slice(2);
 let config = {};
 if (fs.existsSync(path)) {
   config = JSON.parse(fs.readFileSync(path, "utf8"));
@@ -67,7 +70,7 @@ config.mcpServers["audrey-memory"] = {
     AUDREY_DATA_DIR: storeDir,
     AUDREY_AGENT: agent,
     AUDREY_EMBEDDING_PROVIDER: "local",
-    AUDREY_DEVICE: "gpu"
+    AUDREY_DEVICE: device
   }
 };
 fs.writeFileSync(path, JSON.stringify(config, null, 2));
@@ -78,7 +81,7 @@ fs.writeFileSync(path, JSON.stringify(config, null, 2));
   Set-Content -LiteralPath $scriptFile -Value $patchScript -Encoding utf8
 
   try {
-    & $Node $scriptFile $Path $Entry $StoreDir $Agent $Node
+    & $Node $scriptFile $Path $Entry $StoreDir $Agent $Node $Device
   } finally {
     Remove-Item -LiteralPath $scriptFile -Force -ErrorAction SilentlyContinue
   }
@@ -89,12 +92,13 @@ function Update-ClaudeCodeConfig {
     [string]$Path,
     [string]$Entry,
     [string]$Node,
-    [string]$StoreDir
+    [string]$StoreDir,
+    [string]$Device
   )
 
   if ($PSCmdlet.ShouldProcess($Path, 'Update Claude Code Audrey MCP entry')) {
     Backup-File -Path $Path
-    Update-JsonMcpEntryWithNode -Path $Path -Entry $Entry -Node $Node -StoreDir $StoreDir -Agent 'claude-code'
+    Update-JsonMcpEntryWithNode -Path $Path -Entry $Entry -Node $Node -StoreDir $StoreDir -Agent 'claude-code' -Device $Device
   }
 }
 
@@ -103,12 +107,13 @@ function Update-ClaudeDesktopConfig {
     [string]$Path,
     [string]$Entry,
     [string]$Node,
-    [string]$StoreDir
+    [string]$StoreDir,
+    [string]$Device
   )
 
   if ($PSCmdlet.ShouldProcess($Path, 'Update Claude Desktop Audrey MCP entry')) {
     Backup-File -Path $Path
-    Update-JsonMcpEntryWithNode -Path $Path -Entry $Entry -Node $Node -StoreDir $StoreDir -Agent 'claude-desktop'
+    Update-JsonMcpEntryWithNode -Path $Path -Entry $Entry -Node $Node -StoreDir $StoreDir -Agent 'claude-desktop' -Device $Device
   }
 }
 
@@ -117,7 +122,8 @@ function Update-CodexConfig {
     [string]$Path,
     [string]$Entry,
     [string]$Node,
-    [string]$StoreDir
+    [string]$StoreDir,
+    [string]$Device
   )
 
   $existingLines = if (Test-Path $Path) {
@@ -163,7 +169,7 @@ function Update-CodexConfig {
     "AUDREY_DATA_DIR = '$StoreDir'",
     "AUDREY_AGENT = 'codex'",
     "AUDREY_EMBEDDING_PROVIDER = 'local'",
-    "AUDREY_DEVICE = 'gpu'"
+    "AUDREY_DEVICE = '$Device'"
   )
 
   $finalLines = New-Object 'System.Collections.Generic.List[string]'
@@ -201,10 +207,11 @@ function Update-CodexConfig {
 Write-Host "Repo root: $RepoRoot"
 Write-Host "Audrey entrypoint: $audreyEntry"
 Write-Host "Data dir: $DataDir"
+Write-Host "Embedding device: $Device"
 
-Update-CodexConfig -Path $codexConfigPath -Entry $audreyEntry -Node $NodeExe -StoreDir $DataDir
-Update-ClaudeCodeConfig -Path $claudeCodeConfigPath -Entry $audreyEntry -Node $NodeExe -StoreDir $DataDir
-Update-ClaudeDesktopConfig -Path $claudeDesktopConfigPath -Entry $audreyEntry -Node $NodeExe -StoreDir $DataDir
+Update-CodexConfig -Path $codexConfigPath -Entry $audreyEntry -Node $NodeExe -StoreDir $DataDir -Device $Device
+Update-ClaudeCodeConfig -Path $claudeCodeConfigPath -Entry $audreyEntry -Node $NodeExe -StoreDir $DataDir -Device $Device
+Update-ClaudeDesktopConfig -Path $claudeDesktopConfigPath -Entry $audreyEntry -Node $NodeExe -StoreDir $DataDir -Device $Device
 
 Write-Host ''
 Write-Host 'ChatGPT note: custom MCP currently requires a remote MCP server over streaming HTTP or SSE.'

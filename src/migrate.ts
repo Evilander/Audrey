@@ -6,7 +6,31 @@ interface EpisodeMigrateRow {
   id: string;
   content: string;
   source: string;
-  consolidated: number;
+  consolidated: number | null;
+}
+
+const REEMBED_BATCH_SIZE = 256;
+
+async function embedInChunks(
+  embeddingProvider: EmbeddingProvider,
+  contents: string[],
+  label: string,
+): Promise<number[][]> {
+  if (contents.length === 0) return [];
+  const out: number[][] = [];
+  for (let i = 0; i < contents.length; i += REEMBED_BATCH_SIZE) {
+    const slice = contents.slice(i, i + REEMBED_BATCH_SIZE);
+    try {
+      const vectors = await embeddingProvider.embedBatch(slice);
+      out.push(...vectors);
+    } catch (err) {
+      const cause = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `reembedAll: embedBatch failed for ${label} (rows ${i}-${i + slice.length - 1}): ${cause}`,
+      );
+    }
+  }
+  return out;
 }
 
 interface SemanticMigrateRow {
@@ -35,15 +59,21 @@ export async function reembedAll(
   const semantics = db.prepare('SELECT id, content, state FROM semantics').all() as SemanticMigrateRow[];
   const procedures = db.prepare('SELECT id, content, state FROM procedures').all() as ProcedureMigrateRow[];
 
-  const episodeVectors = episodes.length > 0
-    ? await embeddingProvider.embedBatch(episodes.map(ep => ep.content))
-    : [];
-  const semanticVectors = semantics.length > 0
-    ? await embeddingProvider.embedBatch(semantics.map(s => s.content))
-    : [];
-  const procedureVectors = procedures.length > 0
-    ? await embeddingProvider.embedBatch(procedures.map(p => p.content))
-    : [];
+  const episodeVectors = await embedInChunks(
+    embeddingProvider,
+    episodes.map(ep => ep.content),
+    'episodes',
+  );
+  const semanticVectors = await embedInChunks(
+    embeddingProvider,
+    semantics.map(s => s.content),
+    'semantics',
+  );
+  const procedureVectors = await embedInChunks(
+    embeddingProvider,
+    procedures.map(p => p.content),
+    'procedures',
+  );
 
   const updateEpLegacy = db.prepare('UPDATE episodes SET embedding = ? WHERE id = ?');
   const deleteVecEp = db.prepare('DELETE FROM vec_episodes WHERE id = ?');
