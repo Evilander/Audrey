@@ -1,6 +1,6 @@
 # Audrey Production Backlog
 
-Updated: 2026-04-30 after the 0.22.1 production-readiness pass.
+Updated: 2026-05-01 after the 0.22.2 correctness pass.
 
 This file tracks release posture and remaining product work. It is intentionally
 public-safe: it avoids exploit recipes, stale line references, and private
@@ -8,7 +8,7 @@ planning notes.
 
 ## Current Release Posture
 
-Audrey 0.22.1 is ready for package-level release through the sandbox gate:
+Audrey 0.22.2 is ready for package-level release through the sandbox gate:
 
 ```bash
 npm run release:gate:sandbox
@@ -22,6 +22,20 @@ The normal `npm test` command still depends on Vitest/Vite startup. On the
 locked-down Windows Codex host, Vite calls `child_process.spawn` while loading
 config and the host returns `spawn EPERM` before Audrey tests run. Treat that as
 an environment limitation unless it reproduces on an unrestricted CI runner.
+
+## Shipped In The 0.22.2 Correctness Pass
+
+- Two CodeRabbit review passes plus a CodeQL audit landed: see `CHANGELOG.md#0222---2026-05-01`.
+  Net result: every critical and major finding from the first pass was
+  eliminated; the second pass surfaced a duplicate of the `vec_*.state`
+  stale-denormalization bug in `src/interference.ts` and an API-key auth
+  length-leak in `src/routes.ts`, both fixed.
+- `GET /v1/impact` REST route + Python `impact()` on sync and async clients.
+  `analytics()` is now an alias of `impact()`.
+- Python integration tests unskipped; they spin up the real TS REST sidecar
+  and exercise encode → recall → mark_used → impact → snapshot → restore.
+- Legitimate performance benchmarks (`npm run bench:perf-snapshot`) replace
+  the synthetic-baseline SVGs that previously shipped in README.
 
 ## Shipped In The 0.22.1 Hardening Pass
 
@@ -99,3 +113,52 @@ from repeating known bad actions, ignoring known workflows, or acting without
 the context they already earned. The strongest paid surface is likely team
 memory operations: policy editor, memory diff/rollback, audit log, shared
 encrypted stores, hosted relay, CI gates, and support.
+
+## v0.23 Product Direction (Tracked, Not Decided)
+
+A 2026-05-01 audit recommends repositioning Audrey from a generic local
+memory framework to **Audrey Guard** — a local-first memory firewall whose
+single job is to stop AI coding agents from repeating expensive mistakes
+before they touch tools. The core loop already exists in pieces in this
+repo (`observeTool`, `preflight`, `reflexes`, `validate`, `impact`,
+`promote`); the v0.23 work would be making them feel like one product
+loop instead of separate primitives.
+
+Open questions before committing to the rename:
+
+- Is the marketing surface ("memory firewall for coding agents") narrower
+  than the actual product can support across non-coding agents?
+- Does keeping the current "local memory runtime" framing for the OSS core
+  while branding the guard CLI separately give us the same wedge without
+  abandoning existing positioning?
+
+Concrete v0.23 work the audit identified, scoped to fit one or two
+releases:
+
+1. `npx audrey guard --tool <Tool> "<command>"` CLI that returns
+   `allow` / `warn` / `block` with evidence and is the headline demo.
+2. Memory Controller Layer (`src/controller.ts`) that owns
+   `beforeAction(action) → GuardResult` and
+   `afterAction(outcome) → void` over the existing primitives. This
+   chassis also enables splitting `src/audrey.ts` (now ~1.2K lines) into
+   focused services.
+3. Actually batch embeddings in `Audrey.encodeBatch()` with
+   `embeddingProvider.embedBatch()` — currently it loops single-encode
+   calls, paying N sequential round-trips for cloud providers.
+4. Hybrid-recall N+1: batch the FTS-only row loaders in
+   `src/hybrid-recall.ts` by type instead of per-id SELECTs.
+5. Surface partial recall failures (currently swallowed in
+   `src/recall.ts`) via diagnostics, preflight, and `/v1/status` so the
+   guard story is honest when retrieval is degraded.
+6. Move the heavy local embedding dependency
+   (`@huggingface/transformers` + ONNX) to `optionalDependencies` so
+   non-local-provider users don't pay the install size.
+7. Expand FTS-only confidence in hybrid recall through the same
+   confidence/scoring pipeline used by vector candidates.
+8. Add `AUDREY_STRICT_ISOLATION=1` and make strict agent scope the
+   default before team scopes ship.
+
+The "first paid feature" line of work — encrypted blob sync of local
+Audrey stores ("Audrey Cloud Sync") — remains the smallest commercial
+primitive that doesn't require rebuilding the product around hosted
+Postgres.

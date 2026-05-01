@@ -349,6 +349,28 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
+  // GET /v1/impact — closed-loop visibility surface. Mirrors `audrey impact`
+  // and Audrey.impact(). Bounds windowDays (1..365) and limit (1..100) so
+  // unbounded inputs can't drag the report into a multi-second SQL scan.
+  app.get('/v1/impact', (c) => {
+    try {
+      const windowRaw = c.req.query('windowDays') ?? c.req.query('window_days');
+      const limitRaw = c.req.query('limit');
+      const windowDays = windowRaw ? Number.parseInt(windowRaw, 10) : 7;
+      const limit = limitRaw ? Number.parseInt(limitRaw, 10) : 5;
+      if (!Number.isFinite(windowDays) || windowDays < 1 || windowDays > 365) {
+        return c.json({ error: 'windowDays must be between 1 and 365' }, 400);
+      }
+      if (!Number.isFinite(limit) || limit < 1 || limit > 100) {
+        return c.json({ error: 'limit must be between 1 and 100' }, 400);
+      }
+      return c.json(audrey.impact({ windowDays, limit }));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+  });
+
   // POST /v1/resolve-truth
   app.post('/v1/resolve-truth', async (c) => {
     try {
