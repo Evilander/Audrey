@@ -180,11 +180,12 @@ function buildRecallEntry(
 
 function buildFailureEntry(f: FailurePattern, reason: string): CapsuleEntry {
   const toolLabel = f.tool_name || 'unknown tool';
+  const idLabel = f.tool_name || 'unknown';
   const summary = f.last_error_summary
     ? `${toolLabel} failed ${f.failure_count}x recently — last error: ${f.last_error_summary}`
     : `${toolLabel} failed ${f.failure_count}x recently`;
   return {
-    memory_id: `failure:${f.tool_name}:${f.last_failed_at}`,
+    memory_id: `failure:${idLabel}:${f.last_failed_at}`,
     memory_type: 'tool_failure',
     content: summary,
     confidence: Math.min(0.5 + (f.failure_count - 1) * 0.1, 0.95),
@@ -320,11 +321,13 @@ export async function buildCapsule(
     for (const id of entry.evidence ?? []) evidenceIds.add(id);
   }
 
-  // 1. Primary recall (vector + confidence scoring)
+  // 1. Primary recall (vector + confidence scoring). Spread the caller's
+  // options first so our agent-scoping wins — capsule must never leak across
+  // agents even if a caller passes scope: 'all' through options.recall.
   const results = await audrey.recall(query, {
+    ...(options.recall ?? {}),
     limit: recallLimit,
     scope: 'agent',
-    ...(options.recall ?? {}),
   });
 
   const db = audrey.db;

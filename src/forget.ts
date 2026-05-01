@@ -64,41 +64,47 @@ export function forgetMemory(
 }
 
 export function purgeMemories(db: Database.Database): PurgeResult {
-  const deadEpisodes = db.prepare(
+  const selectDeadEpisodes = db.prepare(
     'SELECT id FROM episodes WHERE superseded_by IS NOT NULL'
-  ).all() as IdRow[];
-  const deadSemantics = db.prepare(
+  );
+  const selectDeadSemantics = db.prepare(
     "SELECT id FROM semantics WHERE state IN ('superseded', 'dormant', 'rolled_back')"
-  ).all() as IdRow[];
-  const deadProcedures = db.prepare(
+  );
+  const selectDeadProcedures = db.prepare(
     "SELECT id FROM procedures WHERE state IN ('superseded', 'dormant', 'rolled_back')"
-  ).all() as IdRow[];
+  );
 
+  let episodes = 0;
+  let semantics = 0;
+  let procedures = 0;
+
+  // Read inside the transaction so we never delete something a concurrent
+  // writer just resurrected, and so the returned counts match what we
+  // actually purged.
   const purgeAll = db.transaction(() => {
-    for (const row of deadEpisodes) {
+    for (const row of selectDeadEpisodes.all() as IdRow[]) {
       db.prepare('DELETE FROM vec_episodes WHERE id = ?').run(row.id);
       db.prepare('DELETE FROM episodes WHERE id = ?').run(row.id);
       deleteFTSEpisode(db, row.id);
+      episodes++;
     }
-    for (const row of deadSemantics) {
+    for (const row of selectDeadSemantics.all() as IdRow[]) {
       db.prepare('DELETE FROM vec_semantics WHERE id = ?').run(row.id);
       db.prepare('DELETE FROM semantics WHERE id = ?').run(row.id);
       deleteFTSSemantic(db, row.id);
+      semantics++;
     }
-    for (const row of deadProcedures) {
+    for (const row of selectDeadProcedures.all() as IdRow[]) {
       db.prepare('DELETE FROM vec_procedures WHERE id = ?').run(row.id);
       db.prepare('DELETE FROM procedures WHERE id = ?').run(row.id);
       deleteFTSProcedure(db, row.id);
+      procedures++;
     }
   });
 
   purgeAll();
 
-  return {
-    episodes: deadEpisodes.length,
-    semantics: deadSemantics.length,
-    procedures: deadProcedures.length,
-  };
+  return { episodes, semantics, procedures };
 }
 
 export async function forgetByQuery(

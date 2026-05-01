@@ -201,6 +201,7 @@ function isDatabaseEmpty(db: Database.Database): boolean {
     'contradictions',
     'consolidation_runs',
     'consolidation_metrics',
+    'memory_events',
   ];
 
   return tables.every(table => (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as CountRow).c === 0);

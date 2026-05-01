@@ -75,20 +75,24 @@ export async function validateMemory(
         current?.evidence_episode_ids ?? null,
         [],
       );
-      if (!existing.includes(episode.id)) {
+      const wasAdded = !existing.includes(episode.id);
+      if (wasAdded) {
         existing.push(episode.id);
       }
       const diversity = computeSourceDiversity(db, existing, episode);
       const now = new Date().toISOString();
+      // supporting_count only increments when this is a new piece of evidence;
+      // re-validating the same episode shouldn't keep inflating the count.
       db.prepare(`
         UPDATE semantics SET
-          supporting_count = supporting_count + 1,
+          supporting_count = supporting_count + ?,
           evidence_episode_ids = ?,
           evidence_count = ?,
           source_type_diversity = ?,
           last_reinforced_at = ?
         WHERE id = ?
       `).run(
+        wasAdded ? 1 : 0,
         JSON.stringify(existing),
         existing.length,
         diversity,
@@ -124,7 +128,10 @@ export async function validateMemory(
       contradicts: candidate.contradicts,
       resolution: typeof candidate.resolution === 'string' ? candidate.resolution : undefined,
       conditions:
-        candidate.conditions && typeof candidate.conditions === 'object'
+        candidate.conditions &&
+        typeof candidate.conditions === 'object' &&
+        !Array.isArray(candidate.conditions) &&
+        Object.values(candidate.conditions).every((v) => typeof v === 'string')
           ? (candidate.conditions as Record<string, string>)
           : undefined,
       explanation: typeof candidate.explanation === 'string' ? candidate.explanation : undefined,
