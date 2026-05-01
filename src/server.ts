@@ -47,8 +47,27 @@ export async function startServer(options: ServerOptions) {
     port,
     hostname,
     close: async () => {
-      server.close();
-      await audrey.closeAsync().catch(() => {});
+      // Wrap server.close in a promise so we actually wait for connections to
+      // drain. If the listener never bound (e.g. close was called before the
+      // tick that finishes startup) Node throws ERR_SERVER_NOT_RUNNING — that
+      // outcome already satisfies the caller's intent so we treat it as done.
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => {
+          if (!err) return resolve();
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === 'ERR_SERVER_NOT_RUNNING') return resolve();
+          reject(err);
+        });
+      });
+      try {
+        await audrey.closeAsync();
+      } catch (err) {
+        // Don't swallow silently: surface to stderr so operators see the
+        // pending-queue/closed-DB races we added closeAsync to catch.
+        const cause = err instanceof Error ? err.message : String(err);
+        console.error(`[audrey-http] closeAsync error during shutdown: ${cause}`);
+        throw err;
+      }
     },
   };
 }

@@ -12,7 +12,7 @@ export function generateId(): string {
 // Stable JSON serializer: sorts object keys, normalizes Date → ISO string, rejects
 // values without a defined deterministic representation. Used so equal logical
 // inputs always produce the same hash regardless of object construction order.
-function canonicalize(value: unknown): unknown {
+function canonicalize(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
   if (value === null) return null;
   if (typeof value === 'function' || typeof value === 'symbol' || typeof value === 'undefined') {
     throw new TypeError(`generateDeterministicId: unsupported value of type ${typeof value}`);
@@ -21,14 +21,22 @@ function canonicalize(value: unknown): unknown {
     return value.toISOString();
   }
   if (Array.isArray(value)) {
-    return value.map(canonicalize);
+    if (seen.has(value)) {
+      throw new TypeError('generateDeterministicId: circular reference detected');
+    }
+    seen.add(value);
+    return value.map((v) => canonicalize(v, seen));
   }
   if (typeof value === 'object') {
+    if (seen.has(value)) {
+      throw new TypeError('generateDeterministicId: circular reference detected');
+    }
+    seen.add(value);
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     const out: Record<string, unknown> = {};
-    for (const [k, v] of entries) out[k] = canonicalize(v);
+    for (const [k, v] of entries) out[k] = canonicalize(v, seen);
     return out;
   }
   return value;

@@ -20,7 +20,9 @@ export async function applyInterference(
   config: InterferenceConfig = {},
   embedding?: { vector?: number[]; buffer?: Buffer },
 ): Promise<InterferenceHit[]> {
-  const { enabled = true, k = 5, threshold = 0.6, weight = 0.1 } = config;
+  // weight lives on InterferenceConfig but is consumed by interferenceModifier()
+  // at recall/decay time, not here.
+  const { enabled = true, k = 5, threshold = 0.6 } = config;
 
   if (!enabled) return [];
 
@@ -28,13 +30,16 @@ export async function applyInterference(
     embedding?.vector ?? await embeddingProvider.embed(params.content)
   );
 
+  // vec_semantics/vec_procedures carry a denormalized state column populated at
+  // INSERT time only — it stays stale after UPDATE semantics SET state=...,
+  // so always filter through the main table's state.
   const semanticHits = db.prepare(`
     SELECT s.id, s.interference_count, (1.0 - v.distance) AS similarity
     FROM vec_semantics v
     JOIN semantics s ON s.id = v.id
     WHERE v.embedding MATCH ?
       AND k = ?
-      AND (v.state = 'active' OR v.state = 'context_dependent')
+      AND (s.state = 'active' OR s.state = 'context_dependent')
   `).all(buffer, k) as Array<{ id: string; interference_count: number; similarity: number }>;
 
   const proceduralHits = db.prepare(`
@@ -43,7 +48,7 @@ export async function applyInterference(
     JOIN procedures p ON p.id = v.id
     WHERE v.embedding MATCH ?
       AND k = ?
-      AND (v.state = 'active' OR v.state = 'context_dependent')
+      AND (p.state = 'active' OR p.state = 'context_dependent')
   `).all(buffer, k) as Array<{ id: string; interference_count: number; similarity: number }>;
 
   const affected: InterferenceHit[] = [];

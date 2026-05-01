@@ -21,18 +21,26 @@ export function rollbackConsolidation(
   const outputIds = safeJsonParse<string[]>(run.output_memory_ids, []);
   const inputIds = safeJsonParse<string[]>(run.input_episode_ids, []);
 
+  let rolledBackMemories = 0;
+  let restoredEpisodes = 0;
+
   const doRollback = db.transaction(() => {
     const markSemantics = db.prepare('UPDATE semantics SET state = ? WHERE id = ?');
     const markProcedures = db.prepare('UPDATE procedures SET state = ? WHERE id = ?');
     for (const id of outputIds) {
-      markSemantics.run('rolled_back', id);
-      markProcedures.run('rolled_back', id);
+      const semChanges = markSemantics.run('rolled_back', id).changes;
+      const procChanges = markProcedures.run('rolled_back', id).changes;
+      // An output ID lives in exactly one of the two tables, but we count whatever
+      // actually transitioned so callers see a number that reflects the DB.
+      rolledBackMemories += semChanges + procChanges;
     }
     const unmark = db.prepare('UPDATE episodes SET consolidated = 0 WHERE id = ?');
-    for (const id of inputIds) { unmark.run(id); }
+    for (const id of inputIds) {
+      restoredEpisodes += unmark.run(id).changes;
+    }
     db.prepare('UPDATE consolidation_runs SET status = ? WHERE id = ?').run('rolled_back', runId);
   });
 
   doRollback();
-  return { rolledBackMemories: outputIds.length, restoredEpisodes: inputIds.length };
+  return { rolledBackMemories, restoredEpisodes };
 }
