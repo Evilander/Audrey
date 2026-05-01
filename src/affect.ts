@@ -45,13 +45,15 @@ export async function detectResonance(
   episodeId: string,
   params: { content: string; affect?: Affect },
   config: ResonanceConfig = {},
+  embedding?: { vector?: number[]; buffer?: Buffer },
 ): Promise<ResonanceResult[]> {
   const { enabled = true, k = 5, threshold = 0.5, affectThreshold = 0.6 } = config;
   const { content, affect } = params;
   if (!enabled || !affect || affect.valence === undefined) return [];
 
-  const vector = await embeddingProvider.embed(content);
-  const buffer = embeddingProvider.vectorToBuffer(vector);
+  const buffer = embedding?.buffer ?? embeddingProvider.vectorToBuffer(
+    embedding?.vector ?? await embeddingProvider.embed(content)
+  );
 
   const matches = db.prepare(`
     SELECT e.*, (1.0 - v.distance) AS similarity
@@ -79,7 +81,10 @@ export async function detectResonance(
       priorAffect,
       semanticSimilarity: match.similarity,
       emotionalSimilarity,
-      timeDeltaDays: Math.floor((Date.now() - new Date(match.created_at).getTime()) / 86400000),
+      timeDeltaDays: (() => {
+        const t = new Date(match.created_at).getTime();
+        return Number.isNaN(t) ? 0 : Math.floor((Date.now() - t) / 86400000);
+      })(),
       priorCreatedAt: match.created_at,
     });
   }

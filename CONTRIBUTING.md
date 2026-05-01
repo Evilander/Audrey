@@ -40,7 +40,6 @@ Node `>=20` is required.
 If you update the README, examples, CLI behavior, or production guidance, keep those surfaces aligned:
 
 - `README.md`
-- `docs/production-readiness.md`
 - `examples/`
 
 ## Reporting Problems

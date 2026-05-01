@@ -117,6 +117,20 @@ describe('recall', () => {
     expect(results.length).toBeLessThanOrEqual(2);
   });
 
+  it('counts vector tables with one SQL roundtrip before KNN', async () => {
+    const originalPrepare = db.prepare.bind(db);
+    let vectorCountQueries = 0;
+    db.prepare = (sql) => {
+      const normalized = String(sql).replace(/\s+/g, ' ').trim();
+      if (normalized.includes('COUNT(*) FROM vec_')) vectorCountQueries += 1;
+      return originalPrepare(sql);
+    };
+
+    await recall(db, embedding, 'rate limit', { retrieval: 'vector', limit: 5 });
+
+    expect(vectorCountQueries).toBe(1);
+  });
+
   it('increments retrieval_count on recalled semantic memories', async () => {
     const before = db.prepare('SELECT id, retrieval_count FROM semantics WHERE state = ?').all('active');
     const beforeMap = Object.fromEntries(before.map(r => [r.id, r.retrieval_count]));
@@ -198,7 +212,7 @@ describe('recall', () => {
     expect(incremented).toBe(true);
   });
 
-  // Skipped: recall()'s partialFailure surface is planned in docs/plans/audrey-1.0-continuity-os-2026-04-22.md
+  // Skipped: recall()'s partialFailure surface is planned.
   // (silent-failure-hunter principle — surface KNN errors to callers instead of swallowing).
   it.skip('surfaces partial failures when a recall path breaks', async () => {
     db.exec('DROP TABLE vec_semantics');

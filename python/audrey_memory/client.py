@@ -21,13 +21,14 @@ from .types import (
     OperationResult,
     RecallRequest,
     RecallResponse,
+    RecallResult,
     RestoreResponse,
     StatusResponse,
 )
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 DEFAULT_TIMEOUT = 30.0
-DEFAULT_BASE_URL = "http://127.0.0.1:3487"
+DEFAULT_BASE_URL = "http://127.0.0.1:7437"
 
 
 class AudreyAPIError(RuntimeError):
@@ -146,7 +147,14 @@ class Audrey:
         return _validate(StatusResponse, _decode_json(self._client.get("/v1/status")))
 
     def analytics(self) -> AnalyticsResponse:
-        return _validate(AnalyticsResponse, _decode_json(self._client.get("/v1/analytics")))
+        # Not yet exposed by the TypeScript REST sidecar. Tracked as P1 in
+        # docs/PRODUCTION_BACKLOG.md (memory_validate + analytics surface).
+        # Raising NotImplementedError instead of letting users hit a confusing
+        # 404 from Hono.
+        raise NotImplementedError(
+            "audrey.analytics() requires /v1/analytics on the REST sidecar, "
+            "which is not yet implemented. See docs/PRODUCTION_BACKLOG.md (P0#1)."
+        )
 
     def encode(self, payload: EncodeRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> str:
         request = _build_model_payload(payload, EncodeRequest, "content", kwargs)
@@ -154,12 +162,18 @@ class Audrey:
         return _validate(EncodeResponse, data).id
 
     def recall(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any):
-        return self.recall_response(payload, **kwargs).results
-
-    def recall_response(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> RecallResponse:
         request = _build_model_payload(payload, RecallRequest, "query", kwargs)
         data = _decode_json(self._client.post("/v1/recall", json=_dump_payload(request)))
-        return _validate(RecallResponse, data)
+        # The TS server returns a bare list of results. Validate each row.
+        if not isinstance(data, list):
+            raise TypeError(f"unexpected /v1/recall payload shape: {type(data).__name__}")
+        return [_validate(RecallResult, row) for row in data]
+
+    def recall_response(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> RecallResponse:
+        # Wraps recall() into a RecallResponse for callers that want the
+        # structured shape. The TS server returns a bare list at /v1/recall;
+        # we adapt client-side rather than changing the wire format.
+        return RecallResponse(results=self.recall(payload, **kwargs))
 
     def dream(self, payload: DreamRequest | Mapping[str, Any] | None = None, /, **kwargs: Any) -> OperationResult:
         request = _optional_model_payload(payload, DreamRequest, kwargs)
@@ -180,6 +194,17 @@ class Audrey:
         request = MarkUsedRequest(id=memory_id)
         data = _decode_json(self._client.post("/v1/mark-used", json=_dump_payload(request)))
         return _validate(AckResponse, data)
+
+    def validate(self, memory_id: str, outcome: str = "used") -> dict[str, Any]:
+        """Closed-loop feedback. outcome is one of {"used","helpful","wrong"}.
+
+        "helpful" reinforces salience and retrieval. "wrong" decreases
+        salience and bumps challenge_count for semantic memories. "used"
+        is a neutral signal that the memory was referenced.
+        """
+        if outcome not in ("used", "helpful", "wrong"):
+            raise ValueError(f"outcome must be used|helpful|wrong, got {outcome!r}")
+        return _decode_json(self._client.post("/v1/validate", json={"id": memory_id, "outcome": outcome}))
 
     def forget(
         self,
@@ -206,9 +231,10 @@ class Audrey:
         return _validate(MemorySnapshot, data)
 
     def restore(self, snapshot: MemorySnapshot | Mapping[str, Any]) -> RestoreResponse:
-        # Server exposes restore as POST /v1/import.
+        # Server exposes restore as POST /v1/import. The TS handler reads
+        # body.snapshot (not the body root), so wrap the payload accordingly.
         request = snapshot if isinstance(snapshot, MemorySnapshot) else MemorySnapshot.model_validate(snapshot)
-        data = _decode_json(self._client.post("/v1/import", json=_dump_payload(request)))
+        data = _decode_json(self._client.post("/v1/import", json={"snapshot": _dump_payload(request)}))
         return _validate(RestoreResponse, data)
 
 
@@ -245,7 +271,11 @@ class AsyncAudrey:
         return _validate(StatusResponse, _decode_json(await self._client.get("/v1/status")))
 
     async def analytics(self) -> AnalyticsResponse:
-        return _validate(AnalyticsResponse, _decode_json(await self._client.get("/v1/analytics")))
+        # Not yet exposed by the TypeScript REST sidecar. See sync analytics().
+        raise NotImplementedError(
+            "audrey.analytics() requires /v1/analytics on the REST sidecar, "
+            "which is not yet implemented. See docs/PRODUCTION_BACKLOG.md (P0#1)."
+        )
 
     async def encode(self, payload: EncodeRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> str:
         request = _build_model_payload(payload, EncodeRequest, "content", kwargs)
@@ -253,12 +283,14 @@ class AsyncAudrey:
         return _validate(EncodeResponse, data).id
 
     async def recall(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any):
-        return (await self.recall_response(payload, **kwargs)).results
-
-    async def recall_response(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> RecallResponse:
         request = _build_model_payload(payload, RecallRequest, "query", kwargs)
         data = _decode_json(await self._client.post("/v1/recall", json=_dump_payload(request)))
-        return _validate(RecallResponse, data)
+        if not isinstance(data, list):
+            raise TypeError(f"unexpected /v1/recall payload shape: {type(data).__name__}")
+        return [_validate(RecallResult, row) for row in data]
+
+    async def recall_response(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> RecallResponse:
+        return RecallResponse(results=await self.recall(payload, **kwargs))
 
     async def dream(self, payload: DreamRequest | Mapping[str, Any] | None = None, /, **kwargs: Any) -> OperationResult:
         request = _optional_model_payload(payload, DreamRequest, kwargs)
@@ -279,6 +311,12 @@ class AsyncAudrey:
         request = MarkUsedRequest(id=memory_id)
         data = _decode_json(await self._client.post("/v1/mark-used", json=_dump_payload(request)))
         return _validate(AckResponse, data)
+
+    async def validate(self, memory_id: str, outcome: str = "used") -> dict[str, Any]:
+        """Closed-loop feedback. See sync validate()."""
+        if outcome not in ("used", "helpful", "wrong"):
+            raise ValueError(f"outcome must be used|helpful|wrong, got {outcome!r}")
+        return _decode_json(await self._client.post("/v1/validate", json={"id": memory_id, "outcome": outcome}))
 
     async def forget(
         self,
@@ -305,7 +343,8 @@ class AsyncAudrey:
         return _validate(MemorySnapshot, data)
 
     async def restore(self, snapshot: MemorySnapshot | Mapping[str, Any]) -> RestoreResponse:
-        # Server exposes restore as POST /v1/import.
+        # Server exposes restore as POST /v1/import. The TS handler reads
+        # body.snapshot (not the body root), so wrap the payload accordingly.
         request = snapshot if isinstance(snapshot, MemorySnapshot) else MemorySnapshot.model_validate(snapshot)
-        data = _decode_json(await self._client.post("/v1/import", json=_dump_payload(request)))
+        data = _decode_json(await self._client.post("/v1/import", json={"snapshot": _dump_payload(request)}))
         return _validate(RestoreResponse, data)

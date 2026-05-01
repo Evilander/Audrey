@@ -29,7 +29,7 @@ Then use the client:
 from audrey_memory import Audrey
 
 brain = Audrey(
-    base_url="http://127.0.0.1:3487",
+    base_url="http://127.0.0.1:7437",
     api_key="secret",
     agent="support-agent",
 )
@@ -42,8 +42,15 @@ memory_id = brain.encode(
 
 results = brain.recall("stripe rate limits", limit=5)
 snapshot = brain.snapshot()
-brain.restore(snapshot)
 brain.close()
+```
+
+Restore snapshots only into an empty Audrey store, such as a sidecar started with a fresh `AUDREY_DATA_DIR`:
+
+```python
+restore_target = Audrey(base_url="http://127.0.0.1:7437", api_key="secret")
+restore_target.restore(snapshot)
+restore_target.close()
 ```
 
 Async usage:
@@ -55,7 +62,7 @@ from audrey_memory import AsyncAudrey
 
 
 async def main() -> None:
-    async with AsyncAudrey(base_url="http://127.0.0.1:3487") as brain:
+    async with AsyncAudrey(base_url="http://127.0.0.1:7437") as brain:
         await brain.health()
         await brain.encode("Deploy failed due to OOM", source="direct-observation")
         await brain.recall("deploy failure", limit=3)
@@ -69,5 +76,5 @@ asyncio.run(main())
 - Sync and async clients powered by `httpx`
 - Pydantic request and response models
 - Bearer auth via `AUDREY_API_KEY`
-- Agent scoping via `X-Audrey-Agent`
+- Optional `X-Audrey-Agent` header on client requests
 - Snapshot export and restore support

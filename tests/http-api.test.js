@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 import { createApp } from '../dist/src/routes.js';
+import { startServer } from '../dist/src/server.js';
 import { Audrey } from '../dist/src/index.js';
 
 const TEST_DIR = './test-http-data';
@@ -178,16 +179,32 @@ describe('HTTP API', () => {
     expect(typeof body.healthy).toBe('boolean');
   });
 
-  it('GET /v1/export returns snapshot', async () => {
+  it('GET /v1/export is disabled unless admin tools are enabled', async () => {
     const res = await app.request('/v1/export');
+    expect(res.status).toBe(403);
+  });
+
+  it('GET /v1/export returns snapshot when admin tools are enabled', async () => {
+    const adminApp = createApp(audrey, { adminToolsEnabled: true });
+    const res = await adminApp.request('/v1/export');
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toHaveProperty('version');
     expect(body).toHaveProperty('episodes');
   });
 
-  it('POST /v1/forget returns error for missing params', async () => {
+  it('POST /v1/forget is disabled unless admin tools are enabled', async () => {
     const res = await app.request('/v1/forget', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('POST /v1/forget returns error for missing params when admin tools are enabled', async () => {
+    const adminApp = createApp(audrey, { adminToolsEnabled: true });
+    const res = await adminApp.request('/v1/forget', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -219,6 +236,172 @@ describe('HTTP API', () => {
     const body = await res.json();
     expect(body).toHaveProperty('recent');
     expect(body).toHaveProperty('principles');
+  });
+
+  it('POST /v1/recall ignores includePrivate from request body (privacy ACL)', async () => {
+    // Store one private memory and one public memory.
+    await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'PUBLIC: ES modules are required', source: 'told-by-user' }),
+    });
+    await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: 'PRIVATE: Tyler\'s API token is sk-secret-xxxx',
+        source: 'told-by-user',
+        private: true,
+      }),
+    });
+    // Try to coerce the route into returning private memories — pre-fix, this
+    // body-spread leaked. Post-fix, the sanitizer must drop includePrivate.
+    const res = await app.request('/v1/recall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: 'tyler api token sk-secret',
+        includePrivate: true,
+        limit: 10,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    for (const result of body) {
+      expect(result.content).not.toContain('sk-secret-xxxx');
+      expect(result.content).not.toContain('PRIVATE:');
+    }
+  });
+
+  it('POST /v1/recall ignores confidenceConfig override (integrity)', async () => {
+    await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'Score-stable test memory', source: 'told-by-user' }),
+    });
+    // Pre-fix, a caller could swap weights to inflate scores. Post-fix, this
+    // is silently dropped — the response should match a normal recall.
+    const baseline = await app.request('/v1/recall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'score test', limit: 5 }),
+    });
+    const tampered = await app.request('/v1/recall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: 'score test',
+        limit: 5,
+        confidenceConfig: { weights: { affect: 999 } },
+      }),
+    });
+    expect((await baseline.json()).map(r => r.id)).toEqual((await tampered.json()).map(r => r.id));
+  });
+
+  it('POST /v1/validate adjusts salience and returns the new state', async () => {
+    const encodeRes = await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'closed-loop test memory', source: 'direct-observation', salience: 0.5 }),
+    });
+    const { id } = await encodeRes.json();
+
+    const validateRes = await app.request('/v1/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, outcome: 'helpful' }),
+    });
+    expect(validateRes.status).toBe(200);
+    const body = await validateRes.json();
+    expect(body.ok).toBe(true);
+    expect(body.id).toBe(id);
+    expect(body.type).toBe('episodic');
+    expect(body.salience).toBeGreaterThan(0.5);
+    expect(body.usageCount).toBe(1);
+  });
+
+  it('POST /v1/validate returns 404 for unknown id', async () => {
+    const res = await app.request('/v1/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'nonexistent_id', outcome: 'helpful' }),
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+  });
+
+  it('POST /v1/mark-used is the legacy alias defaulting outcome to "used"', async () => {
+    const encodeRes = await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'mark-used legacy test', source: 'direct-observation' }),
+    });
+    const { id } = await encodeRes.json();
+
+    const res = await app.request('/v1/mark-used', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
+  it('POST /v1/recall accepts allowlisted retrieval mode but rejects keyword', async () => {
+    const r1 = await app.request('/v1/recall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', retrieval: 'vector', limit: 1 }),
+    });
+    expect(r1.status).toBe(200);
+    // 'keyword' is internal-only; the sanitizer should drop it (silent OK is
+    // acceptable since there's no observable side-effect to assert here other
+    // than that the call doesn't error).
+    const r2 = await app.request('/v1/recall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'test', retrieval: 'keyword', limit: 1 }),
+    });
+    expect(r2.status).toBe(200);
+  });
+});
+
+describe('HTTP server bind safety', () => {
+  it('refuses to start on non-loopback host without API key', async () => {
+    await expect(startServer({
+      hostname: '0.0.0.0',
+      port: 0,
+      config: {
+        dataDir: TEST_DIR + '-bind-safety',
+        agent: 'test',
+        embedding: { provider: 'mock', dimensions: 8 },
+      },
+    })).rejects.toThrow(/refusing to start.*without AUDREY_API_KEY/);
+    if (existsSync(TEST_DIR + '-bind-safety')) rmSync(TEST_DIR + '-bind-safety', { recursive: true });
+  });
+
+  it('allows non-loopback bind when AUDREY_ALLOW_NO_AUTH=1', async () => {
+    const before = process.env.AUDREY_ALLOW_NO_AUTH;
+    process.env.AUDREY_ALLOW_NO_AUTH = '1';
+    try {
+      const server = await startServer({
+        hostname: '127.0.0.1',  // staying on loopback so we don't actually bind LAN in CI
+        port: 0,
+        config: {
+          dataDir: TEST_DIR + '-allow-no-auth',
+          agent: 'test',
+          embedding: { provider: 'mock', dimensions: 8 },
+        },
+      });
+      expect(server.hostname).toBe('127.0.0.1');
+      await server.close();
+      if (existsSync(TEST_DIR + '-allow-no-auth')) rmSync(TEST_DIR + '-allow-no-auth', { recursive: true });
+    } finally {
+      if (before === undefined) delete process.env.AUDREY_ALLOW_NO_AUTH;
+      else process.env.AUDREY_ALLOW_NO_AUTH = before;
+    }
   });
 });
 

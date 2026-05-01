@@ -15,16 +15,18 @@ export function interferenceModifier(interferenceCount: number, weight: number =
 export async function applyInterference(
   db: Database.Database,
   embeddingProvider: EmbeddingProvider,
-  episodeId: string,
+  _episodeId: string,
   params: { content: string },
   config: InterferenceConfig = {},
+  embedding?: { vector?: number[]; buffer?: Buffer },
 ): Promise<InterferenceHit[]> {
   const { enabled = true, k = 5, threshold = 0.6, weight = 0.1 } = config;
 
   if (!enabled) return [];
 
-  const vector = await embeddingProvider.embed(params.content);
-  const buffer = embeddingProvider.vectorToBuffer(vector);
+  const buffer = embedding?.buffer ?? embeddingProvider.vectorToBuffer(
+    embedding?.vector ?? await embeddingProvider.embed(params.content)
+  );
 
   const semanticHits = db.prepare(`
     SELECT s.id, s.interference_count, (1.0 - v.distance) AS similarity
@@ -49,19 +51,23 @@ export async function applyInterference(
   const updateSemantic = db.prepare('UPDATE semantics SET interference_count = ? WHERE id = ?');
   const updateProcedural = db.prepare('UPDATE procedures SET interference_count = ? WHERE id = ?');
 
-  for (const hit of semanticHits) {
-    if (hit.similarity < threshold) continue;
-    const newCount = hit.interference_count + 1;
-    updateSemantic.run(newCount, hit.id);
-    affected.push({ id: hit.id, type: 'semantic', newCount, similarity: hit.similarity });
-  }
+  const applyUpdates = db.transaction(() => {
+    for (const hit of semanticHits) {
+      if (hit.similarity < threshold) continue;
+      const newCount = hit.interference_count + 1;
+      updateSemantic.run(newCount, hit.id);
+      affected.push({ id: hit.id, type: 'semantic', newCount, similarity: hit.similarity });
+    }
 
-  for (const hit of proceduralHits) {
-    if (hit.similarity < threshold) continue;
-    const newCount = hit.interference_count + 1;
-    updateProcedural.run(newCount, hit.id);
-    affected.push({ id: hit.id, type: 'procedural', newCount, similarity: hit.similarity });
-  }
+    for (const hit of proceduralHits) {
+      if (hit.similarity < threshold) continue;
+      const newCount = hit.interference_count + 1;
+      updateProcedural.run(newCount, hit.id);
+      affected.push({ id: hit.id, type: 'procedural', newCount, similarity: hit.similarity });
+    }
+  });
+
+  applyUpdates();
 
   return affected;
 }

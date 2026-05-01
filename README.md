@@ -24,8 +24,9 @@ Audrey turns those hard-won lessons into a local memory runtime:
 - `memory_recall` finds durable context by semantic similarity.
 - `memory_preflight` checks prior failures, risks, rules, and relevant procedures before an action.
 - `memory_reflexes` converts remembered evidence into trigger-response guidance agents can follow.
+- `memory_validate` closes the loop after the action — `helpful`, `used`, or `wrong` outcomes feed salience and decay.
 - `memory_dream` consolidates episodes into principles and applies decay.
-- `audrey doctor` tells a human or CI system whether the runtime is actually ready.
+- `audrey impact` and `audrey doctor` tell a human or CI system whether the runtime is doing real work and is actually ready.
 
 It is not a hosted vector database, a notes app, or a Claude-only plugin. Audrey is a SQLite-backed continuity layer that can sit under any local or sidecar agent loop.
 
@@ -47,7 +48,7 @@ npx audrey demo
 Expected first-run shape:
 
 ```text
-Audrey Doctor v0.21.0
+Audrey Doctor v0.22.1
 Store health: not initialized
 Verdict: ready
 ```
@@ -81,6 +82,8 @@ claude mcp list
 
 All local MCP paths default to local embeddings and one shared SQLite-backed memory directory. Use `AUDREY_DATA_DIR` to isolate projects, tenants, or host identities.
 
+Installer-generated host config does not include provider API keys by default. Prefer setting `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, or `GEMINI_API_KEY` in the host runtime environment; use `npx audrey install --include-secrets` only if you explicitly accept argv/config exposure.
+
 ## Use With Ollama And Local Agents
 
 Ollama runs models; Audrey supplies memory. Start Audrey as a local REST sidecar and expose its routes as tools in your agent loop:
@@ -113,9 +116,9 @@ Core sidecar tools:
 
 | Surface | Status |
 |---|---|
-| MCP stdio server | 19 tools, resources, and prompt templates |
-| CLI | `doctor`, `demo`, `install`, `mcp-config`, `status`, `dream`, `reembed`, `observe-tool`, `promote` |
-| REST API | Hono server with `/health`, `/openapi.json`, `/docs`, and `/v1/*` routes |
+| MCP stdio server | 20 tools plus status/recent/principles resources and briefing/recall/reflection prompts |
+| CLI | `doctor`, `demo`, `install`, `mcp-config`, `status`, `dream`, `reembed`, `observe-tool`, `promote`, `impact` |
+| REST API | Hono server with `/health` and `/v1/*` routes |
 | JavaScript SDK | Direct TypeScript/Node import from `audrey` |
 | Python client | `pip install audrey-memory`, calls the REST sidecar |
 | Storage | Local SQLite plus `sqlite-vec`, no hosted database required |
@@ -183,10 +186,7 @@ Audrey is close to a 1.0-ready local memory runtime, but production depends on h
 Release gates used for this package:
 
 ```bash
-npm run build
-npm run typecheck
-npm run bench:memory:check
-npm pack --dry-run
+npm run release:gate
 npx audrey doctor
 npx audrey demo
 ```
@@ -209,7 +209,27 @@ Production controls you still own:
 - Run `npx audrey dream` on a schedule so consolidation and decay stay current.
 - Add application-level encryption, retention, access control, and audit logging for regulated environments.
 
-Read the full guide: [docs/production-readiness.md](docs/production-readiness.md).
+## Environment Variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUDREY_DATA_DIR` | `~/.audrey/data` | SQLite memory store path. Use one per tenant or agent identity for isolation. |
+| `AUDREY_AGENT` | `local-agent` | Logical agent identity stamped on writes. |
+| `AUDREY_EMBEDDING_PROVIDER` | `local` | `local`, `gemini`, `openai`, or `mock`. Cloud providers require explicit opt-in. |
+| `AUDREY_LLM_PROVIDER` | auto | `anthropic`, `openai`, or `mock`. |
+| `AUDREY_DEVICE` | `gpu` | Local embedding device (`gpu` or `cpu`). Falls back to CPU if GPU init fails. |
+| `AUDREY_PORT` | `7437` | REST sidecar port. |
+| `AUDREY_HOST` | `127.0.0.1` | REST sidecar bind address. Set to `0.0.0.0` only with `AUDREY_API_KEY`. |
+| `AUDREY_API_KEY` | unset | Bearer token required for non-loopback REST traffic. |
+| `AUDREY_ALLOW_NO_AUTH` | `0` | Set to `1` to allow non-loopback bind without an API key. Don't. |
+| `AUDREY_ENABLE_ADMIN_TOOLS` | `0` | Set to `1` to enable export, import, and forget routes/tools. Disabled by default. |
+| `AUDREY_PROMOTE_ROOTS` | unset | Colon/semicolon-separated extra roots for `audrey promote --yes` writes. By default writes are restricted to `process.cwd()`. |
+| `AUDREY_DEBUG` | `0` | Set to `1` to print MCP info logs (server started, warmup completed). Errors always log. |
+| `AUDREY_PROFILE` | `0` | Set to `1` to emit per-stage timings via MCP `_meta.diagnostics`. |
+| `AUDREY_DISABLE_WARMUP` | `0` | Set to `1` to skip background embedding warmup at MCP boot. |
+| `AUDREY_ONNX_VERBOSE` | `0` | Set to `1` to restore ONNX runtime EP-assignment warnings (suppressed by default). |
+| `AUDREY_PRAGMA_DEFAULTS` | `1` | Set to `0` to revert SQLite PRAGMA tuning to better-sqlite3 defaults. |
+| `AUDREY_CONTEXT_BUDGET_CHARS` | `4000` | Default Memory Capsule character budget. |
 
 ## Benchmarks
 
@@ -224,7 +244,7 @@ Current repo snapshot:
 
 ![Audrey local benchmark](docs/assets/benchmarks/local-benchmark.svg)
 
-The benchmark suite covers retrieval behavior, overwrite behavior, delete/abstain behavior, and semantic/procedural merge behavior. For methodology and comparison anchors, see [docs/benchmarking.md](docs/benchmarking.md).
+The benchmark suite covers retrieval behavior, overwrite behavior, delete/abstain behavior, and semantic/procedural merge behavior.
 
 ## Command Reference
 
@@ -246,6 +266,10 @@ npx audrey status --json --fail-on-unhealthy
 npx audrey dream
 npx audrey reembed
 
+# Closed-loop visibility
+npx audrey impact
+npx audrey impact --json --window 7 --limit 5
+
 # Tool-trace learning
 npx audrey observe-tool --event PostToolUse --tool Bash --outcome failed
 npx audrey promote --dry-run
@@ -255,30 +279,23 @@ npx audrey serve
 docker compose up -d --build
 ```
 
+The Node sidecar defaults to `127.0.0.1:7437`. The Docker image intentionally binds inside the container on `3487`; override the published host port with `AUDREY_PUBLISHED_PORT` when using Compose.
+
 ## Documentation
 
-- [Audrey for Dummies](docs/audrey-for-dummies.md)
-- [MCP host guide](docs/mcp-hosts.md)
-- [Ollama and local agents](docs/ollama-local-agents.md)
-- [Production readiness](docs/production-readiness.md)
-- [Future of LLM memory](docs/future-of-llm-memory.md)
-- [Benchmarking](docs/benchmarking.md)
 - [Security policy](SECURITY.md)
+- Public setup, runtime, benchmark, and command guidance is maintained in this README.
 
 ## Development
 
 ```bash
 npm ci
-npm run build
-npm run typecheck
-npm test
-npm run bench:memory:check
-npm run pack:check
+npm run release:gate
 python -m unittest discover -s python/tests -v
 python -m build --no-isolation python
 ```
 
-On some locked-down Windows hosts, Vitest/Vite can fail before tests start with `spawn EPERM`. That is an environment process-spawn blocker, not an Audrey runtime failure. Use build, typecheck, benchmark, pack dry-run, direct `dist/` smokes, and GitHub Actions as the release evidence path.
+On some locked-down Windows hosts, Vitest/Vite can fail before tests start with `spawn EPERM`. That is an environment process-spawn blocker, not an Audrey runtime failure. Use `npm run release:gate:sandbox`, direct `dist/` smokes, and GitHub Actions as the release evidence path.
 
 ## License
 
