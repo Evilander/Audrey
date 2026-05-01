@@ -76,14 +76,17 @@ config.mcpServers["audrey-memory"] = {
 fs.writeFileSync(path, JSON.stringify(config, null, 2));
 '@
 
-  $scriptFile = [System.IO.Path]::GetTempFileName()
-  $scriptFile = [System.IO.Path]::ChangeExtension($scriptFile, '.mjs')
+  # GetTempFileName actually creates the .tmp file. ChangeExtension only
+  # changes the string, so we keep both paths and clean both up.
+  $originalTempFile = [System.IO.Path]::GetTempFileName()
+  $scriptFile = [System.IO.Path]::ChangeExtension($originalTempFile, '.mjs')
   Set-Content -LiteralPath $scriptFile -Value $patchScript -Encoding utf8
 
   try {
     & $Node $scriptFile $Path $Entry $StoreDir $Agent $Node $Device
   } finally {
     Remove-Item -LiteralPath $scriptFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $originalTempFile -Force -ErrorAction SilentlyContinue
   }
 }
 

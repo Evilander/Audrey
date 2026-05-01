@@ -81,7 +81,8 @@ export async function articulateCausalLink(
   if (
     typeof candidate.spurious !== 'boolean' ||
     typeof candidate.mechanism !== 'string' ||
-    typeof candidate.confidence !== 'number'
+    typeof candidate.confidence !== 'number' ||
+    !Number.isFinite(candidate.confidence)
   ) {
     throw new Error('Causal articulation LLM response is missing required fields');
   }

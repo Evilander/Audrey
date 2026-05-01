@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Audrey } from './audrey.js';
 import type { PreflightOptions } from './preflight.js';
 import type { RecallOptions, MemoryType, PublicRetrievalMode } from './types.js';
@@ -151,17 +151,22 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // API key middleware - only if apiKey is configured.
-  // The auth comparison is constant-time to avoid leaking the prefix-match
-  // length through response timing on local untrusted callers.
+  // We compare SHA-256 digests of the full header + expected value so the
+  // operands fed to timingSafeEqual are always 32 bytes. This eliminates the
+  // length-based early exit (which leaked key length via response timing) and
+  // keeps the comparison constant-time even when the provided header has a
+  // wildly different length from the expected token.
   if (options.apiKey) {
-    const expected = Buffer.from(`Bearer ${options.apiKey}`, 'utf8');
+    const expectedDigest = createHash('sha256')
+      .update(`Bearer ${options.apiKey}`, 'utf8')
+      .digest();
     app.use('/v1/*', async (c, next) => {
       const auth = c.req.header('Authorization');
       if (!auth) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
-      const provided = Buffer.from(auth, 'utf8');
-      if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+      const providedDigest = createHash('sha256').update(auth, 'utf8').digest();
+      if (!timingSafeEqual(providedDigest, expectedDigest)) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
       await next();
