@@ -135,8 +135,23 @@ export function applyFeedback(db: Database.Database, input: MemoryValidateInput)
     }
   }
 
-  // Re-read the row so we report committed state, not in-memory deltas.
-  const fresh = findRow(db, input.id)!.row;
+  // Re-read the row so we report committed state, not in-memory deltas. The
+  // row could have been forgotten/superseded by a concurrent caller between
+  // the UPDATE above and now; in that rare case fall back to the values we
+  // just wrote rather than crashing with a non-null assertion.
+  const fresh = findRow(db, input.id)?.row;
+  if (!fresh) {
+    return {
+      id: input.id,
+      type,
+      outcome: input.outcome,
+      salience: newSalience,
+      usageCount: newUsageCount,
+      retrievalCount: null,
+      challengeCount: null,
+      state: null,
+    };
+  }
 
   return {
     id: input.id,

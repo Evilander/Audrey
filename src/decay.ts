@@ -34,23 +34,24 @@ export function applyDecay(
   let totalEvaluated = 0;
   let transitionedToDormant = 0;
 
-  const semantics = db.prepare(`
+  const selectActiveSemantics = db.prepare(`
     SELECT id, supporting_count, contradicting_count, created_at,
            last_reinforced_at, retrieval_count, interference_count, salience
     FROM semantics WHERE state = 'active'
-  `).all() as DecaySemanticRow[];
-
-  const markDormantSem = db.prepare('UPDATE semantics SET state = ? WHERE id = ?');
-
-  const procedures = db.prepare(`
+  `);
+  const selectActiveProcedures = db.prepare(`
     SELECT id, success_count, failure_count, created_at,
            last_reinforced_at, retrieval_count, interference_count, salience
     FROM procedures WHERE state = 'active'
-  `).all() as DecayProceduralRow[];
-
+  `);
+  const markDormantSem = db.prepare('UPDATE semantics SET state = ? WHERE id = ?');
   const markDormantProc = db.prepare('UPDATE procedures SET state = ? WHERE id = ?');
 
+  // Read inside the transaction so concurrent writes can't race the dormant
+  // marking — we must transition the same rows we just evaluated.
   const decayTxn = db.transaction(() => {
+    const semantics = selectActiveSemantics.all() as DecaySemanticRow[];
+    const procedures = selectActiveProcedures.all() as DecayProceduralRow[];
     for (const sem of semantics) {
       totalEvaluated++;
       const ageDays = daysBetween(sem.created_at, now);

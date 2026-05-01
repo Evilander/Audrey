@@ -641,6 +641,7 @@ export class Audrey extends EventEmitter {
   }
 
   async *recallStream(query: string, options: RecallOptions = {}): AsyncGenerator<RecallResult> {
+    await this._waitForEmbeddingWarmup();
     await this._ensureMigrated();
     yield* recallStreamFn(this.db, this.embeddingProvider, query, {
       ...options,

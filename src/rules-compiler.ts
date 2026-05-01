@@ -68,9 +68,17 @@ function renderFrontmatterLine(key: string, value: unknown, indent: number): str
 }
 
 function quoteString(value: string): string {
-  const needsQuoting = /[:#\n"'`\\]/.test(value) || value.startsWith(' ') || value.endsWith(' ');
+  const needsQuoting = /[:#\n\r\t"'`\\]/.test(value) || value.startsWith(' ') || value.endsWith(' ');
   if (!needsQuoting) return value;
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  // Order matters: backslash first so we don't double-escape the substitutions
+  // we add for control chars below.
+  const escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+  return `"${escaped}"`;
 }
 
 function fenceFor(value: string): string {

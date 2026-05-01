@@ -59,7 +59,9 @@ export async function encodeEpisode(
   const now = new Date().toISOString();
 
   const boost = arousalSalienceBoost(affect.arousal);
-  const effectiveSalience = Math.min(1.0, salience + (boost * arousalWeight));
+  // Clamp both ends — a sufficiently negative arousal boost can drive salience
+  // below 0, which propagates as a negative confidence multiplier downstream.
+  const effectiveSalience = Math.max(0, Math.min(1.0, salience + (boost * arousalWeight)));
 
   const insertAndLink = db.transaction(() => {
     db.prepare(`

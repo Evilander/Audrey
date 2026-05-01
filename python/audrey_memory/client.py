@@ -148,12 +148,12 @@ class Audrey:
 
     def analytics(self) -> AnalyticsResponse:
         # Not yet exposed by the TypeScript REST sidecar. Tracked as P1 in
-        # docs/PRODUCTION_BACKLOG.md (memory_validate + analytics surface).
-        # Raising NotImplementedError instead of letting users hit a confusing
-        # 404 from Hono.
+        # docs/PRODUCTION_BACKLOG.md (analytics surface — memory_validate
+        # itself shipped as P0#1 in 0.22.1). Raising NotImplementedError
+        # instead of letting users hit a confusing 404 from Hono.
         raise NotImplementedError(
             "audrey.analytics() requires /v1/analytics on the REST sidecar, "
-            "which is not yet implemented. See docs/PRODUCTION_BACKLOG.md (P0#1)."
+            "which is not yet implemented. See docs/PRODUCTION_BACKLOG.md (P1)."
         )
 
     def encode(self, payload: EncodeRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> str:
@@ -274,7 +274,7 @@ class AsyncAudrey:
         # Not yet exposed by the TypeScript REST sidecar. See sync analytics().
         raise NotImplementedError(
             "audrey.analytics() requires /v1/analytics on the REST sidecar, "
-            "which is not yet implemented. See docs/PRODUCTION_BACKLOG.md (P0#1)."
+            "which is not yet implemented. See docs/PRODUCTION_BACKLOG.md (P1)."
         )
 
     async def encode(self, payload: EncodeRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> str:

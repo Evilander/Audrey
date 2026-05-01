@@ -151,17 +151,28 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // API key middleware - only if apiKey is configured.
-  // The auth comparison is constant-time to avoid leaking the prefix-match
-  // length through response timing on local untrusted callers.
+  // Pad the expected value and incoming Authorization header to a fixed
+  // capacity buffer before timingSafeEqual so the comparison runs in constant
+  // time regardless of header length. The previous (length, then compare)
+  // shape leaked the expected key length via response timing on local
+  // untrusted callers. Capacity is generous enough (1 KiB) to swallow any
+  // realistic Bearer header without truncating, while still small enough to
+  // keep the compare cheap.
   if (options.apiKey) {
-    const expected = Buffer.from(`Bearer ${options.apiKey}`, 'utf8');
+    const COMPARE_CAPACITY = 1024;
+    const padToCapacity = (input: Buffer): Buffer => {
+      const out = Buffer.alloc(COMPARE_CAPACITY);
+      input.copy(out, 0, 0, Math.min(input.length, COMPARE_CAPACITY));
+      return out;
+    };
+    const expectedPadded = padToCapacity(Buffer.from(`Bearer ${options.apiKey}`, 'utf8'));
     app.use('/v1/*', async (c, next) => {
       const auth = c.req.header('Authorization');
       if (!auth) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
-      const provided = Buffer.from(auth, 'utf8');
-      if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+      const providedPadded = padToCapacity(Buffer.from(auth, 'utf8'));
+      if (!timingSafeEqual(providedPadded, expectedPadded)) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
       await next();
