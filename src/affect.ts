@@ -81,7 +81,10 @@ export async function detectResonance(
       priorAffect,
       semanticSimilarity: match.similarity,
       emotionalSimilarity,
-      timeDeltaDays: Math.floor((Date.now() - new Date(match.created_at).getTime()) / 86400000),
+      timeDeltaDays: (() => {
+        const t = new Date(match.created_at).getTime();
+        return Number.isNaN(t) ? 0 : Math.floor((Date.now() - t) / 86400000);
+      })(),
       priorCreatedAt: match.created_at,
     });
   }

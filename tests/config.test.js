@@ -8,11 +8,10 @@ describe("resolveEmbeddingProvider", () => {
     expect(result.dimensions).toBe(384);
   });
 
-  it("returns gemini when GOOGLE_API_KEY present", () => {
+  it("does not auto-select cloud embeddings from ambient GOOGLE_API_KEY", () => {
     const result = resolveEmbeddingProvider({ GOOGLE_API_KEY: "test-key" });
-    expect(result.provider).toBe("gemini");
-    expect(result.apiKey).toBe("test-key");
-    expect(result.dimensions).toBe(3072);
+    expect(result.provider).toBe("local");
+    expect(result.dimensions).toBe(384);
   });
 
   it("never auto-selects openai even if OPENAI_API_KEY present", () => {
@@ -24,6 +23,13 @@ describe("resolveEmbeddingProvider", () => {
     const result = resolveEmbeddingProvider({ OPENAI_API_KEY: "test-key" }, "openai");
     expect(result.provider).toBe("openai");
     expect(result.dimensions).toBe(1536);
+  });
+
+  it("returns gemini when explicitly configured", () => {
+    const result = resolveEmbeddingProvider({ GOOGLE_API_KEY: "test-key" }, "gemini");
+    expect(result.provider).toBe("gemini");
+    expect(result.apiKey).toBe("test-key");
+    expect(result.dimensions).toBe(3072);
   });
 
   it("returns local when explicitly configured", () => {

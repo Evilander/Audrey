@@ -123,6 +123,14 @@ describe('redact', () => {
     expect(result.text).toContain('sessionid=[REDACTED:session_cookie]');
   });
 
+  it('redacts naked high-entropy tokens without a credential prefix', () => {
+    const token = 'q9V1nZ4LkP7sD2fGh8JmR3tY6uW0xAbC';
+    const result = redact(`tool stderr leaked ${token} before exiting`);
+    expect(result.redactions.find(r => r.class === 'high_entropy_secret')?.count).toBe(1);
+    expect(result.text).not.toContain(token);
+    expect(result.text).toContain('[REDACTED:high_entropy_secret');
+  });
+
   it('redactJson walks nested structures', () => {
     const result = redactJson({
       config: { password: 'hunter2abcdef' },

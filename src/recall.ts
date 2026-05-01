@@ -59,6 +59,7 @@ interface RecallFilters {
   sources?: string[];
   after?: string;
   before?: string;
+  agent?: string;
 }
 
 function tokenize(text: string): string[] {
@@ -240,6 +241,7 @@ function buildEpisodicEntry(
     confidence,
     score,
     source: ep.source,
+    agent: ep.agent ?? 'default',
     createdAt: ep.created_at,
   };
   if (contextMatch !== undefined) {
@@ -272,6 +274,7 @@ function buildSemanticEntry(
     confidence,
     score,
     source: 'consolidation',
+    agent: sem.agent ?? 'default',
     state: sem.state,
     createdAt: sem.created_at,
   };
@@ -300,6 +303,7 @@ function buildProceduralEntry(
     confidence,
     score,
     source: 'consolidation',
+    agent: proc.agent ?? 'default',
     state: proc.state,
     createdAt: proc.created_at,
   };
@@ -384,6 +388,8 @@ function knnEpisodic(
   const safeK = safeKForCount(tableCount, candidateK);
   if (safeK === 0) return [];
   const privateClause = includePrivate ? '' : 'AND e."private" = 0';
+  const agentClause = filters.agent ? 'AND e.agent = ?' : '';
+  const params = filters.agent ? [queryBuffer, safeK, filters.agent] : [queryBuffer, safeK];
   const rows = db.prepare(`
     SELECT e.*, (1.0 - v.distance) AS similarity
     FROM vec_episodes v
@@ -392,7 +398,8 @@ function knnEpisodic(
       AND k = ?
       AND e.superseded_by IS NULL
       ${privateClause}
-  `).all(queryBuffer, safeK) as EpisodeWithSimilarity[];
+      ${agentClause}
+  `).all(...params) as EpisodeWithSimilarity[];
 
   const results: RecallResult[] = [];
   for (const row of rows) {
@@ -441,6 +448,8 @@ function knnSemantic(
 ): { results: RecallResult[]; matchedIds: string[] } {
   const safeK = safeKForCount(tableCount, candidateK);
   if (safeK === 0) return { results: [], matchedIds: [] };
+  const agentClause = filters.agent ? 'AND s.agent = ?' : '';
+  const params = filters.agent ? [queryBuffer, safeK, filters.agent] : [queryBuffer, safeK];
   const rows = db.prepare(`
     SELECT s.*, (1.0 - v.distance) AS similarity
     FROM vec_semantics v
@@ -448,7 +457,8 @@ function knnSemantic(
     WHERE v.embedding MATCH ?
       AND k = ?
       ${stateClause(includeDormant)}
-  `).all(queryBuffer, safeK) as SemanticWithSimilarity[];
+      ${agentClause}
+  `).all(...params) as SemanticWithSimilarity[];
 
   const results: RecallResult[] = [];
   const matchedIds: string[] = [];
@@ -477,6 +487,8 @@ function knnProcedural(
 ): { results: RecallResult[]; matchedIds: string[] } {
   const safeK = safeKForCount(tableCount, candidateK);
   if (safeK === 0) return { results: [], matchedIds: [] };
+  const agentClause = filters.agent ? 'AND p.agent = ?' : '';
+  const params = filters.agent ? [queryBuffer, safeK, filters.agent] : [queryBuffer, safeK];
   const rows = db.prepare(`
     SELECT p.*, (1.0 - v.distance) AS similarity
     FROM vec_procedures v
@@ -484,7 +496,8 @@ function knnProcedural(
     WHERE v.embedding MATCH ?
       AND k = ?
       ${stateClause(includeDormant)}
-  `).all(queryBuffer, safeK) as ProceduralWithSimilarity[];
+      ${agentClause}
+  `).all(...params) as ProceduralWithSimilarity[];
 
   const results: RecallResult[] = [];
   const matchedIds: string[] = [];
@@ -524,8 +537,8 @@ export async function* recallStream(
   const searchTypes: MemoryType[] = types || ['episodic', 'semantic', 'procedural'];
   const now = new Date();
   const hasFilters = tags?.length || sources?.length || after || before;
-  const candidateK = hasFilters ? limit * 5 : limit * 3;
-  const filters: RecallFilters = { tags, sources, after, before };
+  const agentFilter = options.scope === 'agent' ? options.agent : undefined;
+  const filters: RecallFilters = { tags, sources, after, before, agent: agentFilter };
 
   const allResults: RecallResult[] = [];
 
@@ -542,6 +555,10 @@ export async function* recallStream(
     const vectorCounts = profile
       ? profile.measureSync('recall.vector_counts', () => countVectorTables(db, searchTypes))
       : countVectorTables(db, searchTypes);
+    const maxVectorCount = Math.max(vectorCounts.episodic, vectorCounts.semantic, vectorCounts.procedural);
+    const candidateK = agentFilter
+      ? maxVectorCount
+      : hasFilters ? limit * 5 : limit * 3;
 
     if (searchTypes.includes('episodic')) {
       try {
@@ -637,9 +654,10 @@ export async function* recallStream(
   let resultsToGuard = allResults;
 
   if (retrieval !== 'vector') {
+    const candidateK = agentFilter ? 10_000 : hasFilters ? limit * 5 : limit * 3;
     const ftsIds = profile
-      ? profile.measureSync('recall.fts_lookup', () => ftsIdsByType(db, query, searchTypes, candidateK))
-      : ftsIdsByType(db, query, searchTypes, candidateK);
+      ? profile.measureSync('recall.fts_lookup', () => ftsIdsByType(db, query, searchTypes, candidateK, agentFilter))
+      : ftsIdsByType(db, query, searchTypes, candidateK, agentFilter);
     const fuse = (): RecallResult[] => fuseResults(db, {
       vectorResults: allResults,
       ftsIds,
@@ -648,6 +666,7 @@ export async function* recallStream(
       includeDormant,
       minConfidence,
       filters,
+      agentFilter,
     });
     const fused = profile ? profile.measureSync('recall.fuse_results', fuse) : fuse();
     resultsToGuard = fused;

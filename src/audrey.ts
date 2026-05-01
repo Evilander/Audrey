@@ -21,6 +21,7 @@ import type {
   RecallOptions,
   RecallResult,
   ReembedCounts,
+  ReflectMemory,
   ReflectResult,
   TruthResolution,
   ConsolidationRunRow,
@@ -98,6 +99,71 @@ interface AffectRow {
 interface EncodedEmbedding {
   vector?: number[];
   buffer?: Buffer;
+}
+
+const REFLECTION_SOURCES = new Set<EncodeParams['source']>([
+  'direct-observation',
+  'told-by-user',
+  'inference',
+]);
+
+function boundedString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, maxLength);
+}
+
+function boundedNumber(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeReflectionAffect(raw: unknown): Affect | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const record = raw as Record<string, unknown>;
+  const valence = boundedNumber(record.valence, -1, 1);
+  const arousal = boundedNumber(record.arousal, 0, 1);
+  if (valence === undefined && arousal === undefined) return undefined;
+  const affect: Affect = {};
+  if (valence !== undefined) affect.valence = valence;
+  if (arousal !== undefined) affect.arousal = arousal;
+  const label = boundedString(record.label, 64);
+  if (label) affect.label = label;
+  return affect;
+}
+
+function normalizeReflectionMemory(raw: unknown): ReflectMemory | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  const content = boundedString(record.content, 5000);
+  if (!content) return null;
+  const source = record.source;
+  if (typeof source !== 'string' || !REFLECTION_SOURCES.has(source as EncodeParams['source'])) {
+    return null;
+  }
+
+  const memory: ReflectMemory = {
+    content,
+    source: source as EncodeParams['source'],
+  };
+  const salience = boundedNumber(record.salience, 0, 1);
+  if (salience !== undefined) memory.salience = salience;
+  if (Array.isArray(record.tags)) {
+    const tags = record.tags
+      .map(tag => boundedString(tag, 64))
+      .filter((tag): tag is string => Boolean(tag))
+      .slice(0, 20);
+    if (tags.length > 0) memory.tags = tags;
+  }
+  if (typeof record.private === 'boolean') memory.private = record.private;
+  const affect = normalizeReflectionAffect(record.affect);
+  if (affect) memory.affect = affect;
+  return memory;
+}
+
+function messagesToLegacyPrompt(messages: Array<{ role: string; content: string }>): string {
+  return messages.map(message => `${message.role.toUpperCase()}:\n${message.content}`).join('\n\n');
 }
 
 export interface PostEncodeQueueDrainResult {
@@ -217,7 +283,7 @@ export class Audrey extends EventEmitter {
     this.consolidationConfig = {
       minEpisodes: consolidation.minEpisodes || 3,
     };
-    this.decayConfig = { dormantThreshold: decay.dormantThreshold || 0.1 };
+    this.decayConfig = { dormantThreshold };
     this._autoConsolidateTimer = null;
     this._closed = false;
     this.interferenceConfig = {
@@ -438,7 +504,7 @@ export class Audrey extends EventEmitter {
     if (profile) await profile.measure('encode.ensure_migrated', () => this._ensureMigrated());
     else await this._ensureMigrated();
 
-    const encodeParams = { ...params, arousalWeight: this.affectConfig.arousalWeight };
+    const encodeParams = { ...params, agent: params.agent ?? this.agent, arousalWeight: this.affectConfig.arousalWeight };
     let encodedVector: number[] | undefined;
     let encodedBuffer: Buffer | undefined;
     const id = profile
@@ -473,27 +539,34 @@ export class Audrey extends EventEmitter {
     const prompt = buildReflectionPrompt(turns);
     let raw: string;
     try {
-      raw = await this.llmProvider.chat!(prompt as unknown as string) as string;
+      if (typeof this.llmProvider.complete === 'function') {
+        raw = (await this.llmProvider.complete(prompt)).content;
+      } else if (typeof this.llmProvider.chat === 'function') {
+        raw = await this.llmProvider.chat(messagesToLegacyPrompt(prompt));
+      } else {
+        return { encoded: 0, memories: [], skipped: 'llm provider missing completion method' };
+      }
     } catch (err) {
       this.emit('error', err);
       return { encoded: 0, memories: [], skipped: 'llm error' };
     }
 
-    let parsed: { memories?: Array<{ content?: string; source?: string; salience?: number; tags?: string[]; private?: boolean; affect?: Affect }> };
+    let parsed: { memories?: unknown[] };
     try {
       parsed = JSON.parse(raw);
     } catch {
       return { encoded: 0, memories: [], skipped: 'invalid llm response' };
     }
 
-    const memories = parsed.memories ?? [];
+    const memories = Array.isArray(parsed.memories)
+      ? parsed.memories.map(normalizeReflectionMemory).filter((mem): mem is ReflectMemory => mem !== null).slice(0, 50)
+      : [];
     let encoded = 0;
     for (const mem of memories) {
-      if (!mem.content || !mem.source) continue;
       try {
         await this.encode({
           content: mem.content,
-          source: mem.source as EncodeParams['source'],
+          source: mem.source,
           salience: mem.salience,
           tags: mem.tags,
           private: mem.private ?? false,
@@ -505,7 +578,7 @@ export class Audrey extends EventEmitter {
       }
     }
 
-    return { encoded, memories: memories as ReflectResult['memories'] };
+    return { encoded, memories };
   }
 
   async encodeBatch(paramsList: EncodeParams[]): Promise<string[]> {
@@ -514,7 +587,7 @@ export class Audrey extends EventEmitter {
     const ids: string[] = [];
     const tasks: Array<Promise<void>> = [];
     for (const params of paramsList) {
-      const encodeParams = { ...params, arousalWeight: this.affectConfig.arousalWeight };
+      const encodeParams = { ...params, agent: params.agent ?? this.agent, arousalWeight: this.affectConfig.arousalWeight };
       let encodedVector: number[] | undefined;
       let encodedBuffer: Buffer | undefined;
       const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
@@ -560,6 +633,7 @@ export class Audrey extends EventEmitter {
 
     return recallFn(this.db, this.embeddingProvider, query, {
       ...options,
+      agent: options.agent ?? this.agent,
       retrieval: options.retrieval ?? this.defaultRetrievalMode,
       confidenceConfig: this._recallConfig(options),
       profile,
@@ -570,6 +644,7 @@ export class Audrey extends EventEmitter {
     await this._ensureMigrated();
     yield* recallStreamFn(this.db, this.embeddingProvider, query, {
       ...options,
+      agent: this.agent,
       retrieval: options.retrieval ?? this.defaultRetrievalMode,
       confidenceConfig: this._recallConfig(options),
     });
@@ -591,6 +666,7 @@ export class Audrey extends EventEmitter {
     const result = await runConsolidation(this.db, this.embeddingProvider, {
       minClusterSize: options.minClusterSize || this.consolidationConfig.minEpisodes,
       similarityThreshold: options.similarityThreshold || 0.80,
+      agent: options.agent || this.agent,
       extractPrinciple: options.extractPrinciple,
       llmProvider: options.llmProvider || this.llmProvider || undefined,
     });
@@ -730,26 +806,28 @@ export class Audrey extends EventEmitter {
     };
   }
 
-  async greeting({ context, recentLimit = 10, principleLimit = 5, identityLimit = 5 }: GreetingOptions = {}): Promise<GreetingResult> {
+  async greeting({ context, recentLimit = 10, principleLimit = 5, identityLimit = 5, scope = 'agent' }: GreetingOptions = {}): Promise<GreetingResult> {
+    const agentClause = scope === 'agent' ? 'AND agent = ?' : '';
+    const agentParam = scope === 'agent' ? [this.agent] : [];
     const recent = this.db.prepare(
-      'SELECT id, content, source, tags, salience, created_at FROM episodes WHERE "private" = 0 ORDER BY created_at DESC LIMIT ?'
-    ).all(recentLimit) as GreetingEpisodeRow[];
+      `SELECT id, content, source, tags, salience, created_at FROM episodes WHERE "private" = 0 ${agentClause} ORDER BY created_at DESC LIMIT ?`
+    ).all(...agentParam, recentLimit) as GreetingEpisodeRow[];
 
     const principles = this.db.prepare(
-      'SELECT id, content, salience, created_at FROM semantics WHERE state = ? ORDER BY salience DESC LIMIT ?'
-    ).all('active', principleLimit) as GreetingPrincipleRow[];
+      `SELECT id, content, salience, created_at FROM semantics WHERE state = ? ${agentClause} ORDER BY salience DESC LIMIT ?`
+    ).all('active', ...agentParam, principleLimit) as GreetingPrincipleRow[];
 
     const identity = this.db.prepare(
-      'SELECT id, content, tags, salience, created_at FROM episodes WHERE "private" = 1 ORDER BY created_at DESC LIMIT ?'
-    ).all(identityLimit) as GreetingIdentityRow[];
+      `SELECT id, content, tags, salience, created_at FROM episodes WHERE "private" = 1 ${agentClause} ORDER BY created_at DESC LIMIT ?`
+    ).all(...agentParam, identityLimit) as GreetingIdentityRow[];
 
     const unresolved = this.db.prepare(
-      "SELECT id, content, tags, salience, created_at FROM episodes WHERE tags LIKE '%unresolved%' AND salience > 0.3 ORDER BY created_at DESC LIMIT 10"
-    ).all() as GreetingUnresolvedRow[];
+      `SELECT id, content, tags, salience, created_at FROM episodes WHERE tags LIKE '%unresolved%' AND salience > 0.3 ${agentClause} ORDER BY created_at DESC LIMIT 10`
+    ).all(...agentParam) as GreetingUnresolvedRow[];
 
     const rawAffectRows = this.db.prepare(
-      "SELECT affect FROM episodes WHERE affect IS NOT NULL AND affect != '{}' ORDER BY created_at DESC LIMIT 20"
-    ).all() as AffectRow[];
+      `SELECT affect FROM episodes WHERE affect IS NOT NULL AND affect != '{}' ${agentClause} ORDER BY created_at DESC LIMIT 20`
+    ).all(...agentParam) as AffectRow[];
 
     const affectParsed = rawAffectRows
       .map(r => { try { return JSON.parse(r.affect) as Affect; } catch { return null; } })
@@ -771,7 +849,7 @@ export class Audrey extends EventEmitter {
     const result: GreetingResult = { recent, principles, mood, unresolved, identity };
 
     if (context) {
-      result.contextual = await this.recall(context, { limit: 5, includePrivate: true });
+      result.contextual = await this.recall(context, { limit: 5, includePrivate: true, scope });
     }
 
     return result;

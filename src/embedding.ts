@@ -68,8 +68,10 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`OpenAI embedding failed: ${await describeHttpError(response)}`);
-      const data = await response.json() as { data: { embedding: number[] }[] };
-      return data.data[0]!.embedding;
+      const data = await response.json() as { data?: { embedding: number[] }[] };
+      const first = data.data?.[0]?.embedding;
+      if (!first) throw new Error('OpenAI embedding response contained no embeddings');
+      return first;
     } finally {
       clearTimeout(timer);
     }

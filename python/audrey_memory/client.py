@@ -196,7 +196,7 @@ class Audrey:
         return _validate(AckResponse, data)
 
     def validate(self, memory_id: str, outcome: str = "used") -> dict[str, Any]:
-        """Closed-loop feedback. outcome ∈ {"used","helpful","wrong"}.
+        """Closed-loop feedback. outcome is one of {"used","helpful","wrong"}.
 
         "helpful" reinforces salience and retrieval. "wrong" decreases
         salience and bumps challenge_count for semantic memories. "used"

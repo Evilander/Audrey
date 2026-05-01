@@ -42,8 +42,15 @@ memory_id = brain.encode(
 
 results = brain.recall("stripe rate limits", limit=5)
 snapshot = brain.snapshot()
-brain.restore(snapshot)
 brain.close()
+```
+
+Restore snapshots only into an empty Audrey store, such as a sidecar started with a fresh `AUDREY_DATA_DIR`:
+
+```python
+restore_target = Audrey(base_url="http://127.0.0.1:7437", api_key="secret")
+restore_target.restore(snapshot)
+restore_target.close()
 ```
 
 Async usage:
@@ -69,5 +76,5 @@ asyncio.run(main())
 - Sync and async clients powered by `httpx`
 - Pydantic request and response models
 - Bearer auth via `AUDREY_API_KEY`
-- Agent scoping via `X-Audrey-Agent`
+- Optional `X-Audrey-Agent` header on client requests
 - Snapshot export and restore support

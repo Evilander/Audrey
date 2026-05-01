@@ -15,7 +15,7 @@ export function interferenceModifier(interferenceCount: number, weight: number =
 export async function applyInterference(
   db: Database.Database,
   embeddingProvider: EmbeddingProvider,
-  episodeId: string,
+  _episodeId: string,
   params: { content: string },
   config: InterferenceConfig = {},
   embedding?: { vector?: number[]; buffer?: Buffer },
@@ -51,19 +51,23 @@ export async function applyInterference(
   const updateSemantic = db.prepare('UPDATE semantics SET interference_count = ? WHERE id = ?');
   const updateProcedural = db.prepare('UPDATE procedures SET interference_count = ? WHERE id = ?');
 
-  for (const hit of semanticHits) {
-    if (hit.similarity < threshold) continue;
-    const newCount = hit.interference_count + 1;
-    updateSemantic.run(newCount, hit.id);
-    affected.push({ id: hit.id, type: 'semantic', newCount, similarity: hit.similarity });
-  }
+  const applyUpdates = db.transaction(() => {
+    for (const hit of semanticHits) {
+      if (hit.similarity < threshold) continue;
+      const newCount = hit.interference_count + 1;
+      updateSemantic.run(newCount, hit.id);
+      affected.push({ id: hit.id, type: 'semantic', newCount, similarity: hit.similarity });
+    }
 
-  for (const hit of proceduralHits) {
-    if (hit.similarity < threshold) continue;
-    const newCount = hit.interference_count + 1;
-    updateProcedural.run(newCount, hit.id);
-    affected.push({ id: hit.id, type: 'procedural', newCount, similarity: hit.similarity });
-  }
+    for (const hit of proceduralHits) {
+      if (hit.similarity < threshold) continue;
+      const newCount = hit.interference_count + 1;
+      updateProcedural.run(newCount, hit.id);
+      affected.push({ id: hit.id, type: 'procedural', newCount, similarity: hit.similarity });
+    }
+  });
+
+  applyUpdates();
 
   return affected;
 }

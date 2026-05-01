@@ -11,6 +11,7 @@ interface ExportedEpisode {
   id: string;
   content: string;
   source: string;
+  agent: string;
   source_reliability: number;
   salience: number;
   context: unknown;
@@ -31,6 +32,7 @@ interface EpisodeExportRow {
   id: string;
   content: string;
   source: string;
+  agent: string;
   source_reliability: number;
   salience: number;
   context: string;
@@ -50,6 +52,7 @@ interface EpisodeExportRow {
 interface SemanticExportRow {
   id: string;
   content: string;
+  agent: string;
   state: string;
   conditions: string | null;
   evidence_episode_ids: string | null;
@@ -73,6 +76,7 @@ interface SemanticExportRow {
 interface ProcedureExportRow {
   id: string;
   content: string;
+  agent: string;
   state: string;
   trigger_conditions: string | null;
   evidence_episode_ids: string | null;
@@ -100,6 +104,24 @@ interface ConsolidationRunExportRow {
   status: string;
 }
 
+interface MemoryEventExportRow {
+  id: string;
+  session_id: string | null;
+  event_type: string;
+  source: string;
+  actor_agent: string | null;
+  tool_name: string | null;
+  input_hash: string | null;
+  output_hash: string | null;
+  outcome: string | null;
+  error_summary: string | null;
+  cwd: string | null;
+  file_fingerprints: string | null;
+  redaction_state: string | null;
+  metadata: string | null;
+  created_at: string;
+}
+
 interface ConfigRow {
   key: string;
   value: string;
@@ -107,7 +129,7 @@ interface ConfigRow {
 
 export function exportMemories(db: Database.Database): object {
   const episodes = (db.prepare(
-    'SELECT id, content, source, source_reliability, salience, context, affect, tags, causal_trigger, causal_consequence, created_at, embedding_model, embedding_version, supersedes, superseded_by, consolidated, "private" FROM episodes'
+    'SELECT id, content, source, agent, source_reliability, salience, context, affect, tags, causal_trigger, causal_consequence, created_at, embedding_model, embedding_version, supersedes, superseded_by, consolidated, "private" FROM episodes'
   ).all() as EpisodeExportRow[]).map(ep => ({
     ...ep,
     tags: safeJsonParse(ep.tags, null),
@@ -116,14 +138,14 @@ export function exportMemories(db: Database.Database): object {
   }));
 
   const semantics = (db.prepare(
-    'SELECT id, content, state, conditions, evidence_episode_ids, evidence_count, supporting_count, contradicting_count, source_type_diversity, consolidation_checkpoint, embedding_model, embedding_version, consolidation_model, consolidation_prompt_hash, created_at, last_reinforced_at, retrieval_count, challenge_count, interference_count, salience FROM semantics'
+    'SELECT id, content, agent, state, conditions, evidence_episode_ids, evidence_count, supporting_count, contradicting_count, source_type_diversity, consolidation_checkpoint, embedding_model, embedding_version, consolidation_model, consolidation_prompt_hash, created_at, last_reinforced_at, retrieval_count, challenge_count, interference_count, salience FROM semantics'
   ).all() as SemanticExportRow[]).map(sem => ({
     ...sem,
     evidence_episode_ids: safeJsonParse(sem.evidence_episode_ids, []),
   }));
 
   const procedures = (db.prepare(
-    'SELECT id, content, state, trigger_conditions, evidence_episode_ids, success_count, failure_count, embedding_model, embedding_version, created_at, last_reinforced_at, retrieval_count, interference_count, salience FROM procedures'
+    'SELECT id, content, agent, state, trigger_conditions, evidence_episode_ids, success_count, failure_count, embedding_model, embedding_version, created_at, last_reinforced_at, retrieval_count, interference_count, salience FROM procedures'
   ).all() as ProcedureExportRow[]).map(proc => ({
     ...proc,
     evidence_episode_ids: safeJsonParse(proc.evidence_episode_ids, []),
@@ -148,6 +170,10 @@ export function exportMemories(db: Database.Database): object {
     'SELECT id, run_id, min_cluster_size, similarity_threshold, episodes_evaluated, clusters_found, principles_extracted, created_at FROM consolidation_metrics'
   ).all();
 
+  const memoryEvents = db.prepare(
+    'SELECT id, session_id, event_type, source, actor_agent, tool_name, input_hash, output_hash, outcome, error_summary, cwd, file_fingerprints, redaction_state, metadata, created_at FROM memory_events'
+  ).all() as MemoryEventExportRow[];
+
   const configRows = db.prepare('SELECT key, value FROM audrey_config').all() as ConfigRow[];
   const config = Object.fromEntries(configRows.map(r => [r.key, r.value]));
 
@@ -161,6 +187,7 @@ export function exportMemories(db: Database.Database): object {
     contradictions,
     consolidationRuns,
     consolidationMetrics,
+    memoryEvents,
     config,
   };
 }

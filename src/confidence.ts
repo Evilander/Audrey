@@ -39,6 +39,9 @@ export function evidenceAgreement(supportingCount: number, contradictingCount: n
 }
 
 export function recencyDecay(ageDays: number, halfLifeDays: number): number {
+  if (!(halfLifeDays > 0)) {
+    throw new RangeError(`recencyDecay: halfLifeDays must be > 0 (got ${halfLifeDays})`);
+  }
   const lambda = Math.LN2 / halfLifeDays;
   return Math.exp(-lambda * ageDays);
 }

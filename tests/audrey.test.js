@@ -26,6 +26,7 @@ function normalizeSnapshot(snapshot) {
     'contradictions',
     'consolidationRuns',
     'consolidationMetrics',
+    'memoryEvents',
   ]) {
     if (Array.isArray(clone[key])) {
       clone[key].sort((a, b) => String(a.id).localeCompare(String(b.id)));
@@ -1612,6 +1613,32 @@ describe('reflect()', () => {
     audrey.close();
   });
 
+  it('uses the standard LLM completion interface for reflection', async () => {
+    const tmpDir = join(tmpdir(), `audrey-reflect-complete-${Date.now()}`);
+    const audrey = new Audrey({
+      dataDir: tmpDir,
+      agent: 'test',
+      embedding: { provider: 'mock', dimensions: 8 },
+      llm: {
+        provider: 'mock',
+        responses: {
+          memoryReflection: {
+            memories: [
+              { content: 'reflection via complete works', source: 'inference', salience: 0.6, tags: ['reflect'] },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = await audrey.reflect([{ role: 'assistant', content: 'I should remember this.' }]);
+    expect(result.encoded).toBe(1);
+    const row = audrey.db.prepare("SELECT content, source FROM episodes WHERE content = 'reflection via complete works'").get();
+    expect(row.source).toBe('inference');
+
+    audrey.close();
+  });
+
   it('returns skipped when no llmProvider configured', async () => {
     const tmpDir = join(tmpdir(), `audrey-reflect-nollm-${Date.now()}`);
     const audrey = new Audrey({
@@ -1769,11 +1796,6 @@ describe('export/import roundtrip', () => {
         INSERT INTO contradictions (id, claim_a_id, claim_a_type, claim_b_id, claim_b_type, state, resolution, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run('con-1', semantic.id, 'semantic', episode.id, 'episodic', 'open', null, now);
-
-      source.db.prepare(`
-        INSERT INTO audrey_config (key, value) VALUES ('custom_flag', 'enabled')
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-      `).run();
 
       source.db.prepare(`
         UPDATE consolidation_runs

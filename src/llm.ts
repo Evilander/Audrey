@@ -17,6 +17,7 @@ const PROMPT_TYPE_KEYS = [
   'contradictionDetection',
   'causalArticulation',
   'contextResolution',
+  'memoryReflection',
 ] as const;
 
 export class MockLLMProvider implements LLMProvider {

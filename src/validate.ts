@@ -65,73 +65,102 @@ export async function validateMemory(
   }
 
   if (bestMatch && bestSimilarity >= threshold) {
-    const evidenceIds = safeJsonParse<string[]>(bestMatch.evidence_episode_ids, []);
-    if (!evidenceIds.includes(episode.id)) {
-      evidenceIds.push(episode.id);
-    }
-
-    const diversity = computeSourceDiversity(db, evidenceIds, episode);
-
-    const now = new Date().toISOString();
-    db.prepare(`
-      UPDATE semantics SET
-        supporting_count = supporting_count + 1,
-        evidence_episode_ids = ?,
-        evidence_count = ?,
-        source_type_diversity = ?,
-        last_reinforced_at = ?
-      WHERE id = ?
-    `).run(
-      JSON.stringify(evidenceIds),
-      evidenceIds.length,
-      diversity,
-      now,
-      bestMatch.id,
-    );
+    const matchId = bestMatch.id;
+    const reinforce = db.transaction(() => {
+      // Re-read evidence inside the transaction to avoid lost updates under concurrency.
+      const current = db.prepare(
+        'SELECT evidence_episode_ids FROM semantics WHERE id = ?',
+      ).get(matchId) as { evidence_episode_ids: string | null } | undefined;
+      const existing = safeJsonParse<string[]>(
+        current?.evidence_episode_ids ?? null,
+        [],
+      );
+      if (!existing.includes(episode.id)) {
+        existing.push(episode.id);
+      }
+      const diversity = computeSourceDiversity(db, existing, episode);
+      const now = new Date().toISOString();
+      db.prepare(`
+        UPDATE semantics SET
+          supporting_count = supporting_count + 1,
+          evidence_episode_ids = ?,
+          evidence_count = ?,
+          source_type_diversity = ?,
+          last_reinforced_at = ?
+        WHERE id = ?
+      `).run(
+        JSON.stringify(existing),
+        existing.length,
+        diversity,
+        now,
+        matchId,
+      );
+    });
+    reinforce();
 
     return {
       action: 'reinforced',
-      semanticId: bestMatch.id,
+      semanticId: matchId,
       similarity: bestSimilarity,
     };
   }
 
   if (bestMatch && bestSimilarity >= contradictionThreshold && llmProvider) {
     const messages = buildContradictionDetectionPrompt(episode.content, bestMatch.content);
-    const verdict = await llmProvider.json(messages) as {
-      contradicts?: boolean;
+    const raw = await llmProvider.json(messages);
+    if (!raw || typeof raw !== 'object') {
+      throw new Error('Contradiction LLM response must be a JSON object');
+    }
+    const candidate = raw as Record<string, unknown>;
+    if (typeof candidate.contradicts !== 'boolean') {
+      throw new Error('Contradiction LLM response missing boolean "contradicts" field');
+    }
+    const verdict: {
+      contradicts: boolean;
       resolution?: string;
       conditions?: Record<string, string>;
       explanation?: string;
+    } = {
+      contradicts: candidate.contradicts,
+      resolution: typeof candidate.resolution === 'string' ? candidate.resolution : undefined,
+      conditions:
+        candidate.conditions && typeof candidate.conditions === 'object'
+          ? (candidate.conditions as Record<string, string>)
+          : undefined,
+      explanation: typeof candidate.explanation === 'string' ? candidate.explanation : undefined,
     };
 
     if (verdict.contradicts) {
+      const matchId = bestMatch.id;
       const resolution = verdict.resolution === 'context_dependent'
         ? { type: 'context_dependent', conditions: verdict.conditions, explanation: verdict.explanation }
         : verdict.resolution
           ? { type: verdict.resolution, explanation: verdict.explanation }
           : null;
 
-      const contradictionId = createContradiction(
-        db,
-        bestMatch.id,
-        'semantic',
-        episode.id,
-        'episodic',
-        resolution,
-      );
-
-      if (verdict.resolution === 'new_wins') {
-        db.prepare("UPDATE semantics SET state = 'disputed' WHERE id = ?").run(bestMatch.id);
-      } else if (verdict.resolution === 'context_dependent' && verdict.conditions) {
-        db.prepare("UPDATE semantics SET state = 'context_dependent', conditions = ? WHERE id = ?")
-          .run(JSON.stringify(verdict.conditions), bestMatch.id);
-      }
+      let contradictionId = '';
+      const recordContradiction = db.transaction(() => {
+        contradictionId = createContradiction(
+          db,
+          matchId,
+          'semantic',
+          episode.id,
+          'episodic',
+          resolution,
+        );
+        if (verdict.resolution === 'new_wins') {
+          db.prepare("UPDATE semantics SET state = 'disputed' WHERE id = ?").run(matchId);
+        } else if (verdict.resolution === 'context_dependent' && verdict.conditions) {
+          db.prepare("UPDATE semantics SET state = 'context_dependent', conditions = ? WHERE id = ?")
+            .run(JSON.stringify(verdict.conditions), matchId);
+        }
+      });
+      recordContradiction();
 
       return {
         action: 'contradiction',
         contradictionId,
-        semanticId: bestMatch.id,
+        semanticId: matchId,
         similarity: bestSimilarity,
         resolution: verdict.resolution || null,
       };

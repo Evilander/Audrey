@@ -40,6 +40,7 @@ interface EpisodeFTSRow {
   state: string | null;
   private: number;
   tags: string | null;
+  agent: string;
 }
 
 interface SemanticFTSRow {
@@ -50,6 +51,7 @@ interface SemanticFTSRow {
   supporting_count: number;
   contradicting_count: number;
   created_at: string;
+  agent: string;
 }
 
 interface ProceduralFTSRow {
@@ -59,6 +61,7 @@ interface ProceduralFTSRow {
   success_count: number;
   failure_count: number;
   created_at: string;
+  agent: string;
 }
 
 export function ftsIdsByType(
@@ -66,21 +69,22 @@ export function ftsIdsByType(
   query: string,
   types: MemoryType[],
   limit: number,
+  agentFilter: string | undefined = undefined,
 ): Map<MemoryType, string[]> {
   const sanitized = sanitizeFTSQuery(query);
   const out = new Map<MemoryType, string[]>();
   if (!sanitized) return out;
   try {
     if (types.includes('episodic')) {
-      const hits = searchFTSEpisodes(db, sanitized, limit);
+      const hits = searchFTSEpisodes(db, sanitized, limit, agentFilter ?? null);
       out.set('episodic', hits.map(h => h.id));
     }
     if (types.includes('semantic')) {
-      const hits = searchFTSSemantics(db, sanitized, limit);
+      const hits = searchFTSSemantics(db, sanitized, limit, agentFilter ?? null);
       out.set('semantic', hits.map(h => h.id));
     }
     if (types.includes('procedural')) {
-      const hits = searchFTSProcedures(db, sanitized, limit);
+      const hits = searchFTSProcedures(db, sanitized, limit, agentFilter ?? null);
       out.set('procedural', hits.map(h => h.id));
     }
   } catch {
@@ -89,12 +93,13 @@ export function ftsIdsByType(
   return out;
 }
 
-function loadFtsOnlyEpisode(db: Database.Database, id: string, includePrivate: boolean, filters: FuseFilters | undefined): RecallResult | null {
+function loadFtsOnlyEpisode(db: Database.Database, id: string, includePrivate: boolean, filters: FuseFilters | undefined, agentFilter?: string): RecallResult | null {
   const row = db.prepare(`
-    SELECT id, content, source, source_reliability, created_at, superseded_by, "private", tags
+    SELECT id, content, source, agent, source_reliability, created_at, superseded_by, "private", tags
     FROM episodes WHERE id = ?
   `).get(id) as EpisodeFTSRow | undefined;
   if (!row) return null;
+  if (agentFilter && row.agent !== agentFilter) return null;
   if (row.superseded_by) return null;
   if (!includePrivate && row.private) return null;
   if (filters && !passesFilters(row, filters)) return null;
@@ -105,16 +110,18 @@ function loadFtsOnlyEpisode(db: Database.Database, id: string, includePrivate: b
     confidence: row.source_reliability ?? sourceReliability(row.source as never),
     score: 0,
     source: row.source,
+    agent: row.agent ?? 'default',
     createdAt: row.created_at,
   };
 }
 
-function loadFtsOnlySemantic(db: Database.Database, id: string, includeDormant: boolean, filters: FuseFilters | undefined): RecallResult | null {
+function loadFtsOnlySemantic(db: Database.Database, id: string, includeDormant: boolean, filters: FuseFilters | undefined, agentFilter?: string): RecallResult | null {
   const row = db.prepare(`
-    SELECT id, content, state, evidence_count, supporting_count, contradicting_count, created_at
+    SELECT id, content, agent, state, evidence_count, supporting_count, contradicting_count, created_at
     FROM semantics WHERE id = ?
   `).get(id) as SemanticFTSRow | undefined;
   if (!row) return null;
+  if (agentFilter && row.agent !== agentFilter) return null;
   const allowed = includeDormant
     ? ['active', 'context_dependent', 'dormant']
     : ['active', 'context_dependent'];
@@ -129,17 +136,19 @@ function loadFtsOnlySemantic(db: Database.Database, id: string, includeDormant: 
     confidence,
     score: 0,
     source: 'consolidation',
+    agent: row.agent ?? 'default',
     state: row.state as never,
     createdAt: row.created_at,
   };
 }
 
-function loadFtsOnlyProcedural(db: Database.Database, id: string, includeDormant: boolean, filters: FuseFilters | undefined): RecallResult | null {
+function loadFtsOnlyProcedural(db: Database.Database, id: string, includeDormant: boolean, filters: FuseFilters | undefined, agentFilter?: string): RecallResult | null {
   const row = db.prepare(`
-    SELECT id, content, state, success_count, failure_count, created_at
+    SELECT id, content, agent, state, success_count, failure_count, created_at
     FROM procedures WHERE id = ?
   `).get(id) as ProceduralFTSRow | undefined;
   if (!row) return null;
+  if (agentFilter && row.agent !== agentFilter) return null;
   const allowed = includeDormant
     ? ['active', 'context_dependent', 'dormant']
     : ['active', 'context_dependent'];
@@ -154,6 +163,7 @@ function loadFtsOnlyProcedural(db: Database.Database, id: string, includeDormant
     confidence,
     score: 0,
     source: 'consolidation',
+    agent: row.agent ?? 'default',
     state: row.state as never,
     createdAt: row.created_at,
   };
@@ -197,6 +207,7 @@ export interface FuseInput {
   includeDormant?: boolean;
   minConfidence?: number;
   filters?: FuseFilters;
+  agentFilter?: string;
 }
 
 export function fuseResults(db: Database.Database, input: FuseInput): RecallResult[] {
@@ -236,9 +247,9 @@ export function fuseResults(db: Database.Database, input: FuseInput): RecallResu
 
     let result: RecallResult | null = existing ?? null;
     if (!result) {
-      if (ranks.type === 'episodic') result = loadFtsOnlyEpisode(db, id, includePrivate, input.filters);
-      else if (ranks.type === 'semantic') result = loadFtsOnlySemantic(db, id, includeDormant, input.filters);
-      else if (ranks.type === 'procedural') result = loadFtsOnlyProcedural(db, id, includeDormant, input.filters);
+      if (ranks.type === 'episodic') result = loadFtsOnlyEpisode(db, id, includePrivate, input.filters, input.agentFilter);
+      else if (ranks.type === 'semantic') result = loadFtsOnlySemantic(db, id, includeDormant, input.filters, input.agentFilter);
+      else if (ranks.type === 'procedural') result = loadFtsOnlyProcedural(db, id, includeDormant, input.filters, input.agentFilter);
       if (!result) continue;
       if (result.confidence < minConfidence) continue;
     }

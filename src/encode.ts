@@ -18,6 +18,7 @@ export async function encodeEpisode(
   {
     content,
     source,
+    agent = 'default',
     salience = 0.5,
     causal,
     tags,
@@ -29,6 +30,7 @@ export async function encodeEpisode(
   }: {
     content: string;
     source: SourceType;
+    agent?: string;
     salience?: number;
     causal?: CausalParams;
     tags?: string[];
@@ -62,12 +64,12 @@ export async function encodeEpisode(
   const insertAndLink = db.transaction(() => {
     db.prepare(`
       INSERT INTO episodes (
-        id, content, embedding, source, source_reliability, salience, context, affect,
+        id, content, embedding, source, agent, source_reliability, salience, context, affect,
         tags, causal_trigger, causal_consequence, created_at,
         embedding_model, embedding_version, supersedes, "private"
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, content, embeddingBuffer, source, reliability, effectiveSalience,
+      id, content, embeddingBuffer, source, agent, reliability, effectiveSalience,
       JSON.stringify(context),
       JSON.stringify(affect),
       tags ? JSON.stringify(tags) : null,

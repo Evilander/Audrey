@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -56,12 +56,32 @@ function seedContent(index) {
   return `${cases[index % cases.length]} Perf sample ${index}.`;
 }
 
+function createPerfDataDir() {
+  const parents = [
+    process.env.AUDREY_PERF_PARENT_DIR,
+    tmpdir(),
+    join(process.cwd(), 'benchmarks', '.tmp'),
+  ].filter(Boolean);
+  let lastError;
+
+  for (const parent of parents) {
+    try {
+      mkdirSync(parent, { recursive: true });
+      return mkdtempSync(join(parent, 'audrey-perf-'));
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('Unable to create Audrey perf benchmark data directory');
+}
+
 export async function runPerfBenchmark({
   runs = RUNS,
   budgets = PERF_BUDGETS,
   out = console.log,
 } = {}) {
-  const dataDir = mkdtempSync(join(tmpdir(), 'audrey-perf-'));
+  const dataDir = createPerfDataDir();
   const audrey = new Audrey({
     dataDir,
     agent: 'perf-bench',

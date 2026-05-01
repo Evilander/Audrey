@@ -10,6 +10,7 @@ const SCHEMA = `
     content TEXT NOT NULL,
     embedding BLOB,
     source TEXT NOT NULL CHECK(source IN ('direct-observation','told-by-user','tool-result','inference','model-generated')),
+    agent TEXT DEFAULT 'default',
     source_reliability REAL NOT NULL,
     salience REAL DEFAULT 0.5,
     context TEXT DEFAULT '{}',
@@ -30,6 +31,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS semantics (
     id TEXT PRIMARY KEY,
     content TEXT NOT NULL,
+    agent TEXT DEFAULT 'default',
     embedding BLOB,
     state TEXT DEFAULT 'active' CHECK(state IN ('active','disputed','superseded','context_dependent','dormant','rolled_back')),
     conditions TEXT,
@@ -54,6 +56,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS procedures (
     id TEXT PRIMARY KEY,
     content TEXT NOT NULL,
+    agent TEXT DEFAULT 'default',
     embedding BLOB,
     state TEXT DEFAULT 'active' CHECK(state IN ('active','disputed','superseded','context_dependent','dormant','rolled_back')),
     trigger_conditions TEXT,

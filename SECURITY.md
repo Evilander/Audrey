@@ -6,8 +6,8 @@ Security fixes are best-effort for the current published release line and the cu
 
 | Version | Supported |
 |---|---|
-| `0.17.x` | Yes |
-| `< 0.17.0` | No |
+| `0.22.x` | Yes |
+| `< 0.22.0` | No |
 
 ## Reporting a Vulnerability
 
