@@ -323,6 +323,7 @@ export async function buildCapsule(
   // 1. Primary recall (vector + confidence scoring)
   const results = await audrey.recall(query, {
     limit: recallLimit,
+    scope: 'agent',
     ...(options.recall ?? {}),
   });
 

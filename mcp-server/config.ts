@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AudreyConfig, EmbeddingConfig, LLMConfig } from '../src/types.js';
 
-export const VERSION = '0.22.0';
+export const VERSION = '0.22.1';
 export const SERVER_NAME = 'audrey-memory';
 export const DEFAULT_AGENT = 'local-agent';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
@@ -55,8 +55,9 @@ export function resolveDataDir(env: Record<string, string | undefined> = process
 
 /**
  * Resolves which embedding provider to use.
- * Priority: explicit config -> gemini (if GOOGLE_API_KEY exists) -> local
- * OpenAI is NEVER auto-selected -- must be set explicitly via AUDREY_EMBEDDING_PROVIDER=openai.
+ * Priority: explicit config -> local.
+ * Cloud providers are never auto-selected from ambient API keys; choose them
+ * explicitly with AUDREY_EMBEDDING_PROVIDER=gemini|openai.
  */
 export function resolveEmbeddingProvider(
   env: Record<string, string | undefined>,
@@ -74,9 +75,6 @@ export function resolveEmbeddingProvider(
     const result: EmbeddingConfig & { dimensions: number } = { provider, apiKey, dimensions: dims };
     if (explicit === 'local') result.device = env['AUDREY_DEVICE'] || 'gpu';
     return result;
-  }
-  if (env['GOOGLE_API_KEY'] || env['GEMINI_API_KEY']) {
-    return { provider: 'gemini', apiKey: env['GOOGLE_API_KEY'] || env['GEMINI_API_KEY'], dimensions: 3072 };
   }
   return { provider: 'local', dimensions: 384, device: env['AUDREY_DEVICE'] || 'gpu' };
 }
@@ -236,8 +234,15 @@ export function formatMcpHostConfig(
   return JSON.stringify(jsonHostConfig(normalizedHost, env), null, 2);
 }
 
-export function buildInstallArgs(env: Record<string, string | undefined> = process.env): string[] {
-  const envPairs = buildAudreyMcpEnv(env, env['AUDREY_AGENT'] || HOST_AGENT_NAMES['claude-code'], { includeSecrets: true });
+export function buildInstallArgs(
+  env: Record<string, string | undefined> = process.env,
+  options: McpEnvOptions = {},
+): string[] {
+  const envPairs = buildAudreyMcpEnv(
+    env,
+    env['AUDREY_AGENT'] || HOST_AGENT_NAMES['claude-code'],
+    { includeSecrets: options.includeSecrets ?? false },
+  );
   const args = ['mcp', 'add', '-s', 'user', SERVER_NAME];
   for (const [key, value] of Object.entries(envPairs)) {
     args.push('-e', `${key}=${value}`);

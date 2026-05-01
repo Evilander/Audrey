@@ -49,6 +49,65 @@ describe('import', () => {
     expect(JSON.parse(ep.tags)).toEqual(['test']);
   });
 
+  it('preserves episode agent identity', async () => {
+    if (existsSync('./test-import-agent-src')) rmSync('./test-import-agent-src', { recursive: true, force: true });
+    if (existsSync('./test-import-agent-dest')) rmSync('./test-import-agent-dest', { recursive: true, force: true });
+    const agentSource = new Audrey({
+      dataDir: './test-import-agent-src',
+      agent: 'agent-alpha',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await agentSource.encode({ content: 'Agent-owned memory', source: 'direct-observation' });
+
+    const snapshot = agentSource.export();
+    const agentDest = new Audrey({
+      dataDir: './test-import-agent-dest',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await agentDest.import(snapshot);
+
+    const ep = agentDest.db.prepare("SELECT agent FROM episodes WHERE content = 'Agent-owned memory'").get();
+    expect(ep.agent).toBe('agent-alpha');
+
+    agentSource.close();
+    agentDest.close();
+    rmSync('./test-import-agent-src', { recursive: true, force: true });
+    rmSync('./test-import-agent-dest', { recursive: true, force: true });
+  });
+
+  it('preserves consolidated memory agent identity', async () => {
+    if (existsSync('./test-import-consolidated-agent-src')) rmSync('./test-import-consolidated-agent-src', { recursive: true, force: true });
+    if (existsSync('./test-import-consolidated-agent-dest')) rmSync('./test-import-consolidated-agent-dest', { recursive: true, force: true });
+    const agentSource = new Audrey({
+      dataDir: './test-import-consolidated-agent-src',
+      agent: 'agent-alpha',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await agentSource.encode({ content: 'Consolidated agent marker', source: 'direct-observation' });
+    await agentSource.encode({ content: 'Consolidated agent marker', source: 'tool-result' });
+    await agentSource.encode({ content: 'Consolidated agent marker', source: 'told-by-user' });
+    await agentSource.consolidate({
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: () => ({ content: 'Agent-owned consolidated semantic', type: 'semantic' }),
+    });
+
+    const snapshot = agentSource.export();
+    const agentDest = new Audrey({
+      dataDir: './test-import-consolidated-agent-dest',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await agentDest.import(snapshot);
+
+    const sem = agentDest.db.prepare("SELECT agent FROM semantics WHERE content = 'Agent-owned consolidated semantic'").get();
+    expect(sem.agent).toBe('agent-alpha');
+
+    agentSource.close();
+    agentDest.close();
+    rmSync('./test-import-consolidated-agent-src', { recursive: true, force: true });
+    rmSync('./test-import-consolidated-agent-dest', { recursive: true, force: true });
+  });
+
   it('re-embeds content with current provider', async () => {
     const snapshot = source.export();
     dest = new Audrey({
@@ -63,6 +122,30 @@ describe('import', () => {
   it('imports into empty database only', async () => {
     const snapshot = source.export();
     await expect(source.import(snapshot)).rejects.toThrow('not empty');
+  });
+
+  it('rejects imported episode content above the production limit', async () => {
+    const snapshot = source.export();
+    const unsafeSnapshot = JSON.parse(JSON.stringify(snapshot));
+    unsafeSnapshot.episodes[0].content = 'x'.repeat(50001);
+    dest = new Audrey({
+      dataDir: IMPORT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+
+    await expect(dest.import(unsafeSnapshot)).rejects.toThrow(/content|maximum|too big/i);
+  });
+
+  it('rejects malformed private flags during import', async () => {
+    const snapshot = source.export();
+    const unsafeSnapshot = JSON.parse(JSON.stringify(snapshot));
+    unsafeSnapshot.episodes[0].private = 2;
+    dest = new Audrey({
+      dataDir: IMPORT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+
+    await expect(dest.import(unsafeSnapshot)).rejects.toThrow(/private|invalid/i);
   });
 
   it('round-trips context and affect through export/import', async () => {

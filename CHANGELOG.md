@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.22.1 - Unreleased
+## 0.22.1 - 2026-04-30
 
 ### Added — `audrey impact` report
 
@@ -58,7 +58,7 @@ This is the P0#1 item from `docs/PRODUCTION_BACKLOG.md` — the closed feedback 
 - Python client `DEFAULT_BASE_URL` corrected from `http://127.0.0.1:3487` to `http://127.0.0.1:7437` to match the TS server's default port. Pre-fix, calling `Audrey()` with no args connected to nothing.
 - Python `recall()` and `recall_response()` now decode the bare-list payload that `/v1/recall` actually returns, then wrap into `RecallResponse` client-side. Pre-fix, `recall_response()` would raise a Pydantic validation error against the real server.
 - Python `restore()` now wraps the snapshot in `{"snapshot": ...}` to match the TS `/v1/import` handler that reads `body.snapshot`. Pre-fix, the server received `body.snapshot === undefined` and `audrey.import(undefined)` failed.
-- Python `analytics()` and `mark_used()` now raise `NotImplementedError` with a pointer to `docs/PRODUCTION_BACKLOG.md` (P0#1). Pre-fix, calling them produced cryptic 404s from the TS sidecar that doesn't expose those endpoints. They will become real once the closed-loop `memory_validate` primitive ships.
+- Python `analytics()` raises `NotImplementedError` with a pointer to `docs/PRODUCTION_BACKLOG.md` until the analytics endpoint ships. Pre-fix, it produced a cryptic 404 from the TS sidecar that doesn't expose that endpoint. (Note: `mark_used()` was upgraded to a real call against `/v1/mark-used` in this same release — see the closed-loop section above.)
 - README REST API row no longer claims `/openapi.json` or `/docs` — those routes aren't currently wired. The README now matches the actual surface (`/health` + `/v1/*`).
 
 ### Removed

@@ -179,16 +179,32 @@ describe('HTTP API', () => {
     expect(typeof body.healthy).toBe('boolean');
   });
 
-  it('GET /v1/export returns snapshot', async () => {
+  it('GET /v1/export is disabled unless admin tools are enabled', async () => {
     const res = await app.request('/v1/export');
+    expect(res.status).toBe(403);
+  });
+
+  it('GET /v1/export returns snapshot when admin tools are enabled', async () => {
+    const adminApp = createApp(audrey, { adminToolsEnabled: true });
+    const res = await adminApp.request('/v1/export');
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toHaveProperty('version');
     expect(body).toHaveProperty('episodes');
   });
 
-  it('POST /v1/forget returns error for missing params', async () => {
+  it('POST /v1/forget is disabled unless admin tools are enabled', async () => {
     const res = await app.request('/v1/forget', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('POST /v1/forget returns error for missing params when admin tools are enabled', async () => {
+    const adminApp = createApp(audrey, { adminToolsEnabled: true });
+    const res = await adminApp.request('/v1/forget', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),

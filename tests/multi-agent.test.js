@@ -1,17 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Audrey } from '../dist/src/index.js';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, rmSync } from 'node:fs';
 
-// Skipped: multi-agent scoping is planned for the claims layer (scope: global|repo|agent|user).
-describe.skip('multi-agent memory', () => {
+describe('multi-agent memory', () => {
   let audreyA;
   let audreyB;
-  let dataDir;
+  const dataDir = './test-multi-agent';
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'audrey-multi-agent-'));
+    if (existsSync(dataDir)) rmSync(dataDir, { recursive: true, force: true });
     audreyA = new Audrey({
       dataDir,
       agent: 'agent-alpha',
@@ -24,10 +21,10 @@ describe.skip('multi-agent memory', () => {
     });
   });
 
-  afterAll(() => {
-    audreyA.close();
-    audreyB.close();
-    rmSync(dataDir, { recursive: true, force: true });
+  afterAll(async () => {
+    await audreyA.closeAsync();
+    await audreyB.closeAsync();
+    if (existsSync(dataDir)) rmSync(dataDir, { recursive: true, force: true });
   });
 
   it('encodes memories with agent identity', async () => {
@@ -90,5 +87,36 @@ describe.skip('multi-agent memory', () => {
     for (const result of results) {
       expect(result.agent).toBe('agent-alpha');
     }
+  });
+
+  it('keeps consolidated memories scoped to the consolidating agent', async () => {
+    await audreyA.encode({ content: 'Alpha-only consolidation marker', source: 'direct-observation' });
+    await audreyA.encode({ content: 'Alpha-only consolidation marker', source: 'tool-result' });
+    await audreyA.encode({ content: 'Alpha-only consolidation marker', source: 'told-by-user' });
+    await audreyB.encode({ content: 'Beta-only consolidation marker', source: 'direct-observation' });
+    await audreyB.encode({ content: 'Beta-only consolidation marker', source: 'tool-result' });
+    await audreyB.encode({ content: 'Beta-only consolidation marker', source: 'told-by-user' });
+
+    await audreyA.consolidate({
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: () => ({ content: 'Alpha-owned semantic principle', type: 'semantic' }),
+    });
+    await audreyB.consolidate({
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: () => ({ content: 'Beta-owned semantic principle', type: 'semantic' }),
+    });
+
+    const rows = audreyA.db.prepare(`
+      SELECT content, agent FROM semantics
+      WHERE content IN ('Alpha-owned semantic principle', 'Beta-owned semantic principle')
+      ORDER BY content
+    `).all();
+
+    expect(rows).toEqual([
+      { content: 'Alpha-owned semantic principle', agent: 'agent-alpha' },
+      { content: 'Beta-owned semantic principle', agent: 'agent-beta' },
+    ]);
   });
 });

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { timingSafeEqual } from 'node:crypto';
 import type { Audrey } from './audrey.js';
 import type { PreflightOptions } from './preflight.js';
@@ -12,7 +13,7 @@ import { VERSION } from '../mcp-server/config.js';
 const SAFE_RECALL_KEYS = new Set([
   'minConfidence', 'min_confidence', 'types', 'limit',
   'includeProvenance', 'include_provenance', 'includeDormant', 'include_dormant',
-  'tags', 'sources', 'after', 'before', 'context', 'mood', 'retrieval',
+  'tags', 'sources', 'after', 'before', 'context', 'mood', 'retrieval', 'scope',
 ]);
 
 function sanitizeRecallOptions(raw: unknown): RecallOptions {
@@ -40,6 +41,8 @@ function sanitizeRecallOptions(raw: unknown): RecallOptions {
       if (value && typeof value === 'object') opts.mood = value as RecallOptions['mood'];
     } else if (key === 'retrieval') {
       if (value === 'hybrid' || value === 'vector') opts.retrieval = value as PublicRetrievalMode;
+    } else if (key === 'scope') {
+      if (value === 'shared' || value === 'agent') opts.scope = value;
     }
   }
   return opts;
@@ -47,6 +50,13 @@ function sanitizeRecallOptions(raw: unknown): RecallOptions {
 
 export interface AppOptions {
   apiKey?: string;
+  adminToolsEnabled?: boolean;
+}
+
+function adminToolsEnabled(options: AppOptions): boolean {
+  if (options.adminToolsEnabled !== undefined) return options.adminToolsEnabled;
+  const value = process.env.AUDREY_ENABLE_ADMIN_TOOLS?.toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes';
 }
 
 type RouteBody = {
@@ -101,8 +111,20 @@ function preflightOptionsFromBody(body: RouteBody): PreflightOptions {
   };
 }
 
+function requestAgent(c: Context): string | undefined {
+  const value = c.req.header('X-Audrey-Agent')?.trim();
+  return value || undefined;
+}
+
 export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   const app = new Hono();
+  const allowAdminTools = adminToolsEnabled(options);
+
+  function adminDisabledResponse(c: Context) {
+    return c.json({
+      error: 'Admin memory routes are disabled. Set AUDREY_ENABLE_ADMIN_TOOLS=1 to enable export, import, and forget.',
+    }, 403);
+  }
 
   // Health check - no auth required.
   // Fields kept for backward compatibility across Audrey client surfaces:
@@ -153,6 +175,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       const id = await audrey.encode({
         content: body.content,
         source: body.source,
+        agent: requestAgent(c),
         tags: body.tags,
         salience: body.salience,
         context: body.context,
@@ -171,7 +194,13 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     try {
       const body = await c.req.json();
       const { query, ...rest } = body;
-      const results = await audrey.recall(query, sanitizeRecallOptions(rest));
+      const options = sanitizeRecallOptions(rest);
+      const agent = requestAgent(c);
+      if (agent) {
+        options.agent = agent;
+        options.scope = options.scope ?? 'agent';
+      }
+      const results = await audrey.recall(query, options);
       return c.json(results);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -322,6 +351,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   app.get('/v1/export', (c) => {
+    if (!allowAdminTools) return adminDisabledResponse(c);
     try {
       const snapshot = audrey.export();
       return c.json(snapshot);
@@ -333,6 +363,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
 
   // POST /v1/import
   app.post('/v1/import', async (c) => {
+    if (!allowAdminTools) return adminDisabledResponse(c);
     try {
       const body = await c.req.json();
       await audrey.import(body.snapshot);
@@ -345,6 +376,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
 
   // POST /v1/forget
   app.post('/v1/forget', async (c) => {
+    if (!allowAdminTools) return adminDisabledResponse(c);
     try {
       const body = await c.req.json();
       const hasId = 'id' in body && body.id;
