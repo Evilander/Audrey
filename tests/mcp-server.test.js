@@ -59,12 +59,20 @@ describe('CLI surface', () => {
   // dropped the user into an MCP stdio server waiting on stdin.
   const cli = resolve('dist/mcp-server/index.js');
 
+  afterEach(() => {
+    for (const dir of ['./test-cli-guard', './test-cli-guard-after']) {
+      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('--help prints help and exits 0', () => {
     const r = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8', timeout: 10000 });
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('Usage: audrey');
     expect(r.stdout).toContain('doctor');
     expect(r.stdout).toContain('demo');
+    expect(r.stdout).toContain('guard');
+    expect(r.stdout).toContain('guard-after');
   });
 
   it('--version prints version and exits 0', () => {
@@ -78,6 +86,41 @@ describe('CLI surface', () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("unknown command 'definitelynotacommand'");
     expect(r.stdout).toContain('Usage: audrey');
+  });
+
+  it('guard --json emits a before-action decision', () => {
+    const r = spawnSync(
+      process.execPath,
+      [cli, 'guard', '--json', '--tool', 'Bash', 'list files before editing'],
+      {
+        encoding: 'utf8',
+        timeout: 10000,
+        env: {
+          ...process.env,
+          AUDREY_DATA_DIR: './test-cli-guard',
+          AUDREY_EMBEDDING_PROVIDER: 'mock',
+        },
+      },
+    );
+    expect(r.status).toBe(0);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.receipt_id).toMatch(/^01/);
+    expect(parsed.decision).toBe('go');
+    expect(Array.isArray(parsed.evidence_ids)).toBe(true);
+  });
+
+  it('guard exits 2 when action is missing', () => {
+    const r = spawnSync(process.execPath, [cli, 'guard'], {
+      encoding: 'utf8',
+      timeout: 10000,
+      env: {
+        ...process.env,
+        AUDREY_DATA_DIR: './test-cli-guard',
+        AUDREY_EMBEDDING_PROVIDER: 'mock',
+      },
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('[audrey] guard: action is required');
   });
 });
 
