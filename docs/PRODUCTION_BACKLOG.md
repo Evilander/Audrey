@@ -135,11 +135,15 @@ Open questions before committing to the rename:
 Concrete v0.23 work the audit identified, scoped to fit one or two
 releases:
 
+0. Audrey Guard controller shipped in the v0.23 branch:
+   `beforeAction()` / `afterAction()` plus REST, MCP, and CLI surfaces.
+   The first slice uses `memory_events` metadata as receipts and avoids a
+   schema migration.
 1. `npx audrey guard --tool <Tool> "<command>"` CLI that returns
-   `allow` / `warn` / `block` with evidence and is the headline demo.
+   `go` / `caution` / `block` with evidence and is the headline demo.
 2. Memory Controller Layer (`src/controller.ts`) that owns
-   `beforeAction(action) → GuardResult` and
-   `afterAction(outcome) → void` over the existing primitives. This
+   `beforeAction(action) → GuardDecision` and
+   `afterAction(outcome) → GuardOutcome` over the existing primitives. This
    chassis also enables splitting `src/audrey.ts` (now ~1.2K lines) into
    focused services.
 3. Actually batch embeddings in `Audrey.encodeBatch()` with
