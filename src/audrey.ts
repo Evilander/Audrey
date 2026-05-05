@@ -60,6 +60,14 @@ import { buildCapsule, type CapsuleOptions, type MemoryCapsule } from './capsule
 import { buildPreflight, type MemoryPreflight, type PreflightOptions } from './preflight.js';
 import { buildReflexReport, type MemoryReflexReport, type ReflexOptions } from './reflexes.js';
 import {
+  beforeAction as guardBeforeAction,
+  afterAction as guardAfterAction,
+  type GuardBeforeOptions,
+  type GuardDecision,
+  type GuardAfterInput,
+  type GuardOutcome,
+} from './controller.js';
+import {
   findPromotionCandidates,
   type FindCandidatesOptions,
   type PromotionCandidate,
@@ -1033,6 +1041,18 @@ export class Audrey extends EventEmitter {
     const preflight = await buildPreflight(this, action, options);
     this.emit('preflight', preflight);
     return preflight;
+  }
+
+  async beforeAction(action: string, options: GuardBeforeOptions = {}): Promise<GuardDecision> {
+    const decision = await guardBeforeAction(this, action, options);
+    this.emit('guard-before', decision);
+    return decision;
+  }
+
+  afterAction(input: GuardAfterInput): GuardOutcome {
+    const outcome = guardAfterAction(this, input);
+    this.emit('guard-after', outcome);
+    return outcome;
   }
 
   async reflexes(action: string, options: ReflexOptions = {}): Promise<MemoryReflexReport> {
