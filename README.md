@@ -1,6 +1,6 @@
-[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/evilander-audrey-badge.png)](https://mseep.ai/app/evilander-audrey)
+ [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/evilander-audrey-badge.png)](https://mseep.ai/app/evilander-audrey)
 
-<div align="center">
+
   <img src="docs/assets/audrey-wordmark.png" alt="Audrey wordmark" width="760">
 
   <p><strong>The local-first memory control plane for AI agents.</strong></p>
