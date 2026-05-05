@@ -26,7 +26,7 @@
 //   embedding dimensionality.
 
 import { performance } from 'node:perf_hooks';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir, cpus, totalmem, arch, platform, release } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -92,6 +92,19 @@ function gitSha() {
     })
       .toString()
       .trim();
+  } catch {
+    return null;
+  }
+}
+
+export function resolveAudreyVersion() {
+  if (process.env.npm_package_version) {
+    return process.env.npm_package_version;
+  }
+
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    return typeof pkg.version === 'string' ? pkg.version : null;
   } catch {
     return null;
   }
@@ -219,7 +232,7 @@ export async function runPerfSnapshot({ sizes = DEFAULT_SIZES, recallRuns = DEFA
   return {
     generatedAt: new Date(startedAt).toISOString(),
     durationMs: Date.now() - startedAt,
-    audreyVersion: process.env.npm_package_version || null,
+    audreyVersion: resolveAudreyVersion(),
     gitSha: gitSha(),
     methodology: {
       embedding: 'mock provider, 64 dimensions (in-process, no network)',

@@ -1,6 +1,6 @@
 # Audrey Production Backlog
 
-Updated: 2026-05-01 after the 0.22.2 correctness pass.
+Updated: 2026-05-05 after the 0.23.0 Audrey Guard release pass.
 
 This file tracks release posture and remaining product work. It is intentionally
 public-safe: it avoids exploit recipes, stale line references, and private
@@ -8,20 +8,39 @@ planning notes.
 
 ## Current Release Posture
 
-Audrey 0.22.2 is ready for package-level release through the sandbox gate:
+Audrey 0.23.0 is ready for package-level release through the normal release gate:
 
 ```bash
-npm run release:gate:sandbox
+npm run release:gate
 npx audrey doctor
 npx audrey status --fail-on-unhealthy
 python -m unittest discover -s python/tests -v
 python -m build --no-isolation python
 ```
 
-The normal `npm test` command still depends on Vitest/Vite startup. On the
-locked-down Windows Codex host, Vite calls `child_process.spawn` while loading
-config and the host returns `spawn EPERM` before Audrey tests run. Treat that as
-an environment limitation unless it reproduces on an unrestricted CI runner.
+The v0.23.0 local release gate passed on macOS with typecheck, perf gate,
+full Vitest, behavioral memory benchmark, guard-loop benchmark, CLI smoke
+checks, and npm pack dry-run. GitHub repository rules require PR checks before
+`master` can move.
+
+## Shipped In The 0.23.0 Audrey Guard Release
+
+- Audrey Guard controller loop: `beforeAction()` / `afterAction()` plus SDK,
+  REST, MCP, and CLI surfaces.
+- Receipt-backed `go` / `caution` / `block` decisions over existing preflight,
+  reflex, tool-trace, validation, and impact primitives.
+- Guard receipt hardening: `guard-after` rejects non-guard receipts, rejects
+  invalid evidence feedback outcomes, and prevents replaying one receipt into
+  multiple post-action outcomes.
+- `npx audrey guard` and `npx audrey guard-after` provide a hook-friendly
+  command-line path for coding agents and CI workflows.
+- Agent Guard Loop benchmark suite validates prior tool-failure caution,
+  strict must-follow blocking, and guard receipt hardening without inflating
+  comparable retrieval/lifecycle baseline charts.
+- Release packaging now includes the benchmark harness and perf snapshots, and
+  the release gate proves `--version`, `doctor --json`, and `demo` before pack.
+- Version surfaces are aligned at `0.23.0` across npm, MCP CLI, package-lock,
+  and Python client metadata.
 
 ## Shipped In The 0.22.2 Correctness Pass
 
@@ -53,7 +72,7 @@ an environment limitation unless it reproduces on an unrestricted CI runner.
   `AUDREY_EMBEDDING_PROVIDER`.
 - MCP stdio now exposes memory tools, `audrey://status`, `audrey://recent`,
   `audrey://principles`, and briefing/recall/reflection prompt templates.
-- Python package metadata builds cleanly as `audrey-memory 0.22.1`.
+- Python package metadata builds cleanly as `audrey-memory`.
 - Release scripts separate full CI (`release:gate`) from this sandbox's
   spawn-safe gate (`release:gate:sandbox`).
 
@@ -77,12 +96,10 @@ Before publishing a new npm or Python package, capture:
    attach the passing job URL to the release.
 2. Publish external benchmark numbers for Audrey's strongest tracks:
    conflict handling, causal memory, and memory-before-action workflows.
-3. Add hook-level validation for Claude Code and Codex so `memory_preflight`,
-   `memory_observe_tool`, and `memory_validate` run automatically in real
-   agent sessions.
-4. Start the Memory Controller Layer as the v0.23 chassis: classify writes,
-   route recall, schedule replay, and treat validation feedback as a first-class
-   signal.
+3. Add hook-level installation for Claude Code and Codex so `audrey guard`
+   and `audrey guard-after` run automatically in real agent sessions.
+4. Add signed guard receipts or receipt digests before team/shared-memory
+   audit trails become a paid surface.
 
 ## P1: Product Quality
 
@@ -114,17 +131,17 @@ the context they already earned. The strongest paid surface is likely team
 memory operations: policy editor, memory diff/rollback, audit log, shared
 encrypted stores, hosted relay, CI gates, and support.
 
-## v0.23 Product Direction (Tracked, Not Decided)
+## v0.23 Product Direction (Shipped Baseline)
 
-A 2026-05-01 audit recommends repositioning Audrey from a generic local
+A 2026-05-01 audit recommended repositioning Audrey from a generic local
 memory framework to **Audrey Guard** — a local-first memory firewall whose
 single job is to stop AI coding agents from repeating expensive mistakes
 before they touch tools. The core loop already exists in pieces in this
 repo (`observeTool`, `preflight`, `reflexes`, `validate`, `impact`,
-`promote`); the v0.23 work would be making them feel like one product
-loop instead of separate primitives.
+`promote`); v0.23.0 made them feel like one product loop instead of separate
+primitives.
 
-Open questions before committing to the rename:
+Open questions before going harder on the rename:
 
 - Is the marketing surface ("memory firewall for coding agents") narrower
   than the actual product can support across non-coding agents?
@@ -132,17 +149,16 @@ Open questions before committing to the rename:
   while branding the guard CLI separately give us the same wedge without
   abandoning existing positioning?
 
-Concrete v0.23 work the audit identified, scoped to fit one or two
-releases:
+Concrete v0.23 work from the audit:
 
-0. Audrey Guard controller shipped in the v0.23 branch:
+0. Shipped in v0.23.0: Audrey Guard controller:
    `beforeAction()` / `afterAction()` plus REST, MCP, and CLI surfaces.
    The first slice uses `memory_events` metadata as receipts, avoids a
    schema migration, and has a local guard-loop benchmark for prior
    tool-failure cautions and strict must-follow blocking.
-1. `npx audrey guard --tool <Tool> "<command>"` CLI that returns
+1. Shipped in v0.23.0: `npx audrey guard --tool <Tool> "<command>"` CLI that returns
    `go` / `caution` / `block` with evidence and is the headline demo.
-2. Memory Controller Layer (`src/controller.ts`) that owns
+2. Shipped in v0.23.0: Memory Controller Layer (`src/controller.ts`) that owns
    `beforeAction(action) → GuardDecision` and
    `afterAction(outcome) → GuardOutcome` over the existing primitives. This
    chassis also enables splitting `src/audrey.ts` (now ~1.2K lines) into

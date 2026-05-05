@@ -51,6 +51,25 @@ describe('MCP config', () => {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
     expect(VERSION).toBe(pkg.version);
   });
+
+  it('package-lock version matches package.json', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
+
+    expect(lock.version).toBe(pkg.version);
+    expect(lock.packages[''].version).toBe(pkg.version);
+  });
+
+  it('release package includes benchmark and smoke-test support files', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+
+    expect(pkg.files).toContain('benchmarks/*.js');
+    expect(pkg.files).toContain('benchmarks/snapshots/*.json');
+    expect(pkg.files).toContain('scripts/smoke-cli.js');
+    expect(pkg.scripts['smoke:cli']).toBe('node scripts/smoke-cli.js');
+    expect(pkg.scripts['release:gate']).toContain('npm run smoke:cli');
+    expect(pkg.scripts['release:gate:sandbox']).toContain('npm run smoke:cli');
+  });
 });
 
 describe('CLI surface', () => {

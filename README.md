@@ -50,7 +50,7 @@ npx audrey demo
 Expected first-run shape:
 
 ```text
-Audrey Doctor v0.22.2
+Audrey Doctor v0.23.0
 Store health: not initialized
 Verdict: ready
 ```
@@ -119,6 +119,8 @@ Core sidecar tools:
 ## Audrey Guard
 
 Audrey Guard is the memory-before-action loop. It asks Audrey what matters before a tool runs, returns a receipt-backed `go`, `caution`, or `block` decision, and records the outcome afterward so memory quality improves over time.
+
+In v0.23.0 this becomes Audrey's headline control surface: a local agent can ask "what do I already know that should change this action?" before running a shell command, editing a file, publishing a package, or touching production. The receipt is then closed with `guard-after`, so Audrey learns whether the memory was useful instead of remaining a passive retrieval cache.
 
 ```bash
 npx audrey guard --tool "npm test" --strict "run npm test before release"
@@ -264,25 +266,27 @@ npm run bench:perf-snapshot                                 # default sizes 100,
 node benchmarks/perf-snapshot.js --sizes 1000,10000 --json  # custom shape
 ```
 
-Sample output from `benchmarks/snapshots/perf-0.22.2.json` (24-core Ryzen 9 7900X3D, Node 25.5.0, mock 64-dim embedding, hybrid recall, limit 5):
+Sample output from `benchmarks/snapshots/perf-0.23.0.json` (18-core Apple M5 Max, Node 25.9.0, mock 64-dim embedding, hybrid recall, limit 5):
 
 | Corpus size | Encode p50 (ms) | Encode p95 (ms) | Recall p50 (ms) | Recall p95 (ms) | Recall p99 (ms) |
 |---|---|---|---|---|---|
-| 100 | 0.33 | 0.63 | 0.52 | 1.3 | 3.1 |
-| 1,000 | 0.31 | 1.3 | 0.63 | 0.99 | 7.0 |
-| 5,000 | 0.29 | 1.7 | 2.1 | 2.5 | 18.0 |
+| 100 | 0.14 | 0.25 | 0.21 | 0.69 | 1.3 |
+| 1,000 | 0.11 | 0.19 | 0.27 | 0.48 | 2.1 |
+| 5,000 | 0.11 | 0.17 | 0.73 | 0.87 | 4.2 |
 
 These numbers cover Audrey's own pipeline (SQLite + sqlite-vec + hybrid ranking) and exclude embedding-provider cost. Real-world recall p95 with a local 384-dim provider is typically 5–15× higher; with a hosted provider it is dominated by the API round-trip. Run on your own hardware before quoting numbers anywhere.
 
 ### Behavioral regression suite
 
-`npm run bench:memory:check` is a release gate. It runs a small set of retrieval, lifecycle, and guard-loop scenarios (information extraction, knowledge updates, multi-session reasoning, conflict resolution, privacy boundary, overwrite, delete-and-abstain, semantic/procedural merge, prior tool-failure caution, and strict must-follow blocking) and asserts Audrey doesn't regress. Retrieval and lifecycle cases compare Audrey with three weak baselines (vector-only, keyword+recency, recent-window). Guard-loop cases are reported as a controller regression suite against no-controller placeholders, not as a fair baseline leaderboard.
+`npm run bench:memory:check` is a release gate. It runs a small set of retrieval, lifecycle, and guard-loop scenarios (information extraction, knowledge updates, multi-session reasoning, conflict resolution, privacy boundary, overwrite, delete-and-abstain, semantic/procedural merge, prior tool-failure caution, strict must-follow blocking, replay rejection, and non-guard receipt rejection) and asserts Audrey doesn't regress. Retrieval and lifecycle cases compare Audrey with three weak baselines (vector-only, keyword+recency, recent-window). Guard-loop cases are reported as a controller regression suite against no-controller placeholders, not as a fair baseline leaderboard.
 
 ```bash
 npm run bench:memory          # full regression suite (writes JSON + report)
 npm run bench:memory:check    # release gate, exits non-zero on regression
 npm run bench:memory:guard    # closed-loop guard benchmark only
 ```
+
+The release benchmark policy is tracked in [docs/MEMORY_BENCHMARKING.md](docs/MEMORY_BENCHMARKING.md): local artifacts first, external claims only when the harness and scoring are reproducible.
 
 ## Command Reference
 
