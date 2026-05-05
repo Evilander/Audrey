@@ -205,6 +205,69 @@ describe('Audrey Guard controller', () => {
     expect(impact.outcomeBreakdownInWindow.helpful).toBe(1);
   });
 
+  it('afterAction rejects invalid evidence feedback outcomes before validation mutates memory', async () => {
+    const memoryId = await audrey.encode({
+      content: 'Never deploy Audrey without package tarball inspection.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'release'],
+      salience: 0.5,
+    });
+    const before = await audrey.beforeAction('deploy Audrey release', {
+      tool: 'deploy',
+      strict: true,
+      includeCapsule: false,
+    });
+
+    expect(() => audrey.afterAction({
+      receiptId: before.receipt_id,
+      tool: 'deploy',
+      outcome: 'blocked',
+      evidenceFeedback: {
+        [memoryId]: 'bogus',
+      },
+    })).toThrow(/invalid evidence feedback/i);
+
+    const impact = audrey.impact();
+    expect(impact.validatedTotal).toBe(0);
+  });
+
+  it('afterAction only accepts guard receipts', () => {
+    const preTool = audrey.observeTool({
+      event: 'PreToolUse',
+      tool: 'npm test',
+      outcome: 'unknown',
+    }).event;
+
+    expect(() => audrey.afterAction({
+      receiptId: preTool.id,
+      tool: 'npm test',
+      outcome: 'succeeded',
+    })).toThrow(/not a guard receipt/i);
+  });
+
+  it('afterAction rejects replay for a receipt that already has an outcome', async () => {
+    const before = await audrey.beforeAction('run unit tests', {
+      tool: 'npm test',
+      includeCapsule: false,
+    });
+
+    audrey.afterAction({
+      receiptId: before.receipt_id,
+      tool: 'npm test',
+      outcome: 'succeeded',
+    });
+
+    expect(() => audrey.afterAction({
+      receiptId: before.receipt_id,
+      tool: 'npm test',
+      outcome: 'failed',
+      errorSummary: 'replayed failure',
+    })).toThrow(/already has an outcome/i);
+
+    expect(audrey.listEvents({ eventType: 'PostToolUse', toolName: 'npm test' })).toHaveLength(1);
+    expect(audrey.listEvents({ eventType: 'PostToolUseFailure', toolName: 'npm test' })).toHaveLength(0);
+  });
+
   it('afterAction records failed outcomes as PostToolUseFailure and default outcomes as PostToolUse', async () => {
     const failedBefore = await audrey.beforeAction('run failing command', {
       tool: 'npm test',
@@ -252,21 +315,18 @@ describe('Audrey Guard controller', () => {
     expect(afterEvents[0].post_event_id).toBe(after.post_event_id);
   });
 
-  it('afterAction treats malformed receipt metadata as empty metadata', async () => {
+  it('afterAction rejects malformed receipt metadata because it cannot verify a guard receipt', async () => {
     const before = await audrey.beforeAction('run unit tests', {
       tool: 'npm test',
       includeCapsule: false,
     });
     audrey.db.prepare('UPDATE memory_events SET metadata = ? WHERE id = ?').run('{not-json', before.receipt_id);
 
-    const after = audrey.afterAction({
+    expect(() => audrey.afterAction({
       receiptId: before.receipt_id,
       tool: 'npm test',
       outcome: 'succeeded',
-    });
-
-    expect(after.outcome).toBe('succeeded');
-    expect(audrey.listEvents({ eventType: 'PostToolUse', toolName: 'npm test' })).toHaveLength(1);
+    })).toThrow(/not a guard receipt/i);
   });
 
   it('afterAction finds receipts outside the recent event list limit', async () => {

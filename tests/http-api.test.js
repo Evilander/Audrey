@@ -255,6 +255,44 @@ describe('HTTP API', () => {
     expect(body.error).toMatch(/receipt/i);
   });
 
+  it('POST /v1/guard/after rejects invalid evidence feedback outcomes', async () => {
+    const memoryId = await audrey.encode({
+      content: 'Never deploy Audrey without package tarball inspection.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'release'],
+      salience: 0.5,
+    });
+    const beforeRes = await app.request('/v1/guard/before', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'deploy Audrey release',
+        tool: 'deploy',
+        strict: true,
+        include_capsule: false,
+      }),
+    });
+    expect(beforeRes.status).toBe(200);
+    const before = await beforeRes.json();
+
+    const res = await app.request('/v1/guard/after', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        receipt_id: before.receipt_id,
+        outcome: 'blocked',
+        evidence_feedback: {
+          [memoryId]: 'bogus',
+        },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/invalid evidence feedback/i);
+    expect(audrey.impact().validatedTotal).toBe(0);
+  });
+
   it('POST /v1/dream runs full cycle', async () => {
     const res = await app.request('/v1/dream', {
       method: 'POST',

@@ -87,6 +87,39 @@ function evidenceIdsFromMetadata(metadata: Record<string, unknown>): Set<string>
   return new Set(raw.filter((id): id is string => typeof id === 'string'));
 }
 
+function isGuardBeforeReceipt(metadata: Record<string, unknown>): boolean {
+  return metadata.guard === true && metadata.guard_phase === 'before';
+}
+
+function isMemoryValidateOutcome(value: unknown): value is MemoryValidateOutcome {
+  return value === 'used' || value === 'helpful' || value === 'wrong';
+}
+
+function evidenceFeedbackEntries(
+  feedback: GuardAfterInput['evidenceFeedback'],
+): Array<[string, MemoryValidateOutcome]> {
+  const entries = Object.entries((feedback ?? {}) as Record<string, unknown>);
+  for (const [id, outcome] of entries) {
+    if (!isMemoryValidateOutcome(outcome)) {
+      throw new Error(`invalid evidence feedback outcome for ${id}: expected used, helpful, or wrong`);
+    }
+  }
+  return entries as Array<[string, MemoryValidateOutcome]>;
+}
+
+function getGuardOutcomeEvent(audrey: Audrey, receiptId: string): MemoryEvent | null {
+  const event = audrey.db.prepare(`
+    SELECT * FROM memory_events
+    WHERE event_type IN ('PostToolUse', 'PostToolUseFailure')
+      AND metadata IS NOT NULL
+      AND json_valid(metadata)
+      AND json_extract(metadata, '$.receipt_id') = ?
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(receiptId) as MemoryEvent | undefined;
+  return event ?? null;
+}
+
 function postEventTypeFor(outcome: EventOutcome): 'PostToolUse' | 'PostToolUseFailure' {
   return outcome === 'failed' ? 'PostToolUseFailure' : 'PostToolUse';
 }
@@ -164,6 +197,13 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
 
   const outcome = input.outcome ?? 'unknown';
   const receiptMetadata = parseMetadata(receipt.metadata);
+  if (!isGuardBeforeReceipt(receiptMetadata)) {
+    throw new Error(`not a guard receipt: ${input.receiptId}`);
+  }
+  if (getGuardOutcomeEvent(audrey, input.receiptId)) {
+    throw new Error(`guard receipt already has an outcome: ${input.receiptId}`);
+  }
+  const feedbackEntries = evidenceFeedbackEntries(input.evidenceFeedback);
   const receiptEvidenceIds = evidenceIdsFromMetadata(receiptMetadata);
   const result = audrey.observeTool({
     event: postEventTypeFor(outcome),
@@ -188,7 +228,7 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
   });
 
   const validated: GuardValidatedEvidence[] = [];
-  for (const [id, feedbackOutcome] of Object.entries(input.evidenceFeedback ?? {})) {
+  for (const [id, feedbackOutcome] of feedbackEntries) {
     if (!receiptEvidenceIds.has(id)) {
       validated.push({
         id,
