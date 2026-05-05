@@ -40,7 +40,7 @@ export type {
   PreflightWarning,
   PreflightWarningType,
 } from './preflight.js';
-export { buildReflexReport } from './reflexes.js';
+export { buildReflexReport, buildReflexReportFromPreflight } from './reflexes.js';
 export type {
   MemoryReflex,
   MemoryReflexReport,
