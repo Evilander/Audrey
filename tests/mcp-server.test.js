@@ -471,6 +471,7 @@ describe('MCP validation hardening', () => {
 
   it('memory_guard_before rejects empty actions and accepts preflight-style strict options', () => {
     const schema = z.object(memoryGuardBeforeToolSchema);
+    expect(memoryGuardBeforeToolSchema).not.toHaveProperty('record_event');
     expect(schema.safeParse({ action: '', tool: 'Bash' }).success).toBe(false);
     expect(schema.safeParse({
       action: 'run npm test',
@@ -484,7 +485,6 @@ describe('MCP validation hardening', () => {
       mode: 'conservative',
       failure_window_hours: 24,
       include_status: true,
-      record_event: false,
       include_capsule: false,
       scope: 'shared',
     }).success).toBe(true);

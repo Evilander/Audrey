@@ -161,7 +161,12 @@ export const memoryPreflightToolSchema = {
   scope: z.enum(['agent', 'shared']).optional().describe('agent restricts memory recall to this server agent identity. shared searches the whole store. Defaults to agent.'),
 };
 
-export const memoryGuardBeforeToolSchema = memoryPreflightToolSchema;
+const { record_event: _preflightRecordEvent, ...memoryGuardBeforeFields } = memoryPreflightToolSchema;
+export const memoryGuardBeforeToolSchema = {
+  ...memoryGuardBeforeFields,
+  session_id: z.string().optional().describe('Session identifier for grouping the required guard receipt event.'),
+  files: z.array(z.string()).optional().describe('File paths to fingerprint in the required guard receipt.'),
+};
 
 export const memoryGuardAfterToolSchema = {
   receipt_id: z.string()

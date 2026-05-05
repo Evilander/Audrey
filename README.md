@@ -250,7 +250,7 @@ Production controls you still own:
 
 ## Benchmarks
 
-Audrey ships two benchmark commands.
+Audrey ships benchmark commands for performance, memory behavior, and the guard loop.
 
 ### Performance snapshot
 
@@ -274,11 +274,12 @@ These numbers cover Audrey's own pipeline (SQLite + sqlite-vec + hybrid ranking)
 
 ### Behavioral regression suite
 
-`npm run bench:memory:check` is a release gate. It runs a small set of retrieval and lifecycle scenarios (information extraction, knowledge updates, multi-session reasoning, conflict resolution, privacy boundary, overwrite, delete-and-abstain, semantic/procedural merge) against Audrey and three weak baselines (vector-only, keyword+recency, recent-window) and asserts Audrey doesn't regress. The baseline comparisons exist to catch correctness regressions in retrieval logic, not to make marketing claims.
+`npm run bench:memory:check` is a release gate. It runs a small set of retrieval, lifecycle, and guard-loop scenarios (information extraction, knowledge updates, multi-session reasoning, conflict resolution, privacy boundary, overwrite, delete-and-abstain, semantic/procedural merge, prior tool-failure caution, and strict must-follow blocking) and asserts Audrey doesn't regress. Retrieval and lifecycle cases compare Audrey with three weak baselines (vector-only, keyword+recency, recent-window). Guard-loop cases are reported as a controller regression suite against no-controller placeholders, not as a fair baseline leaderboard.
 
 ```bash
 npm run bench:memory          # full regression suite (writes JSON + report)
 npm run bench:memory:check    # release gate, exits non-zero on regression
+npm run bench:memory:guard    # closed-loop guard benchmark only
 ```
 
 ## Command Reference

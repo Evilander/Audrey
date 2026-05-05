@@ -137,8 +137,9 @@ releases:
 
 0. Audrey Guard controller shipped in the v0.23 branch:
    `beforeAction()` / `afterAction()` plus REST, MCP, and CLI surfaces.
-   The first slice uses `memory_events` metadata as receipts and avoids a
-   schema migration.
+   The first slice uses `memory_events` metadata as receipts, avoids a
+   schema migration, and has a local guard-loop benchmark for prior
+   tool-failure cautions and strict must-follow blocking.
 1. `npx audrey guard --tool <Tool> "<command>"` CLI that returns
    `go` / `caution` / `block` with evidence and is the headline demo.
 2. Memory Controller Layer (`src/controller.ts`) that owns
