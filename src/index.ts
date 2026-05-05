@@ -47,6 +47,14 @@ export type {
   ReflexOptions,
   ReflexResponseType,
 } from './reflexes.js';
+export { beforeAction, afterAction } from './controller.js';
+export type {
+  GuardBeforeOptions,
+  GuardDecision,
+  GuardAfterInput,
+  GuardOutcome,
+  GuardValidatedEvidence,
+} from './controller.js';
 
 export type {
   Affect,
