@@ -72,6 +72,7 @@ describe('CLI surface', () => {
     expect(r.stdout).toContain('doctor');
     expect(r.stdout).toContain('demo');
     expect(r.stdout).toContain('guard');
+    expect(r.stdout).toContain('guard-after');
   });
 
   it('--version prints version and exits 0', () => {
@@ -120,6 +121,60 @@ describe('CLI surface', () => {
     });
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('[audrey] guard: action is required');
+  });
+
+  it('guard-after records an action outcome from hook-shaped stdin', () => {
+    const env = {
+      ...process.env,
+      AUDREY_DATA_DIR: './test-cli-guard-after',
+      AUDREY_EMBEDDING_PROVIDER: 'mock',
+    };
+    const before = spawnSync(
+      process.execPath,
+      [cli, 'guard', '--json', '--tool', 'Bash', 'run a safe command'],
+      {
+        encoding: 'utf8',
+        timeout: 10000,
+        env,
+      },
+    );
+    expect(before.status).toBe(0);
+    const receipt = JSON.parse(before.stdout);
+
+    const after = spawnSync(
+      process.execPath,
+      [cli, 'guard-after', '--receipt', receipt.receipt_id],
+      {
+        input: JSON.stringify({
+          hook_event_name: 'PostToolUse',
+          tool_name: 'Bash',
+          session_id: 'S-cli',
+          tool_response: { success: true, stdout: 'ok' },
+        }),
+        encoding: 'utf8',
+        timeout: 10000,
+        env,
+      },
+    );
+    expect(after.status).toBe(0);
+    const parsed = JSON.parse(after.stdout);
+    expect(parsed.receipt_id).toBe(receipt.receipt_id);
+    expect(parsed.post_event_id).toMatch(/^01/);
+    expect(parsed.outcome).toBe('succeeded');
+  });
+
+  it('guard-after exits 2 when receipt is missing', () => {
+    const r = spawnSync(process.execPath, [cli, 'guard-after'], {
+      encoding: 'utf8',
+      timeout: 10000,
+      env: {
+        ...process.env,
+        AUDREY_DATA_DIR: './test-cli-guard-after',
+        AUDREY_EMBEDDING_PROVIDER: 'mock',
+      },
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('[audrey] guard-after: --receipt is required');
   });
 });
 

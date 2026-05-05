@@ -2223,6 +2223,103 @@ async function guardCli(): Promise<void> {
   }
 }
 
+function parseGuardAfterArgs(argv: string[]): {
+  receipt?: string;
+  tool?: string;
+  sessionId?: string;
+  outcome?: 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown';
+  errorSummary?: string;
+  cwd?: string;
+} {
+  const out: Record<string, unknown> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    const next = () => argv[++i];
+    if (token === '--receipt') out.receipt = next();
+    else if (token === '--tool') out.tool = next();
+    else if (token === '--session-id') out.sessionId = next();
+    else if (token === '--outcome') out.outcome = next();
+    else if (token === '--error-summary') out.errorSummary = next();
+    else if (token === '--cwd') out.cwd = next();
+  }
+  return out as ReturnType<typeof parseGuardAfterArgs>;
+}
+
+async function readOptionalJsonFromStdin(command: string): Promise<Record<string, unknown> | null> {
+  if (process.stdin.isTTY) return null;
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  const raw = Buffer.concat(chunks).toString('utf-8').trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    console.error(`[audrey] ${command}: stdin was not valid JSON, ignoring.`);
+    return null;
+  }
+}
+
+function inferGuardAfterOutcome(
+  stdinPayload: Record<string, unknown> | null,
+): 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown' | undefined {
+  const response = (stdinPayload?.tool_response as Record<string, unknown> | undefined)
+    ?? (stdinPayload?.tool_output as Record<string, unknown> | undefined)
+    ?? (stdinPayload?.output as Record<string, unknown> | undefined);
+  const success = response?.success;
+  if (typeof success === 'boolean') return success ? 'succeeded' : 'failed';
+
+  const errField = response?.error ?? response?.stderr ?? stdinPayload?.error ?? stdinPayload?.stderr;
+  if (errField && (typeof errField !== 'string' || errField.length > 0)) return 'failed';
+  return undefined;
+}
+
+async function guardAfterCli(): Promise<void> {
+  const args = parseGuardAfterArgs(process.argv.slice(3));
+  if (!args.receipt) {
+    console.error('[audrey] guard-after: --receipt is required');
+    process.exit(2);
+  }
+
+  const stdinPayload = await readOptionalJsonFromStdin('guard-after');
+  const outputPayload = stdinPayload?.tool_response ?? stdinPayload?.tool_output ?? stdinPayload?.output;
+  const inputPayload = stdinPayload?.tool_input ?? stdinPayload?.input;
+  const outcome = args.outcome ?? inferGuardAfterOutcome(stdinPayload);
+
+  let errorSummary = args.errorSummary ?? (stdinPayload?.error_summary as string | undefined);
+  if (outcome === 'failed' && !errorSummary) {
+    const response = outputPayload && typeof outputPayload === 'object'
+      ? outputPayload as Record<string, unknown>
+      : undefined;
+    const errField = response?.error ?? response?.stderr ?? stdinPayload?.error ?? stdinPayload?.stderr;
+    if (typeof errField === 'string') errorSummary = errField;
+    else if (errField !== undefined) errorSummary = JSON.stringify(errField);
+  }
+
+  const dataDir = resolveDataDir(process.env);
+  const embedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
+  const audrey = new Audrey({
+    dataDir,
+    agent: process.env['AUDREY_AGENT'] ?? 'guard-after',
+    embedding,
+  });
+
+  try {
+    const result = audrey.afterAction({
+      receiptId: args.receipt,
+      tool: args.tool ?? (stdinPayload?.tool_name as string | undefined),
+      sessionId: args.sessionId ?? (stdinPayload?.session_id as string | undefined),
+      input: inputPayload,
+      output: outputPayload,
+      outcome,
+      errorSummary,
+      cwd: args.cwd ?? (stdinPayload?.cwd as string | undefined),
+    });
+    console.log(JSON.stringify(result));
+  } finally {
+    await audrey.closeAsync();
+  }
+}
+
 function parsePromoteArgs(argv: string[]): {
   target?: 'claude-rules' | 'agents-md' | 'playbook' | 'hook' | 'checklist';
   minConfidence?: number;
@@ -2320,7 +2417,7 @@ const isDirectRun = Boolean(process.argv[1])
 
 const KNOWN_SUBCOMMANDS = [
   'install', 'uninstall', 'mcp-config', 'demo', 'reembed', 'dream',
-  'greeting', 'reflect', 'serve', 'status', 'doctor', 'observe-tool', 'guard', 'promote', 'impact',
+  'greeting', 'reflect', 'serve', 'status', 'doctor', 'observe-tool', 'guard', 'guard-after', 'promote', 'impact',
 ] as const;
 
 function printHelp(): void {
@@ -2342,6 +2439,7 @@ Commands:
   reflect                       End-of-session memory capture from stdin transcript
   observe-tool                  Record a tool-trace event (--event, --tool, --outcome)
   guard                         Check memory before an action (--json, --tool, --strict)
+  guard-after                   Record a guarded action outcome (--receipt, --outcome)
   impact                        Show closed-loop feedback metrics (--window N, --limit N, --json)
   promote                       Promote rules from observed traces (--dry-run to preview)
 
@@ -2434,6 +2532,11 @@ if (isDirectRun) {
   } else if (subcommand === 'guard') {
     guardCli().catch(err => {
       console.error('[audrey] guard failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'guard-after') {
+    guardAfterCli().catch(err => {
+      console.error('[audrey] guard-after failed:', err);
       process.exit(1);
     });
   } else if (subcommand === 'impact') {
