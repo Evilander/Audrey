@@ -28,7 +28,6 @@ describe('Audrey Guard controller', () => {
 
   it('beforeAction returns go and records one receipt when no warnings exist', async () => {
     const result = await audrey.beforeAction('format docs', {
-      tool: 'Bash',
       sessionId: 'S-1',
       includeCapsule: false,
     });
@@ -39,10 +38,17 @@ describe('Audrey Guard controller', () => {
     expect(result.preflight_event_id).toBe(result.receipt_id);
     expect(result.reflexes).toEqual([]);
 
-    const events = audrey.listEvents({ eventType: 'PreToolUse', toolName: 'Bash' });
+    const events = audrey.listEvents({ eventType: 'PreToolUse', toolName: 'guard' });
     expect(events).toHaveLength(1);
     expect(events[0].id).toBe(result.receipt_id);
-    expect(metadataOf(events[0]).guard).toBe(true);
+    expect(events[0].tool_name).toBe('guard');
+    const metadata = metadataOf(events[0]);
+    expect(metadata.guard).toBe(true);
+    expect(metadata.guard_phase).toBe('before');
+    expect(metadata.evidence_ids).toEqual([]);
+    expect(metadata.reflex_ids).toEqual([]);
+    expect(metadata.preflight_decision).toBe('go');
+    expect(metadata.preflight_warning_count).toBe(0);
   });
 
   it('beforeAction blocks strict high-severity memory and returns blocking reflexes', async () => {
@@ -88,6 +94,10 @@ describe('Audrey Guard controller', () => {
     expect(events[0].session_id).toBe('S-2');
     expect(metadataOf(events[0]).preflight_event_id).toBe(before.receipt_id);
     expect(metadataOf(events[0]).guard).toBe(true);
+    expect(metadataOf(events[0]).guard_phase).toBe('after');
+    expect(metadataOf(events[0]).receipt_id).toBe(before.receipt_id);
+    expect(metadataOf(events[0]).preflight_decision).toBe('go');
+    expect(metadataOf(events[0]).preflight_warning_count).toBe(0);
     expect(metadataOf(events[0]).output_summary).toBe('all tests passed');
     expect(metadataOf(events[0]).redacted_output).toBeUndefined();
   });
@@ -147,5 +157,138 @@ describe('Audrey Guard controller', () => {
     const impact = audrey.impact();
     expect(impact.validatedTotal).toBe(1);
     expect(impact.outcomeBreakdownInWindow.helpful).toBe(1);
+  });
+
+  it('afterAction rejects feedback outside receipt evidence', async () => {
+    const receiptMemoryId = await audrey.encode({
+      content: 'Never deploy Audrey without package tarball inspection.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'release'],
+      salience: 0.5,
+    });
+    const before = await audrey.beforeAction('deploy Audrey release', {
+      tool: 'deploy',
+      strict: true,
+      includeCapsule: false,
+    });
+    const unrelatedMemoryId = await audrey.encode({
+      content: 'The user prefers compact status updates in the morning.',
+      source: 'direct-observation',
+      salience: 0.5,
+    });
+
+    expect(before.evidence_ids).toContain(receiptMemoryId);
+    expect(before.evidence_ids).not.toContain(unrelatedMemoryId);
+
+    const after = audrey.afterAction({
+      receiptId: before.receipt_id,
+      tool: 'deploy',
+      outcome: 'blocked',
+      evidenceFeedback: {
+        [receiptMemoryId]: 'helpful',
+        [unrelatedMemoryId]: 'helpful',
+      },
+    });
+
+    expect(after.validated_evidence).toContainEqual(expect.objectContaining({
+      id: receiptMemoryId,
+      validated: true,
+    }));
+    expect(after.validated_evidence).toContainEqual(expect.objectContaining({
+      id: unrelatedMemoryId,
+      validated: false,
+    }));
+    expect(after.validated_evidence.find(v => v.id === unrelatedMemoryId)?.reason).toMatch(/receipt evidence/i);
+
+    const impact = audrey.impact();
+    expect(impact.validatedTotal).toBe(1);
+    expect(impact.outcomeBreakdownInWindow.helpful).toBe(1);
+  });
+
+  it('afterAction records failed outcomes as PostToolUseFailure and default outcomes as PostToolUse', async () => {
+    const failedBefore = await audrey.beforeAction('run failing command', {
+      tool: 'npm test',
+      includeCapsule: false,
+    });
+    const unknownBefore = await audrey.beforeAction('run command with unknown result', {
+      tool: 'node script.js',
+      includeCapsule: false,
+    });
+
+    const failed = audrey.afterAction({
+      receiptId: failedBefore.receipt_id,
+      tool: 'npm test',
+      outcome: 'failed',
+      errorSummary: 'tests failed',
+    });
+    const unknown = audrey.afterAction({
+      receiptId: unknownBefore.receipt_id,
+      tool: 'node script.js',
+    });
+
+    expect(failed.outcome).toBe('failed');
+    expect(unknown.outcome).toBe('unknown');
+    expect(audrey.listEvents({ eventType: 'PostToolUseFailure', toolName: 'npm test' })).toHaveLength(1);
+    expect(audrey.listEvents({ eventType: 'PostToolUse', toolName: 'node script.js' })).toHaveLength(1);
+  });
+
+  it('emits guard-before and guard-after events', async () => {
+    const beforeEvents = [];
+    const afterEvents = [];
+    audrey.on('guard-before', event => beforeEvents.push(event));
+    audrey.on('guard-after', event => afterEvents.push(event));
+
+    const before = await audrey.beforeAction('format docs', {
+      includeCapsule: false,
+    });
+    const after = audrey.afterAction({
+      receiptId: before.receipt_id,
+      outcome: 'succeeded',
+    });
+
+    expect(beforeEvents).toHaveLength(1);
+    expect(beforeEvents[0].receipt_id).toBe(before.receipt_id);
+    expect(afterEvents).toHaveLength(1);
+    expect(afterEvents[0].post_event_id).toBe(after.post_event_id);
+  });
+
+  it('afterAction treats malformed receipt metadata as empty metadata', async () => {
+    const before = await audrey.beforeAction('run unit tests', {
+      tool: 'npm test',
+      includeCapsule: false,
+    });
+    audrey.db.prepare('UPDATE memory_events SET metadata = ? WHERE id = ?').run('{not-json', before.receipt_id);
+
+    const after = audrey.afterAction({
+      receiptId: before.receipt_id,
+      tool: 'npm test',
+      outcome: 'succeeded',
+    });
+
+    expect(after.outcome).toBe('succeeded');
+    expect(audrey.listEvents({ eventType: 'PostToolUse', toolName: 'npm test' })).toHaveLength(1);
+  });
+
+  it('afterAction finds receipts outside the recent event list limit', async () => {
+    const before = await audrey.beforeAction('run old receipt command', {
+      tool: 'old-tool',
+      includeCapsule: false,
+    });
+    for (let i = 0; i < 1001; i += 1) {
+      audrey.observeTool({
+        event: 'PreToolUse',
+        tool: `newer-tool-${i}`,
+        outcome: 'unknown',
+      });
+    }
+
+    const after = audrey.afterAction({
+      receiptId: before.receipt_id,
+      tool: 'old-tool',
+      outcome: 'succeeded',
+    });
+
+    expect(after.receipt_id).toBe(before.receipt_id);
+    expect(after.post_event_id).toMatch(/^01/);
   });
 });

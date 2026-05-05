@@ -1,5 +1,5 @@
 import type { Audrey } from './audrey.js';
-import type { EventOutcome } from './events.js';
+import type { EventOutcome, MemoryEvent } from './events.js';
 import type { MemoryValidateOutcome, MemoryValidateResult } from './feedback.js';
 import { buildPreflight, type MemoryPreflight, type PreflightOptions } from './preflight.js';
 import { buildReflexReportFromPreflight, type MemoryReflex } from './reflexes.js';
@@ -63,10 +63,28 @@ export interface GuardOutcome {
 
 function parseMetadata(value: string | null): Record<string, unknown> {
   if (!value) return {};
-  const parsed = JSON.parse(value) as unknown;
-  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-    ? parsed as Record<string, unknown>
-    : {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function getPreToolUseReceipt(audrey: Audrey, receiptId: string): MemoryEvent | null {
+  const receipt = audrey.db.prepare(`
+    SELECT * FROM memory_events
+    WHERE id = ? AND event_type = 'PreToolUse'
+  `).get(receiptId) as MemoryEvent | undefined;
+  return receipt ?? null;
+}
+
+function evidenceIdsFromMetadata(metadata: Record<string, unknown>): Set<string> {
+  const raw = metadata.evidence_ids;
+  if (!Array.isArray(raw)) return new Set();
+  return new Set(raw.filter((id): id is string => typeof id === 'string'));
 }
 
 function postEventTypeFor(outcome: EventOutcome): 'PostToolUse' | 'PostToolUseFailure' {
@@ -86,8 +104,10 @@ export async function beforeAction(
   action: string,
   options: GuardBeforeOptions = {},
 ): Promise<GuardDecision> {
+  const tool = options.tool ?? 'guard';
   const preflight = await buildPreflight(audrey, action, {
     ...options,
+    tool,
     recordEvent: true,
   });
   const reflexReport = buildReflexReportFromPreflight(preflight);
@@ -96,18 +116,18 @@ export async function beforeAction(
     throw new Error('guard beforeAction could not record a receipt event');
   }
 
-  const receipt = audrey.listEvents({ eventType: 'PreToolUse', limit: 1000 })
-    .find(event => event.id === receiptId);
-  if (receipt) {
-    const metadata = parseMetadata(receipt.metadata);
-    audrey.db.prepare('UPDATE memory_events SET metadata = ? WHERE id = ?').run(JSON.stringify({
-      ...metadata,
-      guard: true,
-      guard_phase: 'before',
-      evidence_ids: preflight.evidence_ids,
-      reflex_ids: reflexReport.reflexes.map(reflex => reflex.id),
-    }), receiptId);
+  const receipt = getPreToolUseReceipt(audrey, receiptId);
+  if (!receipt) {
+    throw new Error(`guard receipt not found: ${receiptId}`);
   }
+  const metadata = parseMetadata(receipt.metadata);
+  audrey.db.prepare('UPDATE memory_events SET metadata = ? WHERE id = ?').run(JSON.stringify({
+    ...metadata,
+    guard: true,
+    guard_phase: 'before',
+    evidence_ids: preflight.evidence_ids,
+    reflex_ids: reflexReport.reflexes.map(reflex => reflex.id),
+  }), receiptId);
 
   return {
     receipt_id: receiptId,
@@ -137,14 +157,14 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
     throw new Error('receiptId is required');
   }
 
-  const receipt = audrey.listEvents({ eventType: 'PreToolUse', limit: 1000 })
-    .find(event => event.id === input.receiptId);
+  const receipt = getPreToolUseReceipt(audrey, input.receiptId);
   if (!receipt) {
     throw new Error(`guard receipt not found: ${input.receiptId}`);
   }
 
   const outcome = input.outcome ?? 'unknown';
   const receiptMetadata = parseMetadata(receipt.metadata);
+  const receiptEvidenceIds = evidenceIdsFromMetadata(receiptMetadata);
   const result = audrey.observeTool({
     event: postEventTypeFor(outcome),
     tool: input.tool ?? receipt.tool_name ?? 'unknown',
@@ -169,6 +189,16 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
 
   const validated: GuardValidatedEvidence[] = [];
   for (const [id, feedbackOutcome] of Object.entries(input.evidenceFeedback ?? {})) {
+    if (!receiptEvidenceIds.has(id)) {
+      validated.push({
+        id,
+        outcome: feedbackOutcome,
+        validated: false,
+        reason: 'Evidence id was not part of the guard receipt evidence.',
+      });
+      continue;
+    }
+
     const feedback = audrey.validate({ id, outcome: feedbackOutcome });
     if (feedback) {
       validated.push({ id, outcome: feedbackOutcome, validated: true, result: feedback });
