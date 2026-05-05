@@ -199,7 +199,8 @@ export function writeBenchmarkArtifacts({
   <main>
     <h1>Audrey Memory Benchmark</h1>
     <div class="callout">
-      <p><strong>Method:</strong> Audrey is scored on a LongMemEval-inspired retrieval benchmark, an operation-level lifecycle benchmark, and an agent guard-loop benchmark. The combined local chart uses comparable retrieval/lifecycle suites when available; the guard loop is reported as its own controller regression suite. Published external LoCoMo numbers stay separate so the comparison remains honest.</p>
+      <p><strong>Method:</strong> Audrey is scored on a local regression suite inspired by LongMemEval-style retrieval, operation-level lifecycle behavior, and agent guard-loop benchmarks. The combined local chart uses comparable retrieval/lifecycle suites when available; the guard loop is reported as its own controller regression suite. Published external LoCoMo numbers stay separate so the comparison remains honest.</p>
+      <p><strong>Scope:</strong> ${escapeHtml(summary.local?.overall_scope ?? 'unknown')} across ${escapeHtml((summary.local?.overall_suite_ids ?? []).join(', '))}; ${summary.local?.cases?.length ?? 0} total cases.</p>
       <p><strong>Run:</strong> <code>${escapeHtml(summary.command)}</code></p>
       <p><strong>Generated:</strong> ${escapeHtml(summary.generatedAt)}</p>
     </div>

@@ -225,7 +225,7 @@ async function seedOperationsCase(brain, benchmarkCase) {
 async function executeGuardStep(brain, step, refs) {
   if (step.type === 'encode' || step.type === 'forgetByQuery' || step.type === 'consolidate') {
     await executeAudreyStep(brain, step, refs);
-    return;
+    return [];
   }
 
   if (step.type === 'guardCycle') {
@@ -243,7 +243,53 @@ async function executeGuardStep(brain, step, refs) {
       outcome: step.outcome ?? 'unknown',
       errorSummary: step.errorSummary,
     });
-    return;
+    return [];
+  }
+
+  if (step.type === 'observeTool') {
+    const result = brain.observeTool({
+      event: step.event ?? 'PreToolUse',
+      tool: step.tool ?? 'guard-benchmark',
+      source: 'benchmark',
+      outcome: step.outcome,
+      errorSummary: step.errorSummary,
+      metadata: step.metadata,
+    });
+    if (step.saveAs) {
+      refs.set(step.saveAs, result.event.id);
+    }
+    return [];
+  }
+
+  if (step.type === 'expectGuardAfterError') {
+    const receiptId = step.receiptRef ? refs.get(step.receiptRef) : step.receiptId;
+    if (!receiptId) {
+      throw new Error(`Missing guard benchmark receipt reference: ${step.receiptRef || step.receiptId}`);
+    }
+
+    try {
+      brain.afterAction({
+        receiptId,
+        tool: step.tool ?? 'guard-benchmark',
+        outcome: step.outcome ?? 'unknown',
+        errorSummary: step.errorSummary,
+        evidenceFeedback: step.evidenceFeedback,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (step.errorIncludes && !message.includes(step.errorIncludes)) {
+        throw new Error(`Guard hardening expected "${step.errorIncludes}" but got "${message}"`);
+      }
+      const label = step.label ?? 'after_error_rejected';
+      return [{
+        id: `${receiptId}:${label}`,
+        content: `guard_hardened:${label} error:${message}`,
+        type: 'guard_hardening',
+        score: 1,
+      }];
+    }
+
+    throw new Error(`Guard hardening expected an error for receipt ${receiptId}`);
   }
 
   throw new Error(`Unsupported guard benchmark step: ${step.type}`);
@@ -251,9 +297,11 @@ async function executeGuardStep(brain, step, refs) {
 
 async function seedGuardCase(brain, benchmarkCase) {
   const refs = new Map();
+  const diagnostics = [];
   for (const step of benchmarkCase.steps || []) {
-    await executeGuardStep(brain, step, refs);
+    diagnostics.push(...await executeGuardStep(brain, step, refs));
   }
+  return diagnostics;
 }
 
 function guardDecisionRows(decision) {
@@ -300,10 +348,11 @@ async function runAudreyCase(benchmarkCase, providerConfig) {
       await brain.embeddingProvider.ready();
     }
 
+    let guardDiagnostics = [];
     if (benchmarkCase.kind === 'operations') {
       await seedOperationsCase(brain, benchmarkCase);
     } else if (benchmarkCase.kind === 'guard') {
-      await seedGuardCase(brain, benchmarkCase);
+      guardDiagnostics = await seedGuardCase(brain, benchmarkCase);
     } else {
       await seedRetrievalCase(brain, benchmarkCase);
     }
@@ -315,7 +364,7 @@ async function runAudreyCase(benchmarkCase, providerConfig) {
         strict: Boolean(benchmarkCase.strict),
         includeCapsule: benchmarkCase.includeCapsule ?? false,
       });
-      return guardDecisionRows(decision);
+      return [...guardDiagnostics, ...guardDecisionRows(decision)];
     }
 
     return await brain.recall(benchmarkCase.query, {
@@ -530,10 +579,10 @@ export async function runBenchmarkSuite(options = {}) {
       suites: suiteIds,
     },
     methodology: {
-      localBenchmark: 'LongMemEval-inspired retrieval benchmark plus operation-level lifecycle and agent guard-loop benchmarks',
+      localBenchmark: 'Local regression suite inspired by LongMemEval-style retrieval, operation-level lifecycle, and agent guard-loop benchmarks',
       retrievalBenchmark: 'Information extraction, updates, reasoning, procedural learning, privacy, abstention, and conflict handling',
       operationsBenchmark: 'Update, overwrite, delete, merge, and abstention behavior after lifecycle operations',
-      guardBenchmark: 'Memory-before-action controller behavior: receipts, learned tool-failure cautions, and strict blocking reflexes',
+      guardBenchmark: 'Memory-before-action controller behavior: receipts, learned tool-failure cautions, strict blocking reflexes, and guard-after hardening',
       externalLeaderboard: 'Published LoCoMo scores from official papers and project blogs',
     },
     local: {
@@ -581,6 +630,10 @@ export async function runBenchmarkCli({ argv = process.argv.slice(2), out = cons
   lines.push('Audrey benchmark complete.');
   lines.push('');
   lines.push(`Suites: ${summary.config.suites.map(suiteId => SUITE_LABELS.get(suiteId) || suiteId).join(', ')}`);
+  lines.push(`Scope: ${summary.local.overall_scope} (${summary.local.overall_suite_ids.join(', ')})`);
+  const comparableCaseCount = summary.local.cases
+    .filter(testCase => summary.local.overall_suite_ids.includes(testCase.suite)).length;
+  lines.push(`Cases: ${summary.local.cases.length} total; ${comparableCaseCount} in combined local chart`);
   for (const row of summary.local.overall) {
     lines.push(
       `${row.system}: ${row.scorePercent.toFixed(1)}% score, ${row.passRate.toFixed(1)}% pass rate, `

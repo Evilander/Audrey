@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AudreyConfig, EmbeddingConfig, LLMConfig } from '../src/types.js';
 
-export const VERSION = '0.22.2';
+export const VERSION = '0.23.0';
 export const SERVER_NAME = 'audrey-memory';
 export const DEFAULT_AGENT = 'local-agent';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');

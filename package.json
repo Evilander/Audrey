@@ -1,6 +1,6 @@
 {
   "name": "audrey",
-  "version": "0.22.2",
+  "version": "0.23.0",
   "description": "Local-first memory runtime for AI agents with recall, consolidation, memory reflexes, contradiction detection, and tool-trace learning",
   "type": "module",
   "main": "dist/src/index.js",
@@ -24,7 +24,10 @@
     "audrey-mcp": "dist/mcp-server/index.js"
   },
   "files": [
+    "benchmarks/*.js",
+    "benchmarks/snapshots/*.json",
     "dist/",
+    "docs/MEMORY_BENCHMARKING.md",
     "docs/assets/audrey-feature-grid.jpg",
     "docs/assets/audrey-logo.svg",
     "docs/assets/audrey-wordmark.png",
@@ -32,7 +35,8 @@
     "CHANGELOG.md",
     "README.md",
     "SECURITY.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts/smoke-cli.js"
   ],
   "scripts": {
     "build": "tsc",
@@ -40,10 +44,11 @@
     "pretest": "npm run build && npm run bench:perf",
     "test": "vitest run",
     "test:watch": "vitest",
-    "release:gate": "npm run typecheck && npm test && npm run bench:memory:check && npm run pack:check",
-    "release:gate:sandbox": "npm run build && npm run typecheck && npm run bench:perf && npm run bench:memory:check && npm run pack:check",
+    "release:gate": "npm run typecheck && npm test && npm run bench:memory:check && npm run smoke:cli && npm run pack:check",
+    "release:gate:sandbox": "npm run build && npm run typecheck && npm run bench:perf && npm run bench:memory:check && npm run smoke:cli && npm run pack:check",
     "prepack": "npm run build",
     "pack:check": "npm pack --dry-run",
+    "smoke:cli": "node scripts/smoke-cli.js",
     "bench:memory": "node benchmarks/run.js",
     "bench:perf": "node benchmarks/perf.bench.js",
     "bench:perf-snapshot": "node benchmarks/perf-snapshot.js",
