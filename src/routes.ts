@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { timingSafeEqual } from 'node:crypto';
 import type { Audrey } from './audrey.js';
+import type { EventOutcome } from './events.js';
 import type { PreflightOptions } from './preflight.js';
 import type { RecallOptions, MemoryType, PublicRetrievalMode } from './types.js';
 import { VERSION } from '../mcp-server/config.js';
@@ -85,6 +86,18 @@ type RouteBody = {
   recordEvent?: boolean;
   include_preflight?: boolean;
   includePreflight?: boolean;
+  receipt_id?: string;
+  receiptId?: string;
+  input?: unknown;
+  output?: unknown;
+  outcome?: EventOutcome;
+  error_summary?: string;
+  errorSummary?: string;
+  metadata?: Record<string, unknown>;
+  retain_details?: boolean;
+  retainDetails?: boolean;
+  evidence_feedback?: Record<string, 'used' | 'helpful' | 'wrong'>;
+  evidenceFeedback?: Record<string, 'used' | 'helpful' | 'wrong'>;
 };
 
 function actionFromBody(body: RouteBody): unknown {
@@ -311,6 +324,59 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  // POST /v1/guard/before
+  app.post('/v1/guard/before', async (c) => {
+    try {
+      const body = await c.req.json() as RouteBody;
+      const action = actionFromBody(body);
+      if (typeof action !== 'string' || action.trim().length === 0) {
+        return c.json({ error: 'action must be a non-empty string' }, 400);
+      }
+
+      const result = await audrey.beforeAction(action, {
+        ...preflightOptionsFromBody(body),
+        recordEvent: true,
+      });
+      return c.json(result);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  // POST /v1/guard/after
+  app.post('/v1/guard/after', async (c) => {
+    try {
+      const body = await c.req.json() as RouteBody;
+      const receiptId = body.receipt_id ?? body.receiptId;
+      if (typeof receiptId !== 'string' || receiptId.trim().length === 0) {
+        return c.json({ error: 'receiptId is required' }, 400);
+      }
+
+      const result = audrey.afterAction({
+        receiptId,
+        tool: body.tool,
+        sessionId: body.session_id ?? body.sessionId,
+        input: body.input,
+        output: body.output,
+        outcome: body.outcome,
+        errorSummary: body.error_summary ?? body.errorSummary,
+        cwd: body.cwd,
+        files: body.files,
+        metadata: body.metadata,
+        retainDetails: body.retain_details ?? body.retainDetails,
+        evidenceFeedback: body.evidence_feedback ?? body.evidenceFeedback,
+      });
+      return c.json(result);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/guard receipt not found/i.test(message)) {
+        return c.json({ error: message }, 404);
+      }
       return c.json({ error: message }, 400);
     }
   });

@@ -388,6 +388,53 @@ export const OPERATION_CASES = [
   },
 ];
 
+export const GUARD_CASES = [
+  {
+    id: 'guard-recent-tool-failure',
+    suite: 'guard',
+    kind: 'guard',
+    family: 'closed_loop_failure_memory',
+    title: 'Guard remembers failed tool outcome',
+    description: 'A failed guarded tool run should create a future caution and warning reflex for the same tool.',
+    action: 'run npm test before release',
+    tool: 'npm test',
+    expectAll: ['decision:caution', 'warning:recent_failure', 'reflex:warn'],
+    forbid: ['decision:go'],
+    steps: [
+      {
+        type: 'guardCycle',
+        action: 'run npm test',
+        tool: 'npm test',
+        outcome: 'failed',
+        errorSummary: 'Vitest failed with spawn EPERM',
+      },
+    ],
+  },
+  {
+    id: 'guard-strict-must-follow',
+    suite: 'guard',
+    kind: 'guard',
+    family: 'strict_must_follow_block',
+    title: 'Guard blocks strict must-follow release memory',
+    description: 'Strict guard mode should block a release action when must-follow memory applies.',
+    action: 'publish Audrey release',
+    tool: 'npm publish',
+    strict: true,
+    expectAll: ['decision:block', 'warning:must_follow', 'reflex:block'],
+    forbid: ['decision:go'],
+    steps: [
+      {
+        type: 'encode',
+        memory: {
+          content: 'Never publish Audrey without running npm pack --dry-run first.',
+          source: 'direct-observation',
+          tags: ['must-follow', 'release'],
+        },
+      },
+    ],
+  },
+];
+
 export const LOCAL_BENCHMARK_SUITES = [
   {
     id: 'retrieval',
@@ -400,6 +447,13 @@ export const LOCAL_BENCHMARK_SUITES = [
     title: 'Memory operations',
     description: 'Update, delete, merge, and abstention behavior after lifecycle operations.',
     cases: OPERATION_CASES,
+  },
+  {
+    id: 'guard',
+    title: 'Agent guard loop',
+    description: 'Closed-loop memory-before-action behavior for receipts, warnings, and blocking reflexes.',
+    comparableToBaselines: false,
+    cases: GUARD_CASES,
   },
 ];
 
@@ -418,4 +472,6 @@ export const FAMILY_ORDER = [
   'delete_and_abstain',
   'semantic_merge',
   'procedural_merge',
+  'closed_loop_failure_memory',
+  'strict_must_follow_block',
 ];

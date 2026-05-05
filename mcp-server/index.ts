@@ -161,6 +161,36 @@ export const memoryPreflightToolSchema = {
   scope: z.enum(['agent', 'shared']).optional().describe('agent restricts memory recall to this server agent identity. shared searches the whole store. Defaults to agent.'),
 };
 
+const { record_event: _preflightRecordEvent, ...memoryGuardBeforeFields } = memoryPreflightToolSchema;
+export const memoryGuardBeforeToolSchema = {
+  ...memoryGuardBeforeFields,
+  session_id: z.string().optional().describe('Session identifier for grouping the required guard receipt event.'),
+  files: z.array(z.string()).optional().describe('File paths to fingerprint in the required guard receipt.'),
+};
+
+export const memoryGuardAfterToolSchema = {
+  receipt_id: z.string()
+    .refine(isNonEmptyText, 'Receipt id must not be empty')
+    .describe('Receipt id returned by memory_guard_before.'),
+  tool: z.string().optional().describe('Tool or command family that completed, e.g. Bash, npm test, Edit, deploy.'),
+  session_id: z.string().optional().describe('Session identifier for grouping related guard events.'),
+  input: z.unknown().optional().describe(
+    'Tool input. Hashed and never stored raw; redacted metadata is only stored when retain_details is true.'
+  ),
+  output: z.unknown().optional().describe('Tool output. Same redaction and storage policy as input.'),
+  outcome: z.enum(['succeeded', 'failed', 'blocked', 'skipped', 'unknown']).optional().describe('Outcome classification'),
+  error_summary: z.string().optional().describe('Short error description if the action failed. Redacted and truncated to 2 KB.'),
+  cwd: z.string().optional().describe('Working directory at the time of the action.'),
+  files: z.array(z.string()).optional().describe('File paths to fingerprint (size + mtime + content hash).'),
+  metadata: z.record(z.string(), z.unknown()).optional().describe('Arbitrary structured metadata (redacted before storage).'),
+  retain_details: z.boolean().optional().describe(
+    'If true, redacted input and output payloads are stored alongside hashes. Defaults to false.'
+  ),
+  evidence_feedback: z.record(z.string(), z.enum(['used', 'helpful', 'wrong'])).optional().describe(
+    'Map of evidence ids from the guard receipt to memory validation outcomes.'
+  ),
+};
+
 export const memoryReflexesToolSchema = {
   ...memoryPreflightToolSchema,
   include_preflight: z.boolean().optional().describe('If true, include the full underlying preflight report.'),
@@ -651,6 +681,8 @@ Audrey registered as "${SERVER_NAME}" with Claude Code.
   memory_recent_failures - Inspect recent failed tool events
   memory_capsule       - Return a ranked, evidence-backed memory packet
   memory_preflight     - Check memory before an agent acts
+  memory_guard_before  - Create a guard receipt before an agent acts
+  memory_guard_after   - Record the outcome for a guard receipt
   memory_reflexes      - Convert preflight evidence into trigger-response reflexes
   memory_promote       - Promote repeated lessons into project rules
 
@@ -1811,6 +1843,78 @@ async function main(): Promise<void> {
     }
   });
 
+  server.tool('memory_guard_before', memoryGuardBeforeToolSchema, async ({
+    action,
+    tool,
+    session_id,
+    cwd,
+    files,
+    strict,
+    limit,
+    budget_chars,
+    mode,
+    failure_window_hours,
+    include_status,
+    include_capsule,
+    scope,
+  }) => {
+    try {
+      const decision = await audrey.beforeAction(action, {
+        tool,
+        sessionId: session_id,
+        cwd,
+        files,
+        strict,
+        limit,
+        budgetChars: budget_chars,
+        mode,
+        recentFailureWindowHours: failure_window_hours,
+        includeStatus: include_status,
+        recordEvent: true,
+        includeCapsule: include_capsule,
+        scope: scope ?? 'agent',
+      });
+      return toolResult(decision);
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+
+  server.tool('memory_guard_after', memoryGuardAfterToolSchema, async ({
+    receipt_id,
+    tool,
+    session_id,
+    input,
+    output,
+    outcome,
+    error_summary,
+    cwd,
+    files,
+    metadata,
+    retain_details,
+    evidence_feedback,
+  }) => {
+    try {
+      const result = audrey.afterAction({
+        receiptId: receipt_id,
+        tool,
+        sessionId: session_id,
+        input,
+        output,
+        outcome,
+        errorSummary: error_summary,
+        cwd,
+        files,
+        metadata,
+        retainDetails: retain_details,
+        evidenceFeedback: evidence_feedback,
+      });
+      return toolResult(result);
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+
   server.tool('memory_reflexes', memoryReflexesToolSchema, async ({
     action,
     tool,
@@ -2051,6 +2155,176 @@ async function observeToolCli(): Promise<void> {
   }
 }
 
+function parseGuardArgs(argv: string[]): {
+  json?: boolean;
+  tool?: string;
+  sessionId?: string;
+  cwd?: string;
+  strict?: boolean;
+  includeCapsule?: boolean;
+  action: string;
+} {
+  const action: string[] = [];
+  const out: Record<string, unknown> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i] ?? '';
+    const next = () => argv[++i];
+    if (token === '--json') out.json = true;
+    else if (token === '--tool') out.tool = next();
+    else if (token === '--session-id') out.sessionId = next();
+    else if (token === '--cwd') out.cwd = next();
+    else if (token === '--strict') out.strict = true;
+    else if (token === '--include-capsule') out.includeCapsule = true;
+    else action.push(token);
+  }
+  out.action = action.join(' ').trim();
+  return out as ReturnType<typeof parseGuardArgs>;
+}
+
+function formatGuardDecision(result: Awaited<ReturnType<Audrey['beforeAction']>>): string {
+  const lines = [
+    `[audrey] guard: decision=${result.decision} receipt=${result.receipt_id}`,
+    `summary: ${result.summary}`,
+  ];
+  if (result.warnings.length > 0) {
+    lines.push(`warnings: ${result.warnings.length}`);
+  }
+  return lines.join('\n');
+}
+
+async function guardCli(): Promise<void> {
+  const args = parseGuardArgs(process.argv.slice(3));
+  if (!args.action) {
+    console.error('[audrey] guard: action is required');
+    process.exit(2);
+  }
+
+  const dataDir = resolveDataDir(process.env);
+  const embedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
+  const audrey = new Audrey({
+    dataDir,
+    agent: process.env['AUDREY_AGENT'] ?? 'guard',
+    embedding,
+  });
+
+  try {
+    const result = await audrey.beforeAction(args.action, {
+      tool: args.tool,
+      sessionId: args.sessionId,
+      cwd: args.cwd,
+      strict: args.strict,
+      recordEvent: true,
+      includeCapsule: args.includeCapsule ?? false,
+    });
+
+    if (args.json) {
+      console.log(JSON.stringify(result));
+    } else {
+      console.log(formatGuardDecision(result));
+    }
+    process.exitCode = result.decision === 'block' ? 1 : 0;
+  } finally {
+    await audrey.closeAsync();
+  }
+}
+
+function parseGuardAfterArgs(argv: string[]): {
+  receipt?: string;
+  tool?: string;
+  sessionId?: string;
+  outcome?: 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown';
+  errorSummary?: string;
+  cwd?: string;
+} {
+  const out: Record<string, unknown> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    const next = () => argv[++i];
+    if (token === '--receipt') out.receipt = next();
+    else if (token === '--tool') out.tool = next();
+    else if (token === '--session-id') out.sessionId = next();
+    else if (token === '--outcome') out.outcome = next();
+    else if (token === '--error-summary') out.errorSummary = next();
+    else if (token === '--cwd') out.cwd = next();
+  }
+  return out as ReturnType<typeof parseGuardAfterArgs>;
+}
+
+async function readOptionalJsonFromStdin(command: string): Promise<Record<string, unknown> | null> {
+  if (process.stdin.isTTY) return null;
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  const raw = Buffer.concat(chunks).toString('utf-8').trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    console.error(`[audrey] ${command}: stdin was not valid JSON, ignoring.`);
+    return null;
+  }
+}
+
+function inferGuardAfterOutcome(
+  stdinPayload: Record<string, unknown> | null,
+): 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown' | undefined {
+  const response = (stdinPayload?.tool_response as Record<string, unknown> | undefined)
+    ?? (stdinPayload?.tool_output as Record<string, unknown> | undefined)
+    ?? (stdinPayload?.output as Record<string, unknown> | undefined);
+  const success = response?.success;
+  if (typeof success === 'boolean') return success ? 'succeeded' : 'failed';
+
+  const errField = response?.error ?? response?.stderr ?? stdinPayload?.error ?? stdinPayload?.stderr;
+  if (errField && (typeof errField !== 'string' || errField.length > 0)) return 'failed';
+  return undefined;
+}
+
+async function guardAfterCli(): Promise<void> {
+  const args = parseGuardAfterArgs(process.argv.slice(3));
+  if (!args.receipt) {
+    console.error('[audrey] guard-after: --receipt is required');
+    process.exit(2);
+  }
+
+  const stdinPayload = await readOptionalJsonFromStdin('guard-after');
+  const outputPayload = stdinPayload?.tool_response ?? stdinPayload?.tool_output ?? stdinPayload?.output;
+  const inputPayload = stdinPayload?.tool_input ?? stdinPayload?.input;
+  const outcome = args.outcome ?? inferGuardAfterOutcome(stdinPayload);
+
+  let errorSummary = args.errorSummary ?? (stdinPayload?.error_summary as string | undefined);
+  if (outcome === 'failed' && !errorSummary) {
+    const response = outputPayload && typeof outputPayload === 'object'
+      ? outputPayload as Record<string, unknown>
+      : undefined;
+    const errField = response?.error ?? response?.stderr ?? stdinPayload?.error ?? stdinPayload?.stderr;
+    if (typeof errField === 'string') errorSummary = errField;
+    else if (errField !== undefined) errorSummary = JSON.stringify(errField);
+  }
+
+  const dataDir = resolveDataDir(process.env);
+  const embedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
+  const audrey = new Audrey({
+    dataDir,
+    agent: process.env['AUDREY_AGENT'] ?? 'guard-after',
+    embedding,
+  });
+
+  try {
+    const result = audrey.afterAction({
+      receiptId: args.receipt,
+      tool: args.tool ?? (stdinPayload?.tool_name as string | undefined),
+      sessionId: args.sessionId ?? (stdinPayload?.session_id as string | undefined),
+      input: inputPayload,
+      output: outputPayload,
+      outcome,
+      errorSummary,
+      cwd: args.cwd ?? (stdinPayload?.cwd as string | undefined),
+    });
+    console.log(JSON.stringify(result));
+  } finally {
+    await audrey.closeAsync();
+  }
+}
+
 function parsePromoteArgs(argv: string[]): {
   target?: 'claude-rules' | 'agents-md' | 'playbook' | 'hook' | 'checklist';
   minConfidence?: number;
@@ -2148,7 +2422,7 @@ const isDirectRun = Boolean(process.argv[1])
 
 const KNOWN_SUBCOMMANDS = [
   'install', 'uninstall', 'mcp-config', 'demo', 'reembed', 'dream',
-  'greeting', 'reflect', 'serve', 'status', 'doctor', 'observe-tool', 'promote', 'impact',
+  'greeting', 'reflect', 'serve', 'status', 'doctor', 'observe-tool', 'guard', 'guard-after', 'promote', 'impact',
 ] as const;
 
 function printHelp(): void {
@@ -2169,6 +2443,8 @@ Commands:
   greeting                      Emit session-start briefing (used by host hooks)
   reflect                       End-of-session memory capture from stdin transcript
   observe-tool                  Record a tool-trace event (--event, --tool, --outcome)
+  guard                         Check memory before an action (--json, --tool, --strict)
+  guard-after                   Record a guarded action outcome (--receipt, --outcome)
   impact                        Show closed-loop feedback metrics (--window N, --limit N, --json)
   promote                       Promote rules from observed traces (--dry-run to preview)
 
@@ -2256,6 +2532,16 @@ if (isDirectRun) {
   } else if (subcommand === 'observe-tool') {
     observeToolCli().catch(err => {
       console.error('[audrey] observe-tool failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'guard') {
+    guardCli().catch(err => {
+      console.error('[audrey] guard failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'guard-after') {
+    guardAfterCli().catch(err => {
+      console.error('[audrey] guard-after failed:', err);
       process.exit(1);
     });
   } else if (subcommand === 'impact') {

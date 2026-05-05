@@ -49,6 +49,7 @@
     "bench:perf-snapshot": "node benchmarks/perf-snapshot.js",
     "bench:memory:retrieval": "node benchmarks/run.js --suite retrieval",
     "bench:memory:operations": "node benchmarks/run.js --suite operations",
+    "bench:memory:guard": "node benchmarks/run.js --suite guard",
     "bench:memory:json": "node benchmarks/run.js --json",
     "bench:memory:check": "node benchmarks/run.js --check",
     "typecheck": "tsc --noEmit",

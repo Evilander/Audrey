@@ -114,8 +114,11 @@ export function writeBenchmarkArtifacts({
 }) {
   mkdirSync(outputDir, { recursive: true });
 
+  const localChartTitle = summary.local?.overall_scope === 'comparable_suites'
+    ? 'Audrey vs Comparable Local Memory Baselines'
+    : 'Selected Audrey Regression Suite';
   const localChart = renderBarChart({
-    title: 'Audrey vs Local Memory Baselines',
+    title: localChartTitle,
     rows: localOverall.map(row => ({ label: row.system, value: row.scorePercent })),
   });
   const externalChart = renderBarChart({
@@ -196,7 +199,7 @@ export function writeBenchmarkArtifacts({
   <main>
     <h1>Audrey Memory Benchmark</h1>
     <div class="callout">
-      <p><strong>Method:</strong> Audrey is scored on a LongMemEval-inspired retrieval benchmark plus an operation-level lifecycle benchmark. The report still separates local Audrey-versus-baseline results from published external LoCoMo numbers so the comparison stays honest.</p>
+      <p><strong>Method:</strong> Audrey is scored on a LongMemEval-inspired retrieval benchmark, an operation-level lifecycle benchmark, and an agent guard-loop benchmark. The combined local chart uses comparable retrieval/lifecycle suites when available; the guard loop is reported as its own controller regression suite. Published external LoCoMo numbers stay separate so the comparison remains honest.</p>
       <p><strong>Run:</strong> <code>${escapeHtml(summary.command)}</code></p>
       <p><strong>Generated:</strong> ${escapeHtml(summary.generatedAt)}</p>
     </div>
