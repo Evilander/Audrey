@@ -6,6 +6,10 @@ import { Audrey } from '../dist/src/index.js';
 
 const TEST_DIR = './test-http-data';
 
+function metadataOf(event) {
+  return event.metadata ? JSON.parse(event.metadata) : {};
+}
+
 describe('HTTP API', () => {
   let audrey, app;
 
@@ -148,6 +152,107 @@ describe('HTTP API', () => {
     expect(body.reflexes[0].trigger).toBe('Before using npm test');
     expect(body.reflexes[0].response_type).toBe('warn');
     expect(body.preflight.decision).toBe('caution');
+  });
+
+  it('POST /v1/guard/before returns caution receipt, reflexes, and recent failure warning', async () => {
+    audrey.observeTool({
+      event: 'PostToolUse',
+      tool: 'npm test',
+      outcome: 'failed',
+      errorSummary: 'Vitest failed with spawn EPERM on this host',
+      cwd: process.cwd(),
+    });
+
+    const res = await app.request('/v1/guard/before', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'run npm test before release',
+        tool: 'npm test',
+        include_capsule: false,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.receipt_id).toMatch(/^01/);
+    expect(body.decision).toBe('caution');
+    expect(body.reflexes[0].trigger).toBe('Before using npm test');
+    expect(body.warnings.some(w => w.type === 'recent_failure')).toBe(true);
+  });
+
+  it('POST /v1/guard/before rejects blank action', async () => {
+    const res = await app.request('/v1/guard/before', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: '   ' }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/action/i);
+  });
+
+  it('POST /v1/guard/after records a redacted failed outcome linked to receipt', async () => {
+    const rawToken = 'sk-proj-abcdefghijklmnopqrstuvwxyz123456';
+    const beforeRes = await app.request('/v1/guard/before', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'run npm test',
+        tool: 'npm test',
+        session_id: 'S-http-guard',
+        include_capsule: false,
+      }),
+    });
+    expect(beforeRes.status).toBe(200);
+    const before = await beforeRes.json();
+
+    const afterRes = await app.request('/v1/guard/after', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        receipt_id: before.receipt_id,
+        tool: 'npm test',
+        session_id: 'S-http-guard',
+        outcome: 'failed',
+        error_summary: `Vitest failed while using ${rawToken}`,
+        metadata: { route: 'http-test' },
+        unsafe_extra_field: rawToken,
+      }),
+    });
+
+    expect(afterRes.status).toBe(200);
+    const body = await afterRes.json();
+    expect(JSON.stringify(body)).not.toContain(rawToken);
+    expect(body.receipt_id).toBe(before.receipt_id);
+    expect(body.outcome).toBe('failed');
+
+    const events = audrey.listEvents({ eventType: 'PostToolUseFailure', toolName: 'npm test' });
+    expect(events).toHaveLength(1);
+    expect(events[0].session_id).toBe('S-http-guard');
+    expect(events[0].outcome).toBe('failed');
+    expect(events[0].redaction_state).toBe('redacted');
+    expect(events[0].error_summary).not.toContain(rawToken);
+    expect(events[0].error_summary).toContain('[REDACTED:openai_api_key');
+    expect(metadataOf(events[0]).receipt_id).toBe(before.receipt_id);
+    expect(JSON.stringify(metadataOf(events[0]))).not.toContain(rawToken);
+  });
+
+  it('POST /v1/guard/after returns 404 for unknown receipt', async () => {
+    const res = await app.request('/v1/guard/after', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        receipt_id: '01UNKNOWNRECEIPT000000000000',
+        outcome: 'failed',
+      }),
+    });
+
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    const body = await res.json();
+    expect(body.error).toMatch(/receipt/i);
   });
 
   it('POST /v1/dream runs full cycle', async () => {
