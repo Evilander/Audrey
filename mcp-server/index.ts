@@ -2150,6 +2150,79 @@ async function observeToolCli(): Promise<void> {
   }
 }
 
+function parseGuardArgs(argv: string[]): {
+  json?: boolean;
+  tool?: string;
+  sessionId?: string;
+  cwd?: string;
+  strict?: boolean;
+  includeCapsule?: boolean;
+  action: string;
+} {
+  const action: string[] = [];
+  const out: Record<string, unknown> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i] ?? '';
+    const next = () => argv[++i];
+    if (token === '--json') out.json = true;
+    else if (token === '--tool') out.tool = next();
+    else if (token === '--session-id') out.sessionId = next();
+    else if (token === '--cwd') out.cwd = next();
+    else if (token === '--strict') out.strict = true;
+    else if (token === '--include-capsule') out.includeCapsule = true;
+    else action.push(token);
+  }
+  out.action = action.join(' ').trim();
+  return out as ReturnType<typeof parseGuardArgs>;
+}
+
+function formatGuardDecision(result: Awaited<ReturnType<Audrey['beforeAction']>>): string {
+  const lines = [
+    `[audrey] guard: decision=${result.decision} receipt=${result.receipt_id}`,
+    `summary: ${result.summary}`,
+  ];
+  if (result.warnings.length > 0) {
+    lines.push(`warnings: ${result.warnings.length}`);
+  }
+  return lines.join('\n');
+}
+
+async function guardCli(): Promise<void> {
+  const args = parseGuardArgs(process.argv.slice(3));
+  if (!args.action) {
+    console.error('[audrey] guard: action is required');
+    process.exit(2);
+  }
+
+  const dataDir = resolveDataDir(process.env);
+  const embedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
+  const audrey = new Audrey({
+    dataDir,
+    agent: process.env['AUDREY_AGENT'] ?? 'guard',
+    embedding,
+  });
+
+  try {
+    const result = await audrey.beforeAction(args.action, {
+      tool: args.tool,
+      sessionId: args.sessionId,
+      cwd: args.cwd,
+      strict: args.strict,
+      recordEvent: true,
+      includeCapsule: args.includeCapsule ?? false,
+    });
+
+    if (args.json) {
+      console.log(JSON.stringify(result));
+    } else {
+      console.log(formatGuardDecision(result));
+    }
+    process.exitCode = result.decision === 'block' ? 1 : 0;
+  } finally {
+    await audrey.closeAsync();
+  }
+}
+
 function parsePromoteArgs(argv: string[]): {
   target?: 'claude-rules' | 'agents-md' | 'playbook' | 'hook' | 'checklist';
   minConfidence?: number;
@@ -2247,7 +2320,7 @@ const isDirectRun = Boolean(process.argv[1])
 
 const KNOWN_SUBCOMMANDS = [
   'install', 'uninstall', 'mcp-config', 'demo', 'reembed', 'dream',
-  'greeting', 'reflect', 'serve', 'status', 'doctor', 'observe-tool', 'promote', 'impact',
+  'greeting', 'reflect', 'serve', 'status', 'doctor', 'observe-tool', 'guard', 'promote', 'impact',
 ] as const;
 
 function printHelp(): void {
@@ -2268,6 +2341,8 @@ Commands:
   greeting                      Emit session-start briefing (used by host hooks)
   reflect                       End-of-session memory capture from stdin transcript
   observe-tool                  Record a tool-trace event (--event, --tool, --outcome)
+  guard                         Check memory before an action (--json, --tool, --strict)
+  guard-after                   Record a guarded action outcome (planned)
   impact                        Show closed-loop feedback metrics (--window N, --limit N, --json)
   promote                       Promote rules from observed traces (--dry-run to preview)
 
@@ -2355,6 +2430,11 @@ if (isDirectRun) {
   } else if (subcommand === 'observe-tool') {
     observeToolCli().catch(err => {
       console.error('[audrey] observe-tool failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'guard') {
+    guardCli().catch(err => {
+      console.error('[audrey] guard failed:', err);
       process.exit(1);
     });
   } else if (subcommand === 'impact') {
