@@ -28,6 +28,8 @@ import {
   memoryForgetToolSchema,
   memoryValidateToolSchema,
   memoryImportToolSchema,
+  memoryGuardAfterToolSchema,
+  memoryGuardBeforeToolSchema,
   memoryPreflightToolSchema,
   memoryRecallToolSchema,
   memoryReflexesToolSchema,
@@ -368,6 +370,53 @@ describe('MCP validation hardening', () => {
       record_event: true,
       include_capsule: false,
     }).success).toBe(true);
+  });
+
+  it('memory_guard_before rejects empty actions and accepts preflight-style strict options', () => {
+    const schema = z.object(memoryGuardBeforeToolSchema);
+    expect(schema.safeParse({ action: '', tool: 'Bash' }).success).toBe(false);
+    expect(schema.safeParse({
+      action: 'run npm test',
+      tool: 'npm test',
+      session_id: 'session-1',
+      cwd: '/tmp/audrey',
+      files: ['package.json'],
+      strict: true,
+      limit: 8,
+      budget_chars: 1000,
+      mode: 'conservative',
+      failure_window_hours: 24,
+      include_status: true,
+      record_event: false,
+      include_capsule: false,
+      scope: 'shared',
+    }).success).toBe(true);
+  });
+
+  it('memory_guard_after accepts observe-tool outcomes with evidence feedback', () => {
+    const schema = z.object(memoryGuardAfterToolSchema);
+    expect(schema.safeParse({
+      receipt_id: 'receipt-1',
+      tool: 'Bash',
+      session_id: 'session-1',
+      input: { command: 'npm test' },
+      output: { exitCode: 0 },
+      outcome: 'succeeded',
+      error_summary: 'none',
+      cwd: '/tmp/audrey',
+      files: ['package.json'],
+      metadata: { task: 'guard' },
+      retain_details: true,
+      evidence_feedback: {
+        'ep-1': 'used',
+        'sem-1': 'helpful',
+        'proc-1': 'wrong',
+      },
+    }).success).toBe(true);
+    expect(schema.safeParse({
+      receipt_id: 'receipt-1',
+      outcome: 'maybe',
+    }).success).toBe(false);
   });
 
   it('memory_reflexes accepts preflight inputs plus include_preflight', () => {

@@ -161,6 +161,31 @@ export const memoryPreflightToolSchema = {
   scope: z.enum(['agent', 'shared']).optional().describe('agent restricts memory recall to this server agent identity. shared searches the whole store. Defaults to agent.'),
 };
 
+export const memoryGuardBeforeToolSchema = memoryPreflightToolSchema;
+
+export const memoryGuardAfterToolSchema = {
+  receipt_id: z.string()
+    .refine(isNonEmptyText, 'Receipt id must not be empty')
+    .describe('Receipt id returned by memory_guard_before.'),
+  tool: z.string().optional().describe('Tool or command family that completed, e.g. Bash, npm test, Edit, deploy.'),
+  session_id: z.string().optional().describe('Session identifier for grouping related guard events.'),
+  input: z.unknown().optional().describe(
+    'Tool input. Hashed and never stored raw; redacted metadata is only stored when retain_details is true.'
+  ),
+  output: z.unknown().optional().describe('Tool output. Same redaction and storage policy as input.'),
+  outcome: z.enum(['succeeded', 'failed', 'blocked', 'skipped', 'unknown']).optional().describe('Outcome classification'),
+  error_summary: z.string().optional().describe('Short error description if the action failed. Redacted and truncated to 2 KB.'),
+  cwd: z.string().optional().describe('Working directory at the time of the action.'),
+  files: z.array(z.string()).optional().describe('File paths to fingerprint (size + mtime + content hash).'),
+  metadata: z.record(z.string(), z.unknown()).optional().describe('Arbitrary structured metadata (redacted before storage).'),
+  retain_details: z.boolean().optional().describe(
+    'If true, redacted input and output payloads are stored alongside hashes. Defaults to false.'
+  ),
+  evidence_feedback: z.record(z.string(), z.enum(['used', 'helpful', 'wrong'])).optional().describe(
+    'Map of evidence ids from the guard receipt to memory validation outcomes.'
+  ),
+};
+
 export const memoryReflexesToolSchema = {
   ...memoryPreflightToolSchema,
   include_preflight: z.boolean().optional().describe('If true, include the full underlying preflight report.'),
@@ -651,6 +676,8 @@ Audrey registered as "${SERVER_NAME}" with Claude Code.
   memory_recent_failures - Inspect recent failed tool events
   memory_capsule       - Return a ranked, evidence-backed memory packet
   memory_preflight     - Check memory before an agent acts
+  memory_guard_before  - Create a guard receipt before an agent acts
+  memory_guard_after   - Record the outcome for a guard receipt
   memory_reflexes      - Convert preflight evidence into trigger-response reflexes
   memory_promote       - Promote repeated lessons into project rules
 
@@ -1806,6 +1833,78 @@ async function main(): Promise<void> {
         scope: scope ?? 'agent',
       });
       return toolResult(preflight);
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+
+  server.tool('memory_guard_before', memoryGuardBeforeToolSchema, async ({
+    action,
+    tool,
+    session_id,
+    cwd,
+    files,
+    strict,
+    limit,
+    budget_chars,
+    mode,
+    failure_window_hours,
+    include_status,
+    include_capsule,
+    scope,
+  }) => {
+    try {
+      const decision = await audrey.beforeAction(action, {
+        tool,
+        sessionId: session_id,
+        cwd,
+        files,
+        strict,
+        limit,
+        budgetChars: budget_chars,
+        mode,
+        recentFailureWindowHours: failure_window_hours,
+        includeStatus: include_status,
+        recordEvent: true,
+        includeCapsule: include_capsule,
+        scope: scope ?? 'agent',
+      });
+      return toolResult(decision);
+    } catch (err) {
+      return toolError(err);
+    }
+  });
+
+  server.tool('memory_guard_after', memoryGuardAfterToolSchema, async ({
+    receipt_id,
+    tool,
+    session_id,
+    input,
+    output,
+    outcome,
+    error_summary,
+    cwd,
+    files,
+    metadata,
+    retain_details,
+    evidence_feedback,
+  }) => {
+    try {
+      const result = audrey.afterAction({
+        receiptId: receipt_id,
+        tool,
+        sessionId: session_id,
+        input,
+        output,
+        outcome,
+        errorSummary: error_summary,
+        cwd,
+        files,
+        metadata,
+        retainDetails: retain_details,
+        evidenceFeedback: evidence_feedback,
+      });
+      return toolResult(result);
     } catch (err) {
       return toolError(err);
     }
