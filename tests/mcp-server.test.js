@@ -72,7 +72,6 @@ describe('CLI surface', () => {
     expect(r.stdout).toContain('doctor');
     expect(r.stdout).toContain('demo');
     expect(r.stdout).toContain('guard');
-    expect(r.stdout).toContain('guard-after');
   });
 
   it('--version prints version and exits 0', () => {

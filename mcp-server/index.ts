@@ -2342,7 +2342,6 @@ Commands:
   reflect                       End-of-session memory capture from stdin transcript
   observe-tool                  Record a tool-trace event (--event, --tool, --outcome)
   guard                         Check memory before an action (--json, --tool, --strict)
-  guard-after                   Record a guarded action outcome (planned)
   impact                        Show closed-loop feedback metrics (--window N, --limit N, --json)
   promote                       Promote rules from observed traces (--dry-run to preview)
 
