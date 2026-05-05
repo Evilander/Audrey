@@ -105,6 +105,8 @@ Core sidecar tools:
 
 | Agent Need | REST Route |
 |---|---|
+| Guard an action before tool use | `POST /v1/guard/before` |
+| Record the outcome after tool use | `POST /v1/guard/after` |
 | Check memory before acting | `POST /v1/preflight` |
 | Get reflex rules for an action | `POST /v1/reflexes` |
 | Store a useful observation | `POST /v1/encode` |
@@ -112,18 +114,33 @@ Core sidecar tools:
 | Get a turn-sized memory packet | `POST /v1/capsule` |
 | Check health | `GET /v1/status` |
 
+## Audrey Guard
+
+Audrey Guard is the memory-before-action loop. It asks Audrey what matters before a tool runs, returns a receipt-backed `go`, `caution`, or `block` decision, and records the outcome afterward so memory quality improves over time.
+
+```bash
+npx audrey guard --tool "npm test" --strict "run npm test before release"
+npx audrey guard --json --tool "npm test" --strict "run npm test before release"
+```
+
+Agents and hooks should pair `guard` with `guard-after`:
+
+```bash
+npx audrey guard-after --receipt <receipt_id> --outcome failed --error-summary "Vitest failed with spawn EPERM"
+```
+
 ## What Ships
 
 | Surface | Status |
 |---|---|
-| MCP stdio server | 20 tools plus status/recent/principles resources and briefing/recall/reflection prompts |
-| CLI | `doctor`, `demo`, `install`, `mcp-config`, `status`, `dream`, `reembed`, `observe-tool`, `promote`, `impact` |
+| MCP stdio server | 22 tools plus status/recent/principles resources and briefing/recall/reflection prompts |
+| CLI | `doctor`, `demo`, `guard`, `guard-after`, `install`, `mcp-config`, `status`, `dream`, `reembed`, `observe-tool`, `promote`, `impact` |
 | REST API | Hono server with `/health` and `/v1/*` routes |
 | JavaScript SDK | Direct TypeScript/Node import from `audrey` |
 | Python client | `pip install audrey-memory`, calls the REST sidecar |
 | Storage | Local SQLite plus `sqlite-vec`, no hosted database required |
 | Deployment | npm package, Docker, Compose, host-specific MCP config generation |
-| Safety loop | preflight warnings, reflexes, redacted tool traces, contradiction handling |
+| Safety loop | guard receipts, preflight warnings, reflexes, redacted tool traces, contradiction handling |
 
 ## Memory Model
 
