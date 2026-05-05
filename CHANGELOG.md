@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.23.0 - 2026-05-05
+
+### Audrey Guard — memory before action becomes the product loop
+
+- Added Audrey Guard as a first-class controller loop: `beforeAction()` checks memory before an agent touches tools, returns a receipt-backed `go` / `caution` / `block` decision, and `afterAction()` records what happened afterward.
+- Added JavaScript SDK exports and `Audrey.beforeAction()` / `Audrey.afterAction()` methods so agent runtimes can use the same loop without going through CLI or REST.
+- Added `POST /v1/guard/before` and `POST /v1/guard/after` REST routes for sidecar agents.
+- Added `memory_guard_before` and `memory_guard_after` MCP tools for hosts that want memory decisions at the tool boundary.
+- Added `npx audrey guard` and `npx audrey guard-after` CLI commands, including JSON output for hooks and automation.
+
+### Release-defining behavior
+
+- Guard decisions reuse the existing preflight and reflex machinery without doing two independent recall passes.
+- Guard receipts are stored as `memory_events` rows with guard metadata, evidence ids, reflex ids, preflight decision, warning counts, and redacted tool-trace linkage.
+- `guard-after` now validates evidence feedback before mutating memory, rejects non-guard receipts, and prevents replaying the same receipt to apply duplicate feedback.
+- A failed guarded tool run becomes future memory: the next guard check for the same tool can produce a recent-failure warning and reflex before the agent repeats the mistake.
+- Strict guard mode can block high-severity must-follow memories before risky actions, which is the release's headline "memory firewall" behavior.
+
+### Benchmarks
+
+- Added an Agent Guard Loop benchmark suite covering prior tool-failure caution, strict must-follow blocking, receipt replay rejection, and non-guard receipt rejection.
+- Added `npm run bench:memory:guard` for focused guard-loop regression testing.
+- Kept guard-loop cases out of the comparable retrieval/lifecycle aggregate when all suites are run, so the local baseline chart remains honest rather than inflated by no-controller placeholders.
+- Committed a fresh `benchmarks/snapshots/perf-0.23.0.json` performance snapshot and fixed direct snapshot runs so they resolve Audrey's package version without depending on npm-injected environment.
+- Added a CLI smoke script to the release gate and Node CI jobs so `--version`, `doctor --json`, and `demo` are proven before pack dry-run.
+- Included benchmark harness files and snapshots in the npm package so advertised benchmark scripts work from the published tarball.
+- Added a package-lock consistency test so release versions cannot drift between `package.json` and `package-lock.json` again.
+
+### Docs and release posture
+
+- Updated README quick-start, surface tables, and benchmark notes around Audrey Guard.
+- Added `docs/MEMORY_BENCHMARKING.md` to state the release's benchmark policy and map Audrey against LongMemEval, LoCoMo, MemoryAgentBench, StructMemEval, and MemGUI-Bench.
+- Added release design and implementation docs under `docs/superpowers/`.
+- Updated the production backlog to mark the v0.23 controller slice as shipped and to focus the next work on hook installation, external benchmark evidence, batching, and partial recall diagnostics.
+- Bumped JavaScript, MCP CLI, and Python client version surfaces to `0.23.0`.
+- Added the Python 3.9 `eval-type-backport` dependency marker required by Pydantic for Audrey's modern type annotations, and moved Python package metadata to the current setuptools license form.
+
 ## 0.22.2 - 2026-05-01
 
 ### Correctness — second CodeRabbit review pass and code-scanning audit
