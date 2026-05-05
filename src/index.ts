@@ -40,13 +40,21 @@ export type {
   PreflightWarning,
   PreflightWarningType,
 } from './preflight.js';
-export { buildReflexReport } from './reflexes.js';
+export { buildReflexReport, buildReflexReportFromPreflight } from './reflexes.js';
 export type {
   MemoryReflex,
   MemoryReflexReport,
   ReflexOptions,
   ReflexResponseType,
 } from './reflexes.js';
+export { beforeAction, afterAction } from './controller.js';
+export type {
+  GuardBeforeOptions,
+  GuardDecision,
+  GuardAfterInput,
+  GuardOutcome,
+  GuardValidatedEvidence,
+} from './controller.js';
 
 export type {
   Affect,

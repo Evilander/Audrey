@@ -92,12 +92,15 @@ function summarizeResults(results) {
 function evaluateCase(benchmarkCase, results) {
   const normalizedContents = results.map(result => normalize(result.content));
   const expected = (benchmarkCase.expectAny || []).map(normalize);
+  const required = (benchmarkCase.expectAll || []).map(normalize);
   const forbidden = (benchmarkCase.forbid || []).map(normalize);
   const firstMatchIndex = expected.length === 0
     ? -1
     : normalizedContents.findIndex(content => expected.some(expectation => content.includes(expectation)));
   const firstForbiddenIndex = normalizedContents.findIndex(content => forbidden.some(blocked => content.includes(blocked)));
   const matched = firstMatchIndex !== -1;
+  const requiredMatches = required.filter(expectation => normalizedContents.some(content => content.includes(expectation)));
+  const matchedRequired = required.length > 0 && requiredMatches.length === required.length;
   const leakedForbidden = firstForbiddenIndex !== -1;
 
   if (benchmarkCase.expectNone) {
@@ -106,6 +109,24 @@ function evaluateCase(benchmarkCase, results) {
       passed: score === 1,
       score,
       summary: leakedForbidden ? 'leaked restricted content' : results.length === 0 ? 'correct abstention' : 'no leak, but retrieved tangential context',
+    };
+  }
+
+  if (required.length > 0) {
+    const score = matchedRequired && !leakedForbidden
+      ? 1
+      : leakedForbidden
+        ? 0
+        : Math.min(0.5, requiredMatches.length / required.length);
+    const missing = required.filter(expectation => !requiredMatches.includes(expectation));
+    return {
+      passed: score === 1,
+      score,
+      summary: matchedRequired
+        ? 'matched all required signals'
+        : missing.length > 0
+          ? `missed required signal${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}`
+          : 'blocked content outranked the required signals',
     };
   }
 
@@ -201,6 +222,69 @@ async function seedOperationsCase(brain, benchmarkCase) {
   }
 }
 
+async function executeGuardStep(brain, step, refs) {
+  if (step.type === 'encode' || step.type === 'forgetByQuery' || step.type === 'consolidate') {
+    await executeAudreyStep(brain, step, refs);
+    return;
+  }
+
+  if (step.type === 'guardCycle') {
+    const before = await brain.beforeAction(step.action, {
+      tool: step.tool,
+      strict: Boolean(step.strict),
+      includeCapsule: step.includeCapsule ?? false,
+    });
+    if (step.saveReceiptAs) {
+      refs.set(step.saveReceiptAs, before.receipt_id);
+    }
+    brain.afterAction({
+      receiptId: before.receipt_id,
+      tool: step.tool,
+      outcome: step.outcome ?? 'unknown',
+      errorSummary: step.errorSummary,
+    });
+    return;
+  }
+
+  throw new Error(`Unsupported guard benchmark step: ${step.type}`);
+}
+
+async function seedGuardCase(brain, benchmarkCase) {
+  const refs = new Map();
+  for (const step of benchmarkCase.steps || []) {
+    await executeGuardStep(brain, step, refs);
+  }
+}
+
+function guardDecisionRows(decision) {
+  const rows = [{
+    id: decision.receipt_id,
+    content: `decision:${decision.decision} verdict:${decision.verdict} risk:${decision.risk_score} ${decision.summary}`,
+    type: 'guard_decision',
+    score: 1,
+  }];
+
+  for (const [index, warning] of decision.warnings.entries()) {
+    rows.push({
+      id: warning.evidence_id || `${decision.receipt_id}:warning:${index}`,
+      content: `warning:${warning.type} severity:${warning.severity} ${warning.message} ${warning.recommended_action || ''}`,
+      type: 'guard_warning',
+      score: 0.95 - index * 0.01,
+    });
+  }
+
+  for (const [index, reflex] of decision.reflexes.entries()) {
+    rows.push({
+      id: reflex.id || `${decision.receipt_id}:reflex:${index}`,
+      content: `reflex:${reflex.response_type} source:${reflex.source} severity:${reflex.severity} ${reflex.response}`,
+      type: 'guard_reflex',
+      score: 0.85 - index * 0.01,
+    });
+  }
+
+  return rows;
+}
+
 async function runAudreyCase(benchmarkCase, providerConfig) {
   const tempRoot = resolve('benchmarks/.tmp');
   mkdirSync(tempRoot, { recursive: true });
@@ -218,11 +302,22 @@ async function runAudreyCase(benchmarkCase, providerConfig) {
 
     if (benchmarkCase.kind === 'operations') {
       await seedOperationsCase(brain, benchmarkCase);
+    } else if (benchmarkCase.kind === 'guard') {
+      await seedGuardCase(brain, benchmarkCase);
     } else {
       await seedRetrievalCase(brain, benchmarkCase);
     }
 
     await brain.waitForIdle();
+    if (benchmarkCase.kind === 'guard') {
+      const decision = await brain.beforeAction(benchmarkCase.action, {
+        tool: benchmarkCase.tool,
+        strict: Boolean(benchmarkCase.strict),
+        includeCapsule: benchmarkCase.includeCapsule ?? false,
+      });
+      return guardDecisionRows(decision);
+    }
+
     return await brain.recall(benchmarkCase.query, {
       limit: 5,
       minConfidence: 0.05,
@@ -235,6 +330,15 @@ async function runAudreyCase(benchmarkCase, providerConfig) {
 }
 
 async function runBaselineCase(system, benchmarkCase, providerConfig) {
+  if (benchmarkCase.kind === 'guard') {
+    return [{
+      id: `${system.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-guard-baseline`,
+      content: 'decision:go verdict:clear summary:retrieval-only baseline has no before-action guard controller',
+      type: 'guard_decision',
+      score: 0,
+    }];
+  }
+
   return runBaselineScenario(system, benchmarkCase, providerConfig, 5);
 }
 
@@ -320,6 +424,7 @@ function summarizeSuites(caseResults, suites) {
       id: suite.id,
       title: suite.title,
       description: suite.description,
+      comparableToBaselines: suite.comparableToBaselines !== false,
       overall: summarizeLocalResults(suiteCases),
       byFamily: summarizeByFamily(suiteCases),
       cases: suiteCases,
@@ -401,13 +506,20 @@ export async function runBenchmarkSuite(options = {}) {
         family: benchmarkCase.family,
         description: benchmarkCase.description,
         query: benchmarkCase.query,
+        action: benchmarkCase.action,
+        tool: benchmarkCase.tool,
+        comparable_to_baselines: suite.comparableToBaselines !== false,
         results,
       });
     }
   }
 
-  const localOverall = summarizeLocalResults(caseResults);
-  const localByFamily = summarizeByFamily(caseResults);
+  const comparableCaseResults = caseResults.filter(caseResult => caseResult.comparable_to_baselines);
+  const overallCaseResults = comparableCaseResults.length > 0 ? comparableCaseResults : caseResults;
+  const overallScope = comparableCaseResults.length > 0 ? 'comparable_suites' : 'selected_suites';
+  const overallSuiteIds = [...new Set(overallCaseResults.map(caseResult => caseResult.suite))];
+  const localOverall = summarizeLocalResults(overallCaseResults);
+  const localByFamily = summarizeByFamily(overallCaseResults);
   const localSuites = summarizeSuites(caseResults, selectedSuites);
 
   return {
@@ -418,13 +530,16 @@ export async function runBenchmarkSuite(options = {}) {
       suites: suiteIds,
     },
     methodology: {
-      localBenchmark: 'LongMemEval-inspired retrieval benchmark plus operation-level lifecycle benchmark',
+      localBenchmark: 'LongMemEval-inspired retrieval benchmark plus operation-level lifecycle and agent guard-loop benchmarks',
       retrievalBenchmark: 'Information extraction, updates, reasoning, procedural learning, privacy, abstention, and conflict handling',
       operationsBenchmark: 'Update, overwrite, delete, merge, and abstention behavior after lifecycle operations',
+      guardBenchmark: 'Memory-before-action controller behavior: receipts, learned tool-failure cautions, and strict blocking reflexes',
       externalLeaderboard: 'Published LoCoMo scores from official papers and project blogs',
     },
     local: {
       overall: localOverall,
+      overall_scope: overallScope,
+      overall_suite_ids: overallSuiteIds,
       byFamily: localByFamily,
       suites: localSuites,
       cases: caseResults,

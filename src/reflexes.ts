@@ -107,6 +107,13 @@ export async function buildReflexReport(
     includeCapsule: options.includeCapsule ?? false,
   });
 
+  return buildReflexReportFromPreflight(preflight, options);
+}
+
+export function buildReflexReportFromPreflight(
+  preflight: MemoryPreflight,
+  options: Pick<ReflexOptions, 'includePreflight'> = {},
+): MemoryReflexReport {
   const reflexes = preflight.warnings.map((warning): MemoryReflex => ({
     id: reflexId(warning, preflight.action, preflight.tool),
     trigger: triggerFor(warning, preflight.action, preflight.tool),

@@ -28,6 +28,8 @@ import {
   memoryForgetToolSchema,
   memoryValidateToolSchema,
   memoryImportToolSchema,
+  memoryGuardAfterToolSchema,
+  memoryGuardBeforeToolSchema,
   memoryPreflightToolSchema,
   memoryRecallToolSchema,
   memoryReflexesToolSchema,
@@ -57,12 +59,20 @@ describe('CLI surface', () => {
   // dropped the user into an MCP stdio server waiting on stdin.
   const cli = resolve('dist/mcp-server/index.js');
 
+  afterEach(() => {
+    for (const dir of ['./test-cli-guard', './test-cli-guard-after']) {
+      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('--help prints help and exits 0', () => {
     const r = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8', timeout: 10000 });
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('Usage: audrey');
     expect(r.stdout).toContain('doctor');
     expect(r.stdout).toContain('demo');
+    expect(r.stdout).toContain('guard');
+    expect(r.stdout).toContain('guard-after');
   });
 
   it('--version prints version and exits 0', () => {
@@ -76,6 +86,95 @@ describe('CLI surface', () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("unknown command 'definitelynotacommand'");
     expect(r.stdout).toContain('Usage: audrey');
+  });
+
+  it('guard --json emits a before-action decision', () => {
+    const r = spawnSync(
+      process.execPath,
+      [cli, 'guard', '--json', '--tool', 'Bash', 'list files before editing'],
+      {
+        encoding: 'utf8',
+        timeout: 10000,
+        env: {
+          ...process.env,
+          AUDREY_DATA_DIR: './test-cli-guard',
+          AUDREY_EMBEDDING_PROVIDER: 'mock',
+        },
+      },
+    );
+    expect(r.status).toBe(0);
+    const parsed = JSON.parse(r.stdout);
+    expect(parsed.receipt_id).toMatch(/^01/);
+    expect(parsed.decision).toBe('go');
+    expect(Array.isArray(parsed.evidence_ids)).toBe(true);
+  });
+
+  it('guard exits 2 when action is missing', () => {
+    const r = spawnSync(process.execPath, [cli, 'guard'], {
+      encoding: 'utf8',
+      timeout: 10000,
+      env: {
+        ...process.env,
+        AUDREY_DATA_DIR: './test-cli-guard',
+        AUDREY_EMBEDDING_PROVIDER: 'mock',
+      },
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('[audrey] guard: action is required');
+  });
+
+  it('guard-after records an action outcome from hook-shaped stdin', () => {
+    const env = {
+      ...process.env,
+      AUDREY_DATA_DIR: './test-cli-guard-after',
+      AUDREY_EMBEDDING_PROVIDER: 'mock',
+    };
+    const before = spawnSync(
+      process.execPath,
+      [cli, 'guard', '--json', '--tool', 'Bash', 'run a safe command'],
+      {
+        encoding: 'utf8',
+        timeout: 10000,
+        env,
+      },
+    );
+    expect(before.status).toBe(0);
+    const receipt = JSON.parse(before.stdout);
+
+    const after = spawnSync(
+      process.execPath,
+      [cli, 'guard-after', '--receipt', receipt.receipt_id],
+      {
+        input: JSON.stringify({
+          hook_event_name: 'PostToolUse',
+          tool_name: 'Bash',
+          session_id: 'S-cli',
+          tool_response: { success: true, stdout: 'ok' },
+        }),
+        encoding: 'utf8',
+        timeout: 10000,
+        env,
+      },
+    );
+    expect(after.status).toBe(0);
+    const parsed = JSON.parse(after.stdout);
+    expect(parsed.receipt_id).toBe(receipt.receipt_id);
+    expect(parsed.post_event_id).toMatch(/^01/);
+    expect(parsed.outcome).toBe('succeeded');
+  });
+
+  it('guard-after exits 2 when receipt is missing', () => {
+    const r = spawnSync(process.execPath, [cli, 'guard-after'], {
+      encoding: 'utf8',
+      timeout: 10000,
+      env: {
+        ...process.env,
+        AUDREY_DATA_DIR: './test-cli-guard-after',
+        AUDREY_EMBEDDING_PROVIDER: 'mock',
+      },
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('[audrey] guard-after: --receipt is required');
   });
 });
 
@@ -368,6 +467,53 @@ describe('MCP validation hardening', () => {
       record_event: true,
       include_capsule: false,
     }).success).toBe(true);
+  });
+
+  it('memory_guard_before rejects empty actions and accepts preflight-style strict options', () => {
+    const schema = z.object(memoryGuardBeforeToolSchema);
+    expect(memoryGuardBeforeToolSchema).not.toHaveProperty('record_event');
+    expect(schema.safeParse({ action: '', tool: 'Bash' }).success).toBe(false);
+    expect(schema.safeParse({
+      action: 'run npm test',
+      tool: 'npm test',
+      session_id: 'session-1',
+      cwd: '/tmp/audrey',
+      files: ['package.json'],
+      strict: true,
+      limit: 8,
+      budget_chars: 1000,
+      mode: 'conservative',
+      failure_window_hours: 24,
+      include_status: true,
+      include_capsule: false,
+      scope: 'shared',
+    }).success).toBe(true);
+  });
+
+  it('memory_guard_after accepts observe-tool outcomes with evidence feedback', () => {
+    const schema = z.object(memoryGuardAfterToolSchema);
+    expect(schema.safeParse({
+      receipt_id: 'receipt-1',
+      tool: 'Bash',
+      session_id: 'session-1',
+      input: { command: 'npm test' },
+      output: { exitCode: 0 },
+      outcome: 'succeeded',
+      error_summary: 'none',
+      cwd: '/tmp/audrey',
+      files: ['package.json'],
+      metadata: { task: 'guard' },
+      retain_details: true,
+      evidence_feedback: {
+        'ep-1': 'used',
+        'sem-1': 'helpful',
+        'proc-1': 'wrong',
+      },
+    }).success).toBe(true);
+    expect(schema.safeParse({
+      receipt_id: 'receipt-1',
+      outcome: 'maybe',
+    }).success).toBe(false);
   });
 
   it('memory_reflexes accepts preflight inputs plus include_preflight', () => {

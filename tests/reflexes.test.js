@@ -61,4 +61,26 @@ describe('Memory Reflexes', () => {
     expect(report.preflight.decision).toBe('block');
     expect(report.evidence_ids.length).toBeGreaterThan(0);
   });
+
+  it('builds reflexes from an existing preflight without running preflight again', async () => {
+    await audrey.encode({
+      content: 'Never deploy Audrey without checking the package tarball first.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'release'],
+    });
+
+    const preflight = await audrey.preflight('deploy Audrey release', {
+      strict: true,
+    });
+    const { buildReflexReportFromPreflight } = await import('../dist/src/reflexes.js');
+
+    const report = buildReflexReportFromPreflight(preflight, {
+      includePreflight: true,
+    });
+
+    expect(report.decision).toBe('block');
+    expect(report.reflexes.some(r => r.response_type === 'block')).toBe(true);
+    expect(report.preflight).toBe(preflight);
+    expect(report.evidence_ids).toEqual(preflight.evidence_ids);
+  });
 });
