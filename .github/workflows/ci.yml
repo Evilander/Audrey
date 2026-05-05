@@ -35,6 +35,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run bench:memory:check
+      - run: npm run smoke:cli
       - run: npm run pack:check
 
   python-sdk:
@@ -97,4 +98,5 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run bench:memory:check
+      - run: npm run smoke:cli
       - run: npm run pack:check

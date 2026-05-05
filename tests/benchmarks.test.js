@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { assertBenchmarkGuardrails, runBenchmarkCli, runBenchmarkSuite } from '../benchmarks/run.js';
+import { resolveAudreyVersion } from '../benchmarks/perf-snapshot.js';
 
 const OUTPUT_DIR = './test-benchmark-output';
 
@@ -14,6 +15,22 @@ afterEach(() => {
 });
 
 describe('benchmark suite', () => {
+  it('resolves package version for direct perf snapshots', () => {
+    const previous = process.env.npm_package_version;
+    delete process.env.npm_package_version;
+
+    try {
+      const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+      expect(resolveAudreyVersion()).toBe(pkg.version);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.npm_package_version;
+      } else {
+        process.env.npm_package_version = previous;
+      }
+    }
+  });
+
   it('produces local and published benchmark summaries', async () => {
     const summary = await runBenchmarkSuite({ provider: 'mock', dimensions: 64 });
 
@@ -41,6 +58,8 @@ describe('benchmark suite', () => {
     expect(existsSync(artifacts.externalChart)).toBe(true);
     expect(artifacts.suiteCharts.some(chart => chart.id === 'operations')).toBe(true);
     expect(lines.join('\n')).toContain('Audrey benchmark complete.');
+    expect(lines.join('\n')).toContain('Scope: comparable_suites');
+    expect(lines.join('\n')).toMatch(/Cases: \d+ total/);
   });
 
   it('writes committed README chart assets when requested', async () => {
@@ -74,6 +93,8 @@ describe('benchmark suite', () => {
     expect(summary.local.cases.map(testCase => testCase.id)).toEqual([
       'guard-recent-tool-failure',
       'guard-strict-must-follow',
+      'guard-rejects-replayed-outcome',
+      'guard-rejects-non-guard-receipt',
     ]);
 
     const audrey = summary.local.overall.find(row => row.system === 'Audrey');
@@ -86,8 +107,13 @@ describe('benchmark suite', () => {
     for (const caseResult of summary.local.cases) {
       const audreyResult = caseResult.results.find(result => result.system === 'Audrey');
       expect(audreyResult?.passed).toBe(true);
-      expect(audreyResult?.topResults.join('\n')).toMatch(/decision:(caution|block)/);
-      expect(audreyResult?.topResults.join('\n')).toMatch(/reflex:(warn|block)/);
+      const topResults = audreyResult?.topResults.join('\n') ?? '';
+      if (caseResult.id.includes('rejects')) {
+        expect(topResults).toContain('guard_hardened:');
+      } else {
+        expect(topResults).toMatch(/decision:(caution|block)/);
+        expect(topResults).toMatch(/reflex:(warn|block)/);
+      }
     }
   });
 
