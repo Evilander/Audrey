@@ -924,6 +924,54 @@ describe('encodeBatch', () => {
       ]),
     ).rejects.toThrow('content must be a non-empty string');
   });
+
+  it('returns an empty list for an empty batch', async () => {
+    await expect(brain.encodeBatch([])).resolves.toEqual([]);
+  });
+
+  it('uses provider-level embedBatch instead of per-episode embed calls', async () => {
+    class CountingBatchProvider {
+      dimensions = 8;
+      modelName = 'counting-batch';
+      modelVersion = 'test';
+      embedCalls = 0;
+      embedBatchCalls = 0;
+
+      async embed() {
+        this.embedCalls++;
+        throw new Error('encodeBatch should not call embed per episode');
+      }
+
+      async embedBatch(texts) {
+        this.embedBatchCalls++;
+        return texts.map((text, index) => Array.from({ length: this.dimensions }, (_, i) => ((text.length + index + i) % 11) / 11));
+      }
+
+      vectorToBuffer(vector) {
+        const buffer = Buffer.alloc(vector.length * 4);
+        vector.forEach((value, index) => buffer.writeFloatLE(value, index * 4));
+        return buffer;
+      }
+
+      bufferToVector(buffer) {
+        const vector = [];
+        for (let i = 0; i < buffer.length; i += 4) vector.push(buffer.readFloatLE(i));
+        return vector;
+      }
+    }
+
+    const provider = new CountingBatchProvider();
+    brain.embeddingProvider = provider;
+
+    await brain.encodeBatch([
+      { content: 'Batch provider first memory', source: 'direct-observation' },
+      { content: 'Batch provider second memory', source: 'tool-result' },
+      { content: 'Batch provider third memory', source: 'told-by-user' },
+    ]);
+
+    expect(provider.embedBatchCalls).toBe(1);
+    expect(provider.embedCalls).toBe(0);
+  });
 });
 
 describe('lazy migration', () => {
