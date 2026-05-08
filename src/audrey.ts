@@ -109,6 +109,18 @@ interface EncodedEmbedding {
   buffer?: Buffer;
 }
 
+function validateEncodeParams(params: EncodeParams): void {
+  if (!params.content || typeof params.content !== 'string') {
+    throw new Error('content must be a non-empty string');
+  }
+  if (params.salience !== undefined && (params.salience < 0 || params.salience > 1)) {
+    throw new Error('salience must be between 0 and 1');
+  }
+  if (params.tags !== undefined && !Array.isArray(params.tags)) {
+    throw new Error('tags must be an array');
+  }
+}
+
 const REFLECTION_SOURCES = new Set<EncodeParams['source']>([
   'direct-observation',
   'told-by-user',
@@ -592,22 +604,38 @@ export class Audrey extends EventEmitter {
   async encodeBatch(paramsList: EncodeParams[]): Promise<string[]> {
     await this._waitForEmbeddingWarmup();
     await this._ensureMigrated();
+    if (paramsList.length === 0) return [];
+    for (const params of paramsList) {
+      validateEncodeParams(params);
+    }
+
+    const normalized = paramsList.map(params => ({
+      ...params,
+      agent: params.agent ?? this.agent,
+      arousalWeight: this.affectConfig.arousalWeight,
+    }));
+    const vectors = await this.embeddingProvider.embedBatch(normalized.map(params => params.content));
+    if (vectors.length !== normalized.length) {
+      throw new Error(`embedBatch returned ${vectors.length} vectors for ${normalized.length} inputs`);
+    }
+
     const ids: string[] = [];
     const tasks: Array<Promise<void>> = [];
-    for (const params of paramsList) {
-      const encodeParams = { ...params, agent: params.agent ?? this.agent, arousalWeight: this.affectConfig.arousalWeight };
+    for (let i = 0; i < normalized.length; i++) {
+      const encodeParams = normalized[i]!;
       let encodedVector: number[] | undefined;
       let encodedBuffer: Buffer | undefined;
       const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
+        vector: vectors[i]!,
         onVector: (vector, buffer) => {
           encodedVector = vector;
           encodedBuffer = buffer;
         },
       });
       ids.push(id);
-      this.emit('encode', { id, ...params });
+      this.emit('encode', { id, ...paramsList[i] });
       const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
-      tasks.push(this._enqueuePostEncode(id, params, encodedEmbedding));
+      tasks.push(this._enqueuePostEncode(id, paramsList[i]!, encodedEmbedding));
     }
 
     if (paramsList.some(p => p.waitForConsolidation)) {

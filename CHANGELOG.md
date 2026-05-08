@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Performance
+
+- `Audrey.encodeBatch()` now calls provider-level `embedBatch()` once per batch
+  and writes each episode through the existing `encodeEpisode()` path with the
+  precomputed vector. Cloud embedding providers no longer pay one embedding
+  request per memory during batch encode.
+- OpenAI embedding batches are chunked by `batchSize` so large batch encodes do
+  not turn into one oversized API request.
+
+### Security
+
+- Updated `hono`, `zod`, and the lockfile's `express-rate-limit` /
+  `ip-address` chain so `npm audit --omit=dev --audit-level=moderate` is clean.
+
 ## 0.23.0 - 2026-05-05
 
 ### Audrey Guard — memory before action becomes the product loop

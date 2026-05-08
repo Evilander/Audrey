@@ -163,7 +163,7 @@ Metrics:
 
 ## Source Map
 
-- MCP tool annotations and trust model: https://modelcontextprotocol.io/specification/2025-06-18/server/tools and https://modelcontextprotocol.io/specification/2025-06-18/schema
+- MCP tool annotations and trust model: https://modelcontextprotocol.io/specification/2025-11-25/server/tools and https://modelcontextprotocol.io/specification/2025-11-25/schema
 - MCP annotation risk vocabulary: https://blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations/
 - Claude Code hooks: https://code.claude.com/docs/en/hooks
 - Mem0 token-efficient memory algorithm: https://mem0.ai/blog/mem0-the-token-efficient-memory-algorithm
