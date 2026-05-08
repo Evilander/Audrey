@@ -108,8 +108,8 @@ Metrics:
 
 - Use the existing repeated-failure demo as the first qualitative figure.
 - Run `npm run bench:memory:check` as the memory-regression baseline.
-- Add a new `bench:guard` command before paper submission.
-- Report machine provenance for all timings, matching the existing 0.22.2 benchmark snapshot style.
+- Run `npm run bench:memory:guard` as the GuardBench draft until the paper artifact gets a dedicated harness.
+- Report machine provenance for all timings, matching the existing 0.23.0 benchmark snapshot style.
 - Include ablations:
   - Without exact action hash.
   - Without file scope.
@@ -145,7 +145,7 @@ Metrics:
 
 ## Artifact Checklist Before Submission
 
-- `bench:guard` script and JSON output.
+- `bench:memory:guard` script output or a dedicated GuardBench JSON artifact.
 - Public GuardBench scenario manifest.
 - Reproducible benchmark snapshot with Node version, CPU, RAM, git SHA.
 - CLI smoke transcript for `audrey demo --scenario repeated-failure`.

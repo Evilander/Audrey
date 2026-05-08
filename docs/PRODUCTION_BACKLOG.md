@@ -1,6 +1,6 @@
 # Audrey Production Backlog
 
-Updated: 2026-05-05 after the 0.23.0 Audrey Guard release pass.
+Updated: 2026-05-08 after the 0.23.0 Audrey Guard release pass and docs/package audit.
 
 This file tracks release posture and remaining product work. It is intentionally
 public-safe: it avoids exploit recipes, stale line references, and private
@@ -52,7 +52,7 @@ checks, and npm pack dry-run. GitHub repository rules require PR checks before
 - `GET /v1/impact` REST route + Python `impact()` on sync and async clients.
   `analytics()` is now an alias of `impact()`.
 - Python integration tests unskipped; they spin up the real TS REST sidecar
-  and exercise encode → recall → mark_used → impact → snapshot → restore.
+  and exercise encode -> recall -> mark_used -> impact -> snapshot -> restore.
 - Legitimate performance benchmarks (`npm run bench:perf-snapshot`) replace
   the synthetic-baseline SVGs that previously shipped in README.
 
@@ -134,7 +134,7 @@ encrypted stores, hosted relay, CI gates, and support.
 ## v0.23 Product Direction (Shipped Baseline)
 
 A 2026-05-01 audit recommended repositioning Audrey from a generic local
-memory framework to **Audrey Guard** — a local-first memory firewall whose
+memory framework to **Audrey Guard** - a local-first memory firewall whose
 single job is to stop AI coding agents from repeating expensive mistakes
 before they touch tools. The core loop already exists in pieces in this
 repo (`observeTool`, `preflight`, `reflexes`, `validate`, `impact`,
@@ -159,12 +159,12 @@ Concrete v0.23 work from the audit:
 1. Shipped in v0.23.0: `npx audrey guard --tool <Tool> "<command>"` CLI that returns
    `go` / `caution` / `block` with evidence and is the headline demo.
 2. Shipped in v0.23.0: Memory Controller Layer (`src/controller.ts`) that owns
-   `beforeAction(action) → GuardDecision` and
-   `afterAction(outcome) → GuardOutcome` over the existing primitives. This
+   `beforeAction(action) -> GuardDecision` and
+   `afterAction(outcome) -> GuardOutcome` over the existing primitives. This
    chassis also enables splitting `src/audrey.ts` (now ~1.2K lines) into
    focused services.
 3. Actually batch embeddings in `Audrey.encodeBatch()` with
-   `embeddingProvider.embedBatch()` — currently it loops single-encode
+   `embeddingProvider.embedBatch()` - currently it loops single-encode
    calls, paying N sequential round-trips for cloud providers.
 4. Hybrid-recall N+1: batch the FTS-only row loaders in
    `src/hybrid-recall.ts` by type instead of per-id SELECTs.
@@ -179,7 +179,7 @@ Concrete v0.23 work from the audit:
 8. Add `AUDREY_STRICT_ISOLATION=1` and make strict agent scope the
    default before team scopes ship.
 
-The "first paid feature" line of work — encrypted blob sync of local
-Audrey stores ("Audrey Cloud Sync") — remains the smallest commercial
+The "first paid feature" line of work - encrypted blob sync of local
+Audrey stores ("Audrey Cloud Sync") - remains the smallest commercial
 primitive that doesn't require rebuilding the product around hosted
 Postgres.
