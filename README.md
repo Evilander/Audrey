@@ -26,7 +26,7 @@ Audrey turns those hard-won lessons into a local memory runtime:
 - `memory_recall` finds durable context by semantic similarity.
 - `memory_preflight` checks prior failures, risks, rules, and relevant procedures before an action.
 - `memory_reflexes` converts remembered evidence into trigger-response guidance agents can follow.
-- `memory_validate` closes the loop after the action — `helpful`, `used`, or `wrong` outcomes feed salience and decay.
+- `memory_validate` closes the loop after the action - `helpful`, `used`, or `wrong` outcomes feed salience and decay.
 - `memory_dream` consolidates episodes into principles and applies decay.
 - `audrey impact` and `audrey doctor` tell a human or CI system whether the runtime is doing real work and is actually ready.
 
@@ -274,7 +274,7 @@ Sample output from `benchmarks/snapshots/perf-0.23.0.json` (18-core Apple M5 Max
 | 1,000 | 0.11 | 0.19 | 0.27 | 0.48 | 2.1 |
 | 5,000 | 0.11 | 0.17 | 0.73 | 0.87 | 4.2 |
 
-These numbers cover Audrey's own pipeline (SQLite + sqlite-vec + hybrid ranking) and exclude embedding-provider cost. Real-world recall p95 with a local 384-dim provider is typically 5–15× higher; with a hosted provider it is dominated by the API round-trip. Run on your own hardware before quoting numbers anywhere.
+These numbers cover Audrey's own pipeline (SQLite + sqlite-vec + hybrid ranking) and exclude embedding-provider cost. Real-world recall p95 with a local 384-dim provider is typically 5-15x higher; with a hosted provider it is dominated by the API round-trip. Run on your own hardware before quoting numbers anywhere.
 
 ### Behavioral regression suite
 
@@ -325,6 +325,9 @@ The Node sidecar defaults to `127.0.0.1:7437`. The Docker image intentionally bi
 
 ## Documentation
 
+- [Memory benchmarking policy](docs/MEMORY_BENCHMARKING.md)
+- [Production backlog and release posture](docs/PRODUCTION_BACKLOG.md)
+- [Audrey paper outline](docs/AUDREY_PAPER_OUTLINE.md)
 - [Security policy](SECURITY.md)
 - Public setup, runtime, benchmark, and command guidance is maintained in this README.
 
