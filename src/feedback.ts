@@ -5,6 +5,9 @@ export type MemoryValidateOutcome = 'used' | 'helpful' | 'wrong';
 export interface MemoryValidateInput {
   id: string;
   outcome: MemoryValidateOutcome;
+  preflightEventId?: string;
+  actionKey?: string;
+  evidenceIds?: string[];
 }
 
 export type MemoryType = 'episodic' | 'semantic' | 'procedural';
@@ -18,6 +21,9 @@ export interface MemoryValidateResult {
   retrievalCount: number | null;
   challengeCount: number | null;
   state: string | null;
+  preflightEventId?: string;
+  actionKey?: string;
+  evidenceIds?: string[];
 }
 
 interface RowSnapshot {
@@ -150,6 +156,9 @@ export function applyFeedback(db: Database.Database, input: MemoryValidateInput)
       retrievalCount: null,
       challengeCount: null,
       state: null,
+      ...(input.preflightEventId ? { preflightEventId: input.preflightEventId } : {}),
+      ...(input.actionKey ? { actionKey: input.actionKey } : {}),
+      ...(input.evidenceIds ? { evidenceIds: input.evidenceIds } : {}),
     };
   }
 
@@ -162,5 +171,8 @@ export function applyFeedback(db: Database.Database, input: MemoryValidateInput)
     retrievalCount: fresh.retrieval_count,
     challengeCount: fresh.challenge_count,
     state: fresh.state,
+    ...(input.preflightEventId ? { preflightEventId: input.preflightEventId } : {}),
+    ...(input.actionKey ? { actionKey: input.actionKey } : {}),
+    ...(input.evidenceIds ? { evidenceIds: input.evidenceIds } : {}),
   };
 }

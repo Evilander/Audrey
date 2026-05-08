@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/guardbench-leaderboard.schema.json",
+  "title": "GuardBench Leaderboard",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "generatedAt", "ranking", "rows", "failures"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "suite": { "const": "GuardBench leaderboard" },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "ranking": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "rows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/row" }
+    },
+    "failures": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rank",
+        "subject",
+        "score",
+        "conformance",
+        "source",
+        "verification"
+      ],
+      "properties": {
+        "rank": { "type": "integer", "minimum": 1 },
+        "subject": { "$ref": "#/$defs/subject" },
+        "score": { "$ref": "#/$defs/score" },
+        "conformance": { "$ref": "#/$defs/conformance" },
+        "source": { "$ref": "#/$defs/source" },
+        "verification": { "$ref": "#/$defs/verification" }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "requestedAdapter", "external"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "requestedAdapter": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "external": { "type": "boolean" }
+      }
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenarios",
+        "fullContractPassed",
+        "fullContractPassRate",
+        "decisionAccuracy",
+        "evidenceRecall",
+        "redactionLeaks",
+        "latency"
+      ],
+      "properties": {
+        "scenarios": { "type": "integer", "minimum": 0 },
+        "fullContractPassed": { "$ref": "#/$defs/nullableNumber" },
+        "fullContractPassRate": { "$ref": "#/$defs/nullableRate" },
+        "decisionAccuracy": { "$ref": "#/$defs/nullableRate" },
+        "evidenceRecall": { "$ref": "#/$defs/nullableRate" },
+        "redactionLeaks": { "$ref": "#/$defs/nullableNumber" },
+        "latency": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["p50Ms", "p95Ms", "maxMs"],
+              "properties": {
+                "p50Ms": { "type": "number", "minimum": 0 },
+                "p95Ms": { "type": "number", "minimum": 0 },
+                "maxMs": { "type": "number", "minimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "conformance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "failures", "artifactValidationOk", "artifactValidationFailures"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "artifactValidationOk": { "type": "boolean" },
+        "artifactValidationFailures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dir", "manifestGeneratedAt", "fileCount"],
+      "properties": {
+        "dir": { "type": "string", "minLength": 1 },
+        "manifestGeneratedAt": { "type": "string", "minLength": 1 },
+        "fileCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "dir", "subject", "files", "artifactValidation", "failures"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "dir": { "type": "string", "minLength": 1 },
+        "subject": { "$ref": "#/$defs/subject" },
+        "files": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "artifactValidation": { "$ref": "#/$defs/artifactValidation" },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "artifactValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "dir", "schemasDir", "files", "optionalFiles", "failures"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "dir": { "type": "string", "minLength": 1 },
+        "schemasDir": { "type": "string", "minLength": 1 },
+        "files": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "optionalFiles": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "nullableNumber": {
+      "anyOf": [
+        { "type": "number", "minimum": 0 },
+        { "type": "null" }
+      ]
+    },
+    "nullableRate": {
+      "anyOf": [
+        { "type": "number", "minimum": 0, "maximum": 1 },
+        { "type": "null" }
+      ]
+    }
+  }
+}

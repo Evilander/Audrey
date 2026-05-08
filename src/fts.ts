@@ -166,7 +166,7 @@ export function backfillFTS(db: Database.Database): void {
  */
 export function sanitizeFTSQuery(query: string): string {
   return query
-    .replace(/[*"(){}[\]^~\:]/g, ' ')
+    .replace(/[^\p{L}\p{N}_]+/gu, ' ')
     .replace(/\bAND\b|\bOR\b|\bNOT\b|\bNEAR\b/gi, ' ')
     .trim()
     .split(/\s+/)

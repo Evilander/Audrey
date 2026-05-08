@@ -19,7 +19,9 @@ import type {
   PublicRetrievalMode,
   PurgeResult,
   RecallOptions,
+  RecallError,
   RecallResult,
+  RecallResults,
   ReembedCounts,
   ReflectMemory,
   ReflectResult,
@@ -259,6 +261,8 @@ export class Audrey extends EventEmitter {
   private _embeddingWarm: boolean;
   private _embeddingWarmupPromise: Promise<void> | null;
   private _warmupDurationMs: number | null;
+  private _lastRecallCheckAt: string | null;
+  private _lastRecallErrors: RecallError[];
 
   constructor({
     dataDir = './audrey-data',
@@ -334,6 +338,8 @@ export class Audrey extends EventEmitter {
     this._embeddingWarm = false;
     this._embeddingWarmupPromise = null;
     this._warmupDurationMs = null;
+    this._lastRecallCheckAt = null;
+    this._lastRecallErrors = [];
   }
 
   async _ensureMigrated(): Promise<void> {
@@ -645,14 +651,14 @@ export class Audrey extends EventEmitter {
     return ids;
   }
 
-  async recall(query: string, options: RecallOptions = {}): Promise<RecallResult[]> {
+  async recall(query: string, options: RecallOptions = {}): Promise<RecallResults> {
     return this._recallInternal(query, options);
   }
 
   async recallWithDiagnostics(
     query: string,
     options: RecallOptions = {},
-  ): Promise<{ results: RecallResult[]; diagnostics: ProfileDiagnostics }> {
+  ): Promise<{ results: RecallResults; diagnostics: ProfileDiagnostics }> {
     const profile = new ProfileRecorder('memory_recall');
     const results = await this._recallInternal(query, options, profile);
     return { results, diagnostics: profile.finish() };
@@ -662,18 +668,21 @@ export class Audrey extends EventEmitter {
     query: string,
     options: RecallOptions = {},
     profile?: ProfileRecorder,
-  ): Promise<RecallResult[]> {
+  ): Promise<RecallResults> {
     await this._waitForEmbeddingWarmup(profile, 'recall.wait_for_warmup');
     if (profile) await profile.measure('recall.ensure_migrated', () => this._ensureMigrated());
     else await this._ensureMigrated();
 
-    return recallFn(this.db, this.embeddingProvider, query, {
+    const results = await recallFn(this.db, this.embeddingProvider, query, {
       ...options,
       agent: options.agent ?? this.agent,
       retrieval: options.retrieval ?? this.defaultRetrievalMode,
       confidenceConfig: this._recallConfig(options),
       profile,
     });
+    this._lastRecallCheckAt = new Date().toISOString();
+    this._lastRecallErrors = results.errors ?? [];
+    return results;
   }
 
   async *recallStream(query: string, options: RecallOptions = {}): AsyncGenerator<RecallResult> {
@@ -841,6 +850,9 @@ export class Audrey extends EventEmitter {
       embedding_warm: this._embeddingWarm,
       warmup_duration_ms: this._warmupDurationMs,
       default_retrieval_mode: this.defaultRetrievalMode,
+      recall_degraded: this._lastRecallErrors.length > 0,
+      last_recall_check_at: this._lastRecallCheckAt,
+      last_recall_errors: this._lastRecallErrors,
     };
   }
 
@@ -956,6 +968,44 @@ export class Audrey extends EventEmitter {
   }
 
   validate(input: MemoryValidateInput): MemoryValidateResult | null {
+    let preflightMetadata: Record<string, unknown> | null = null;
+    if (input.preflightEventId) {
+      const preflightEvent = this.db.prepare(
+        "SELECT event_type, metadata FROM memory_events WHERE id = ?"
+      ).get(input.preflightEventId) as { event_type: string; metadata: string | null } | undefined;
+      if (!preflightEvent) {
+        throw new Error(`preflight_event_id ${input.preflightEventId} was not found`);
+      }
+      if (preflightEvent.event_type !== 'PreToolUse') {
+        throw new Error(`preflight_event_id ${input.preflightEventId} is not a PreToolUse event`);
+      }
+      if (preflightEvent.metadata) {
+        try {
+          preflightMetadata = JSON.parse(preflightEvent.metadata) as Record<string, unknown>;
+        } catch {
+          preflightMetadata = null;
+        }
+      }
+      const preflightEvidenceIds = Array.isArray(preflightMetadata?.preflight_evidence_ids)
+        ? preflightMetadata.preflight_evidence_ids.filter((id): id is string => typeof id === 'string')
+        : [];
+      if (preflightEvidenceIds.length > 0 && !preflightEvidenceIds.includes(input.id)) {
+        throw new Error(`memory id ${input.id} was not evidence for preflight_event_id ${input.preflightEventId}`);
+      }
+      const preflightActionKey = typeof preflightMetadata?.audrey_guard_action_key === 'string'
+        ? preflightMetadata.audrey_guard_action_key
+        : undefined;
+      if (input.actionKey && preflightActionKey && input.actionKey !== preflightActionKey) {
+        throw new Error('action_key does not match the preflight event action key');
+      }
+      if (!input.actionKey && preflightActionKey) {
+        input = { ...input, actionKey: preflightActionKey };
+      }
+      if (!input.evidenceIds && preflightEvidenceIds.length > 0) {
+        input = { ...input, evidenceIds: preflightEvidenceIds };
+      }
+    }
+
     const result = applyFeedback(this.db, input);
     if (result) {
       // Audit row in memory_events so audrey impact can show
@@ -977,6 +1027,9 @@ export class Audrey extends EventEmitter {
           outcome: input.outcome,
           salience_after: result.salience,
           usage_count_after: result.usageCount,
+          ...(input.preflightEventId ? { preflight_event_id: input.preflightEventId } : {}),
+          ...(input.actionKey ? { audrey_guard_action_key: input.actionKey } : {}),
+          ...(input.evidenceIds ? { preflight_evidence_ids: input.evidenceIds } : {}),
         },
       });
       this.emit('validate', result);

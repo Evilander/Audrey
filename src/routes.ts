@@ -4,7 +4,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { Audrey } from './audrey.js';
 import type { EventOutcome } from './events.js';
 import type { PreflightOptions } from './preflight.js';
-import type { RecallOptions, MemoryType, PublicRetrievalMode } from './types.js';
+import type { RecallOptions, MemoryType, PublicRetrievalMode, RecallResults } from './types.js';
 import { VERSION } from '../mcp-server/config.js';
 
 // Allowlist of recall option keys safe to accept from untrusted HTTP callers.
@@ -16,6 +16,18 @@ const SAFE_RECALL_KEYS = new Set([
   'includeProvenance', 'include_provenance', 'includeDormant', 'include_dormant',
   'tags', 'sources', 'after', 'before', 'context', 'mood', 'retrieval', 'scope',
 ]);
+
+function recallResponse(results: RecallResults): {
+  results: Array<RecallResults[number]>;
+  partial_failure: boolean;
+  errors: RecallResults['errors'];
+} {
+  return {
+    results: Array.from(results),
+    partial_failure: results.partialFailure ?? false,
+    errors: results.errors ?? [],
+  };
+}
 
 function sanitizeRecallOptions(raw: unknown): RecallOptions {
   if (!raw || typeof raw !== 'object') return {};
@@ -225,7 +237,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         options.scope = options.scope ?? 'agent';
       }
       const results = await audrey.recall(query, options);
-      return c.json(results);
+      return c.json(recallResponse(results));
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, 400);
@@ -243,7 +255,22 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       const outcome = body.outcome === 'used' || body.outcome === 'helpful' || body.outcome === 'wrong'
         ? body.outcome
         : 'used';
-      const result = audrey.validate({ id, outcome });
+      const preflightEventId = typeof body.preflight_event_id === 'string'
+        ? body.preflight_event_id
+        : typeof body.preflightEventId === 'string'
+          ? body.preflightEventId
+          : undefined;
+      const actionKey = typeof body.action_key === 'string'
+        ? body.action_key
+        : typeof body.actionKey === 'string'
+          ? body.actionKey
+          : undefined;
+      const evidenceIds = Array.isArray(body.evidence_ids)
+        ? body.evidence_ids.filter((value: unknown): value is string => typeof value === 'string')
+        : Array.isArray(body.evidenceIds)
+          ? body.evidenceIds.filter((value: unknown): value is string => typeof value === 'string')
+          : undefined;
+      const result = audrey.validate({ id, outcome, preflightEventId, actionKey, evidenceIds });
       if (!result) return c.json({ ok: false, error: `no memory with id ${id}` }, 404);
       return c.json({ ok: true, ...result });
     } catch (err: unknown) {

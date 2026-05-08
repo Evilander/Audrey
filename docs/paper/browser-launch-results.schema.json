@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/audrey-browser-launch-results.schema.json",
+  "title": "Audrey Browser Launch Results",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "capturedAt", "plan", "targets"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "suite": { "const": "Audrey browser launch results" },
+    "capturedAt": { "type": "string", "minLength": 1 },
+    "plan": { "type": "string", "minLength": 1 },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/targetResult" }
+    }
+  },
+  "$defs": {
+    "nullableHttpsUrl": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^https://.+" }
+      ]
+    },
+    "nullableString": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1 }
+      ]
+    },
+    "targetResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "platform",
+        "status",
+        "publicUrl",
+        "artifactUrl",
+        "submittedAt",
+        "operatorVerified",
+        "manualRuleCheckCompleted",
+        "postSubmitChecksCompleted",
+        "blocker",
+        "notes"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "platform": { "enum": ["arxiv", "hacker-news", "linkedin", "reddit", "x"] },
+        "status": { "enum": ["pending", "submitted", "skipped", "failed"] },
+        "publicUrl": { "$ref": "#/$defs/nullableHttpsUrl" },
+        "artifactUrl": { "$ref": "#/$defs/nullableHttpsUrl" },
+        "submittedAt": { "$ref": "#/$defs/nullableString" },
+        "operatorVerified": { "type": "boolean" },
+        "manualRuleCheckCompleted": { "type": "boolean" },
+        "postSubmitChecksCompleted": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "blocker": { "$ref": "#/$defs/nullableString" },
+        "notes": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

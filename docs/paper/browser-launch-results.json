@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "1.0.0",
+  "suite": "Audrey browser launch results",
+  "capturedAt": "2026-05-13",
+  "plan": "docs/paper/browser-launch-plan.json",
+  "targets": [
+    {
+      "id": "arxiv-preprint",
+      "platform": "arxiv",
+      "status": "pending",
+      "publicUrl": null,
+      "artifactUrl": "https://paper-site-r3jdakujn-evilanders-projects.vercel.app",
+      "submittedAt": null,
+      "operatorVerified": false,
+      "manualRuleCheckCompleted": true,
+      "postSubmitChecksCompleted": [],
+      "blocker": "Logged-in arXiv account page is reachable, but START NEW SUBMISSION is absent and direct /submit routes redirect back to /user, so no valid submission flow is available from this account session.",
+      "notes": "arXiv source upload package is verified and compile-checked; browser evidence shows the account page logged in as Evilander with default category cs.AI, but the submission start control is not exposed."
+    },
+    {
+      "id": "hacker-news-show",
+      "platform": "hacker-news",
+      "status": "pending",
+      "publicUrl": null,
+      "artifactUrl": "https://paper-site-r3jdakujn-evilanders-projects.vercel.app",
+      "submittedAt": null,
+      "operatorVerified": false,
+      "manualRuleCheckCompleted": true,
+      "postSubmitChecksCompleted": [],
+      "blocker": "HN returned https://news.ycombinator.com/showlim after the Show HN submit attempt, stating that Show HN submissions are temporarily restricted for this account.",
+      "notes": "Title, URL, and comment were filled in the logged-in HN form; the platform rejected the Show HN path before creating an item, so no alternate non-Show submission was made."
+    },
+    {
+      "id": "reddit-discussion",
+      "platform": "reddit",
+      "status": "submitted",
+      "publicUrl": "https://www.reddit.com/r/LocalLLaMA/comments/1tc0i6a/audrey_a_localfirst_memory_firewall_for_agents/",
+      "artifactUrl": "https://paper-site-r3jdakujn-evilanders-projects.vercel.app",
+      "submittedAt": "2026-05-13T08:59:31-05:00",
+      "operatorVerified": true,
+      "manualRuleCheckCompleted": true,
+      "postSubmitChecksCompleted": [
+        "Record the Reddit post URL and selected subreddit.",
+        "If removed, do not repost without moderator guidance or materially different context."
+      ],
+      "blocker": null,
+      "notes": "Submitted once to r/LocalLLaMA with Resources flair after reading its current rules, including the LLM-topic rule and self-promotion disclosure rule; post text and public artifact URL were visible after submission."
+    },
+    {
+      "id": "x-launch-thread",
+      "platform": "x",
+      "status": "pending",
+      "publicUrl": null,
+      "artifactUrl": "https://paper-site-r3jdakujn-evilanders-projects.vercel.app",
+      "submittedAt": null,
+      "operatorVerified": false,
+      "manualRuleCheckCompleted": false,
+      "postSubmitChecksCompleted": [],
+      "blocker": "Awaiting logged-in X posting; this browser session was confirmed for arXiv, HN, Reddit, and LinkedIn, but not X.",
+      "notes": "Public artifact URL is available; shorten the first post before posting because the current publication-pack X first post is 282/280 characters after URL reserve."
+    },
+    {
+      "id": "linkedin-launch-post",
+      "platform": "linkedin",
+      "status": "submitted",
+      "publicUrl": "https://www.linkedin.com/feed/update/urn:li:share:7460326224108638208/",
+      "artifactUrl": "https://paper-site-r3jdakujn-evilanders-projects.vercel.app",
+      "submittedAt": "2026-05-13T08:53:01-05:00",
+      "operatorVerified": true,
+      "manualRuleCheckCompleted": false,
+      "postSubmitChecksCompleted": [
+        "Record the LinkedIn post URL.",
+        "Verify the preview points at the public paper or repo URL."
+      ],
+      "blocker": null,
+      "notes": "LinkedIn reported Post successful and exposes the post at the recorded update URL; the published post contains the Audrey launch text and LinkedIn's shortened outbound link for the public paper URL."
+    }
+  ]
+}

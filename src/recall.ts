@@ -4,9 +4,11 @@ import type {
   EmbeddingProvider,
   EpisodeRow,
   MemoryType,
+  RecallError,
   ProceduralRow,
   RecallOptions,
   RecallResult,
+  RecallResults,
   SemanticRow,
 } from './types.js';
 import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier, sourceReliability } from './confidence.js';
@@ -60,6 +62,49 @@ interface RecallFilters {
   after?: string;
   before?: string;
   agent?: string;
+}
+
+type RecallInternalOptions = RecallOptions & {
+  confidenceConfig?: ConfidenceConfig;
+  profile?: ProfileRecorder;
+  onPartialFailure?: (error: RecallError) => void;
+};
+
+function matchesTagFilters(rowTags: string[], requiredTags: string[] | undefined): boolean {
+  if (!requiredTags?.length) return true;
+  return requiredTags.every(tag => rowTags.includes(tag));
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function recordPartialFailure(options: RecallInternalOptions, type: RecallError['type'], stage: string, err: unknown): void {
+  options.onPartialFailure?.({
+    type,
+    stage,
+    message: errorMessage(err),
+  });
+}
+
+function vectorTableForType(type: MemoryType): 'vec_episodes' | 'vec_semantics' | 'vec_procedures' {
+  if (type === 'episodic') return 'vec_episodes';
+  if (type === 'semantic') return 'vec_semantics';
+  return 'vec_procedures';
+}
+
+function reportMissingVectorTables(db: Database.Database, searchTypes: MemoryType[], options: RecallInternalOptions): void {
+  for (const type of searchTypes) {
+    const table = vectorTableForType(type);
+    try {
+      const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { name?: string } | undefined;
+      if (!row?.name) {
+        recordPartialFailure(options, type, 'recall.vector_counts', new Error(`Missing vector table ${table}`));
+      }
+    } catch (err) {
+      recordPartialFailure(options, type, 'recall.vector_counts', err);
+    }
+  }
 }
 
 function tokenize(text: string): string[] {
@@ -406,7 +451,7 @@ function knnEpisodic(
     if (!matchesDateFilters(row.created_at, filters)) continue;
     if (filters.tags?.length) {
       const rowTags = safeJsonParse<string[]>(row.tags, []);
-      if (!filters.tags.some(t => rowTags.includes(t))) continue;
+      if (!matchesTagFilters(rowTags, filters.tags)) continue;
     }
     if (filters.sources?.length && !filters.sources.includes(row.source)) continue;
     let confidence = computeEpisodicConfidence(row, now, confidenceConfig);
@@ -516,7 +561,7 @@ export async function* recallStream(
   db: Database.Database,
   embeddingProvider: EmbeddingProvider,
   query: string,
-  options: RecallOptions & { confidenceConfig?: ConfidenceConfig; profile?: ProfileRecorder } = {},
+  options: RecallInternalOptions = {},
 ): AsyncGenerator<RecallResult> {
   const {
     minConfidence = 0,
@@ -546,6 +591,7 @@ export async function* recallStream(
   // (default) and 'vector' modes so the underlying similarity + confidence
   // scoring fires as before.
   if (retrieval !== 'keyword') {
+    reportMissingVectorTables(db, searchTypes, options);
     const queryVector = profile
       ? await profile.measure('recall.embedding', () => embeddingProvider.embed(query))
       : await embeddingProvider.embed(query);
@@ -577,8 +623,8 @@ export async function* recallStream(
           ))
           : knnEpisodic(db, queryBuffer, candidateK, vectorCounts.episodic, now, minConfidence, includeProvenance, confidenceConfig || {}, filters, includePrivate);
         allResults.push(...episodic);
-      } catch {
-        // A broken episodic index should not block semantic/procedural recall.
+      } catch (err) {
+        recordPartialFailure(options, 'episodic', 'recall.episodic_knn', err);
       }
     }
 
@@ -611,8 +657,8 @@ export async function* recallStream(
           if (profile) profile.measureSync('recall.semantic_reinforce', updateSemantic);
           else updateSemantic();
         }
-      } catch {
-        // A broken semantic index should not block other memory types.
+      } catch (err) {
+        recordPartialFailure(options, 'semantic', 'recall.semantic_knn', err);
       }
     }
 
@@ -645,8 +691,8 @@ export async function* recallStream(
           if (profile) profile.measureSync('recall.procedural_reinforce', updateProcedural);
           else updateProcedural();
         }
-      } catch {
-        // A broken procedural index should not block other memory types.
+      } catch (err) {
+        recordPartialFailure(options, 'procedural', 'recall.procedural_knn', err);
       }
     }
   }
@@ -655,21 +701,26 @@ export async function* recallStream(
 
   if (retrieval !== 'vector') {
     const candidateK = agentFilter ? 10_000 : hasFilters ? limit * 5 : limit * 3;
-    const ftsIds = profile
-      ? profile.measureSync('recall.fts_lookup', () => ftsIdsByType(db, query, searchTypes, candidateK, agentFilter))
-      : ftsIdsByType(db, query, searchTypes, candidateK, agentFilter);
-    const fuse = (): RecallResult[] => fuseResults(db, {
-      vectorResults: allResults,
-      ftsIds,
-      mode: retrieval,
-      includePrivate,
-      includeDormant,
-      minConfidence,
-      filters,
-      agentFilter,
-    });
-    const fused = profile ? profile.measureSync('recall.fuse_results', fuse) : fuse();
-    resultsToGuard = fused;
+    try {
+      const ftsIds = profile
+        ? profile.measureSync('recall.fts_lookup', () => ftsIdsByType(db, query, searchTypes, candidateK, agentFilter))
+        : ftsIdsByType(db, query, searchTypes, candidateK, agentFilter);
+      const fuse = (): RecallResult[] => fuseResults(db, {
+        vectorResults: allResults,
+        ftsIds,
+        mode: retrieval,
+        includePrivate,
+        includeDormant,
+        minConfidence,
+        filters,
+        agentFilter,
+      });
+      const fused = profile ? profile.measureSync('recall.fuse_results', fuse) : fuse();
+      resultsToGuard = fused;
+    } catch (err) {
+      recordPartialFailure(options, 'fts', 'recall.fts_lookup', err);
+      if (retrieval === 'keyword') resultsToGuard = [];
+    }
   }
 
   const top = profile
@@ -684,11 +735,22 @@ export async function recall(
   db: Database.Database,
   embeddingProvider: EmbeddingProvider,
   query: string,
-  options: RecallOptions & { confidenceConfig?: ConfidenceConfig; profile?: ProfileRecorder } = {},
-): Promise<RecallResult[]> {
-  const results: RecallResult[] = [];
-  for await (const entry of recallStream(db, embeddingProvider, query, options)) {
+  options: RecallInternalOptions = {},
+): Promise<RecallResults> {
+  const results = [] as RecallResults;
+  const errors: RecallError[] = [];
+  for await (const entry of recallStream(db, embeddingProvider, query, {
+    ...options,
+    onPartialFailure: error => {
+      errors.push(error);
+      options.onPartialFailure?.(error);
+    },
+  })) {
     results.push(entry);
+  }
+  if (errors.length > 0) {
+    results.partialFailure = true;
+    results.errors = errors;
   }
   return results;
 }

@@ -83,26 +83,28 @@ class AudreyClientUnitTests(unittest.TestCase):
 
 class AudreyAsyncClientUnitTests(unittest.IsolatedAsyncioTestCase):
     async def test_async_client_parses_recall_response(self) -> None:
-        # The TS server's POST /v1/recall returns a bare list of RecallResult.
-        # The Python client wraps it into RecallResponse client-side. Pre-fix,
+        # The TS server returns an envelope so degraded-recall diagnostics survive JSON.
         # this test handler returned a {results: [...]} object — that matched
-        # the Python types but did not match what the server actually sends.
         def handler(request: httpx.Request) -> httpx.Response:
             payload = json.loads(request.content.decode("utf-8"))
             self.assertEqual(payload["query"], "stripe rate limits")
             self.assertEqual(payload["limit"], 2)
             return httpx.Response(
                 200,
-                json=[
-                    {
-                        "id": "mem_1",
-                        "content": "Stripe returns HTTP 429 above 100 req/s",
-                        "type": "episodic",
-                        "confidence": 0.92,
-                        "score": 0.88,
-                        "source": "direct-observation",
-                    }
-                ],
+                json={
+                    "results": [
+                        {
+                            "id": "mem_1",
+                            "content": "Stripe returns HTTP 429 above 100 req/s",
+                            "type": "episodic",
+                            "confidence": 0.92,
+                            "score": 0.88,
+                            "source": "direct-observation",
+                        }
+                    ],
+                    "partial_failure": True,
+                    "errors": [{"type": "fts", "stage": "recall.fts_lookup", "message": "missing FTS table"}],
+                },
             )
 
         client = AsyncAudrey(
@@ -113,9 +115,10 @@ class AudreyAsyncClientUnitTests(unittest.IsolatedAsyncioTestCase):
 
         response = await client.recall_response("stripe rate limits", limit=2)
 
-        self.assertFalse(response.partialFailure)
+        self.assertTrue(response.partialFailure)
         self.assertEqual(len(response.results), 1)
         self.assertEqual(response.results[0].id, "mem_1")
+        self.assertEqual(response.errors[0].stage, "recall.fts_lookup")
 
 
 # Spins up the real TS REST sidecar via `node dist/mcp-server/index.js serve`

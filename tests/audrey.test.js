@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Audrey } from '../dist/src/audrey.js';
+import { MockEmbeddingProvider } from '../dist/src/embedding.js';
 import { MockLLMProvider } from '../dist/src/llm.js';
 import * as AudreySDK from '../dist/src/index.js';
 import { existsSync, rmSync } from 'node:fs';

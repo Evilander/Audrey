@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/guardbench-manifest.schema.json",
+  "title": "GuardBench Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "suiteId",
+    "suiteName",
+    "generatedBy",
+    "decisionVocabulary",
+    "subjects",
+    "metrics",
+    "contract",
+    "scenarios"
+  ],
+  "properties": {
+    "manifestVersion": { "type": "string", "minLength": 1 },
+    "suiteId": { "type": "string", "minLength": 1 },
+    "suiteName": { "type": "string", "minLength": 1 },
+    "generatedBy": { "type": "string", "minLength": 1 },
+    "decisionVocabulary": {
+      "type": "array",
+      "minItems": 3,
+      "items": { "enum": ["allow", "warn", "block"] },
+      "contains": { "const": "allow" }
+    },
+    "subjects": {
+      "type": "array",
+      "minItems": 5,
+      "items": { "$ref": "#/$defs/subject" }
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 9,
+      "items": {
+        "enum": [
+          "fullContractPassRate",
+          "decisionAccuracy",
+          "preventionRate",
+          "falseBlockRate",
+          "evidenceRecall",
+          "redactionLeaks",
+          "recallDegradationDetectionRate",
+          "latencyP50Ms",
+          "latencyP95Ms"
+        ]
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fullContractPass", "externalAdapterRule"],
+      "properties": {
+        "fullContractPass": { "type": "string", "minLength": 1 },
+        "externalAdapterRule": { "type": "string", "minLength": 1 }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 10,
+      "items": { "$ref": "#/$defs/scenario" }
+    }
+  },
+  "$defs": {
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description", "external"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "external": { "type": "boolean" }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "expectedDecision",
+        "action",
+        "seed",
+        "expectedEvidenceClass",
+        "requiredEvidence",
+        "redactionSecretsSeeded"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^GB-[0-9]{2}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "expectedDecision": { "enum": ["allow", "warn", "block"] },
+        "action": { "$ref": "#/$defs/action" },
+        "seed": { "$ref": "#/$defs/seed" },
+        "expectedEvidenceClass": { "type": "string", "minLength": 1 },
+        "requiredEvidence": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "redactionSecretsSeeded": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool", "action"],
+      "properties": {
+        "tool": { "type": "string", "minLength": 1 },
+        "action": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 },
+        "cwd": { "type": "string" },
+        "files": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seededMemories",
+        "seededToolEvents",
+        "seededNoise",
+        "faultInjection",
+        "seededSecretRefs"
+      ],
+      "properties": {
+        "seededMemories": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/memorySeed" }
+        },
+        "seededToolEvents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/toolEventSeed" }
+        },
+        "seededNoise": {
+          "anyOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/noiseSeed" }
+          ]
+        },
+        "faultInjection": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "string", "minLength": 1 }
+          ]
+        },
+        "seededSecretRefs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/secretRef" }
+        }
+      }
+    },
+    "memorySeed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content", "source", "tags", "salience"],
+      "properties": {
+        "content": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "salience": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "toolEventSeed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool"],
+      "properties": {
+        "tool": { "type": "string", "minLength": 1 },
+        "action": { "type": "string", "minLength": 1 },
+        "files": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "outcome": { "type": "string", "minLength": 1 },
+        "errorSummary": { "type": "string", "minLength": 1 },
+        "errorSummaryPattern": { "type": "string", "minLength": 1 },
+        "output": { "type": "string", "minLength": 1 }
+      }
+    },
+    "noiseSeed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "source", "tags", "salience"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "source": { "type": "string", "minLength": 1 },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "salience": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "secretRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fingerprint", "length"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{16}$" },
+        "length": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

@@ -1,20 +1,70 @@
-.git
-.github
-.npm-cache
-.tmp-vitest
-benchmarks/output
-build-env-*
-build-reqs-*.txt
-docs/handoffs
+# Build artifacts and dependencies — rebuilt inside the image
 node_modules
-python/.venv
-python/build
-python/dist
-python/*.egg-info
-python/**/__pycache__
-test-*-data
-tests
-pip-*
+dist
+*.tsbuildinfo
+
+# Local-only runtime data
+.audrey
+audrey-data
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 *.db
 *.db-shm
 *.db-wal
+
+# Source control + CI metadata
+.git
+.gitignore
+.gitattributes
+.github
+.codecov.yml
+
+# IDE / editor
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local secrets and per-user env files (never bake into image)
+.env
+.env.*
+!.env.docker.example
+
+# Test, bench, docs surface — none of this needs to be in the runtime image
+tests
+benchmarks/snapshots
+benchmarks/output
+coverage
+.nyc_output
+docs
+examples
+python
+hooks
+.tmp-vitest
+.npm-cache
+
+# Long-form repo artifacts
+CHANGELOG.md
+SECURITY.md
+*.md
+!README.md
+
+# Build tools and configs the runtime doesn't need
+.eslintrc*
+eslint.config.*
+.prettierrc*
+vitest.config.*
+.mocharc*
+
+# Logs and temp output
+*.log
+tmp
+.tmp
+build-env-*
+build-reqs-*.txt
+test-*-data
+pip-*

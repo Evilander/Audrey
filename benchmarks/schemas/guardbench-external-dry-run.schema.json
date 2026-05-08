@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/guardbench-external-dry-run.schema.json",
+  "title": "GuardBench External Adapter Dry-Run Matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "generatedAt", "ok", "registry", "outRoot", "adapters", "failures"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "suite": { "const": "GuardBench external adapter dry-run matrix" },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "ok": { "type": "boolean" },
+    "registry": { "type": "string", "minLength": 1 },
+    "outRoot": { "type": "string", "minLength": 1 },
+    "adapters": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/adapterDryRun" }
+    },
+    "failures": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "adapterDryRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "credentialMode",
+        "requiredEnv",
+        "missingEnv",
+        "status",
+        "command",
+        "validationCommand",
+        "metadataPath"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "credentialMode": {
+          "enum": ["none", "runtime-env"]
+        },
+        "requiredEnv": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "missingEnv": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "status": {
+          "enum": ["dry-run-missing-env", "dry-run-ready"]
+        },
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "validationCommand": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "metadataPath": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

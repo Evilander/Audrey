@@ -126,6 +126,17 @@ export interface RecallResult {
   provenance?: EpisodicProvenance | SemanticProvenance | ProceduralProvenance;
 }
 
+export interface RecallError {
+  type: MemoryType | 'vector' | 'fts';
+  stage: string;
+  message: string;
+}
+
+export interface RecallResults extends Array<RecallResult> {
+  partialFailure?: boolean;
+  errors?: RecallError[];
+}
+
 // ---------------------------------------------------------------------------
 // Confidence
 // ---------------------------------------------------------------------------
@@ -554,6 +565,9 @@ export interface MemoryStatusResult {
   embedding_warm: boolean;
   warmup_duration_ms: number | null;
   default_retrieval_mode: PublicRetrievalMode;
+  recall_degraded?: boolean;
+  last_recall_check_at?: string | null;
+  last_recall_errors?: RecallError[];
 }
 
 export interface ForgetResult {

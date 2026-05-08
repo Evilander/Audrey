@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 import { z } from 'zod';
 import { homedir, platform, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { Audrey } from '../src/index.js';
+import { Audrey, MemoryController } from '../src/index.js';
 import { readStoredDimensions } from '../src/db.js';
 import { importSnapshotSchema } from '../src/import.js';
 import { isAudreyProfileEnabled, type ProfileDiagnostics } from '../src/profile.js';
-import type { AudreyConfig, EmbeddingProvider, IntrospectResult, MemoryStatusResult } from '../src/types.js';
+import type { AudreyConfig, EmbeddingProvider, IntrospectResult, MemoryStatusResult, RecallResults } from '../src/types.js';
 import {
   VERSION,
   SERVER_NAME,
@@ -550,6 +550,15 @@ interface InstallOptions {
   includeSecrets: boolean;
 }
 
+interface HookConfigOptions {
+  host: string;
+  apply: boolean;
+  dryRun: boolean;
+  scope: 'project' | 'user';
+  projectDir: string;
+  settingsPath?: string;
+}
+
 function parseInstallOptions(argv: string[] = process.argv): InstallOptions {
   let host = 'claude-code';
   let dryRun = false;
@@ -591,11 +600,21 @@ export function formatInstallGuide(
     'Generated MCP config:',
     formatMcpHostConfig(normalizedHost, env),
     '',
+    ...(normalizedHost === 'claude-code'
+      ? [
+        'Generated Claude Code hook config:',
+        formatClaudeCodeHookConfig(),
+        '',
+      ]
+      : []),
     'Next steps:',
   ];
 
   if (normalizedHost === 'claude-code') {
     lines.push('- Run without --dry-run to register Audrey through Claude Code: npx audrey install --host claude-code');
+    lines.push('- Apply project hooks with: npx audrey hook-config claude-code --apply --scope project');
+    lines.push('- Apply user hooks with: npx audrey hook-config claude-code --apply --scope user');
+    lines.push('- Verify hooks in Claude Code with: /hooks');
     lines.push('- Verify with: claude mcp list');
   } else if (normalizedHost === 'codex') {
     lines.push('- Paste the TOML block into C:\\Users\\<you>\\.codex\\config.toml under the MCP server section.');
@@ -751,8 +770,253 @@ function printMcpConfig(): void {
   }
 }
 
+function printHookConfig(): void {
+  let options: HookConfigOptions;
+  try {
+    options = parseHookConfigOptions();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[audrey] hook-config failed: ${message}`);
+    process.exit(2);
+  }
+  if (options.host !== 'claude-code') {
+    console.error(`[audrey] hook-config currently supports claude-code only, got "${options.host}"`);
+    process.exit(2);
+  }
+  if (!options.apply) {
+    console.log(formatClaudeCodeHookConfig());
+    return;
+  }
+
+  try {
+    const settingsPath = options.settingsPath ?? defaultClaudeCodeSettingsPath(options);
+    const result = applyClaudeCodeHookConfig({
+      settingsPath,
+      dryRun: options.dryRun,
+    });
+    const action = result.dryRun
+      ? result.changed ? 'would update' : 'would leave unchanged'
+      : result.changed ? 'updated' : 'already up to date';
+    console.log(`[audrey] Claude Code hook settings ${action}: ${result.settingsPath}`);
+    if (result.backupPath) console.log(`[audrey] backup written: ${result.backupPath}`);
+    if (result.dryRun) console.log(JSON.stringify(result.settings, null, 2));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[audrey] hook-config failed: ${message}`);
+    process.exit(2);
+  }
+}
+
+export function recallPayload(results: RecallResults): {
+  results: Array<RecallResults[number]>;
+  partial_failure: boolean;
+  errors: RecallResults['errors'];
+} {
+  return {
+    results: Array.from(results),
+    partial_failure: results.partialFailure ?? false,
+    errors: results.errors ?? [],
+  };
+}
+
 function sectionTitle(section: string): string {
   return section.replace(/_/g, ' ');
+}
+
+function shellQuote(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+type JsonRecord = Record<string, unknown>;
+
+export function formatClaudeCodeHookConfig(entrypoint = MCP_ENTRYPOINT): string {
+  const node = shellQuote(process.execPath);
+  const entry = shellQuote(entrypoint);
+  const command = (subcommand: string): string => `${node} ${entry} ${subcommand}`;
+  return JSON.stringify({
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: '.*',
+          hooks: [
+            {
+              type: 'command',
+              command: command('guard --hook --fail-on-warn'),
+            },
+          ],
+        },
+      ],
+      PostToolUse: [
+        {
+          matcher: '.*',
+          hooks: [
+            {
+              type: 'command',
+              command: command('observe-tool --event PostToolUse'),
+            },
+          ],
+        },
+      ],
+      PostToolUseFailure: [
+        {
+          matcher: '.*',
+          hooks: [
+            {
+              type: 'command',
+              command: command('observe-tool --event PostToolUseFailure'),
+            },
+          ],
+        },
+      ],
+    },
+  }, null, 2);
+}
+
+function asJsonRecord(value: unknown): JsonRecord {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : {};
+}
+
+function cloneHookRows(value: unknown): unknown[] {
+  return Array.isArray(value) ? [...value] : [];
+}
+
+function hookCommandSet(settings: JsonRecord): Set<string> {
+  const commands = new Set<string>();
+  const hooks = asJsonRecord(settings.hooks);
+  for (const rows of Object.values(hooks)) {
+    if (!Array.isArray(rows)) continue;
+    for (const row of rows) {
+      const record = asJsonRecord(row);
+      const hookItems = cloneHookRows(record.hooks);
+      for (const item of hookItems) {
+        const hook = asJsonRecord(item);
+        if (typeof hook.command === 'string') commands.add(hook.command);
+      }
+    }
+  }
+  return commands;
+}
+
+export function mergeClaudeCodeHookSettings(
+  existingSettings: unknown,
+  generatedSettings: unknown = JSON.parse(formatClaudeCodeHookConfig()),
+): JsonRecord {
+  const existing = asJsonRecord(existingSettings);
+  const generated = asJsonRecord(generatedSettings);
+  const merged: JsonRecord = { ...existing };
+  const existingHooks = asJsonRecord(existing.hooks);
+  const generatedHooks = asJsonRecord(generated.hooks);
+  const nextHooks: JsonRecord = { ...existingHooks };
+  const existingCommands = hookCommandSet(existing);
+
+  for (const [eventName, generatedRows] of Object.entries(generatedHooks)) {
+    const rows = cloneHookRows(nextHooks[eventName]);
+    for (const row of cloneHookRows(generatedRows)) {
+      const hookRow = asJsonRecord(row);
+      const commands = cloneHookRows(hookRow.hooks)
+        .map(item => asJsonRecord(item).command)
+        .filter((command): command is string => typeof command === 'string');
+      if (commands.some(command => existingCommands.has(command))) continue;
+      rows.push(row);
+      for (const command of commands) existingCommands.add(command);
+    }
+    nextHooks[eventName] = rows;
+  }
+
+  merged.hooks = nextHooks;
+  return merged;
+}
+
+function parseHookConfigOptions(argv: string[] = process.argv): HookConfigOptions {
+  let host = argv[3] || 'claude-code';
+  let apply = false;
+  let dryRun = false;
+  let scope: HookConfigOptions['scope'] = 'project';
+  let projectDir = process.cwd();
+  let settingsPath: string | undefined;
+
+  for (let i = 4; i < argv.length; i++) {
+    const token = argv[i];
+    const next = () => argv[++i];
+    if (token === '--apply') apply = true;
+    else if (token === '--dry-run' || token === '--print') dryRun = true;
+    else if (token === '--scope') {
+      const value = next();
+      if (value === 'project' || value === 'user') scope = value;
+      else throw new Error(`Unsupported hook-config scope "${value}". Use project or user.`);
+    } else if (token?.startsWith('--scope=')) {
+      const value = token.slice('--scope='.length);
+      if (value === 'project' || value === 'user') scope = value;
+      else throw new Error(`Unsupported hook-config scope "${value}". Use project or user.`);
+    } else if (token === '--project-dir') {
+      projectDir = next() ?? projectDir;
+    } else if (token?.startsWith('--project-dir=')) {
+      projectDir = token.slice('--project-dir='.length) || projectDir;
+    } else if (token === '--settings') {
+      settingsPath = next();
+    } else if (token?.startsWith('--settings=')) {
+      settingsPath = token.slice('--settings='.length);
+    } else if (token && !token.startsWith('-')) {
+      host = token;
+    } else if (token) {
+      throw new Error(`Unknown hook-config option: ${token}`);
+    }
+  }
+
+  return { host, apply, dryRun, scope, projectDir, ...(settingsPath ? { settingsPath } : {}) };
+}
+
+function defaultClaudeCodeSettingsPath(options: Pick<HookConfigOptions, 'scope' | 'projectDir'>): string {
+  if (options.scope === 'user') return join(homedir(), '.claude', 'settings.json');
+  return join(resolve(options.projectDir), '.claude', 'settings.local.json');
+}
+
+export interface HookApplyResult {
+  settingsPath: string;
+  dryRun: boolean;
+  changed: boolean;
+  backupPath: string | null;
+  settings: JsonRecord;
+}
+
+export function applyClaudeCodeHookConfig(options: {
+  settingsPath: string;
+  dryRun?: boolean;
+  now?: Date;
+}): HookApplyResult {
+  const settingsPath = resolve(options.settingsPath);
+  const existingText = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf-8') : '';
+  let existing: unknown = {};
+  if (existingText.trim()) {
+    try {
+      existing = JSON.parse(existingText);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Cannot merge Audrey hooks into invalid JSON at ${settingsPath}: ${message}`);
+    }
+  }
+  const settings = mergeClaudeCodeHookSettings(existing);
+  const nextText = `${JSON.stringify(settings, null, 2)}\n`;
+  const changed = existingText !== nextText;
+  let backupPath: string | null = null;
+
+  if (changed && !options.dryRun) {
+    mkdirSync(dirname(settingsPath), { recursive: true });
+    if (existingText) {
+      const stamp = (options.now ?? new Date()).toISOString().replace(/[:.]/g, '-');
+      backupPath = `${settingsPath}.audrey-${stamp}.bak`;
+      writeFileSync(backupPath, existingText, 'utf-8');
+    }
+    writeFileSync(settingsPath, nextText, 'utf-8');
+  }
+
+  return {
+    settingsPath,
+    dryRun: options.dryRun ?? false,
+    changed,
+    backupPath,
+    settings,
+  };
 }
 
 function createDemoDir(): string {
@@ -766,6 +1030,124 @@ function createDemoDir(): string {
   }
 }
 
+function cliValue(flag: string, argv: string[] = process.argv): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (token === flag) return argv[i + 1];
+    if (token?.startsWith(`${flag}=`)) return token.slice(flag.length + 1);
+  }
+  return undefined;
+}
+
+function demoScenario(argv: string[] = process.argv): string | undefined {
+  return cliValue('--scenario', argv);
+}
+
+function formatControllerGuardResult(result: Awaited<ReturnType<MemoryController['beforeAction']>>): string {
+  const label = result.decision === 'block'
+    ? 'BLOCKED'
+    : result.decision === 'warn'
+      ? 'WARN'
+      : 'ALLOW';
+  const lines: string[] = [];
+  lines.push(`Audrey Guard: ${label}`);
+  lines.push('');
+  lines.push(`Reason: ${result.summary}`);
+  lines.push(`Risk score: ${result.riskScore.toFixed(2)}`);
+
+  if (result.evidenceIds.length > 0) {
+    lines.push('');
+    lines.push('Evidence:');
+    for (const id of result.evidenceIds.slice(0, 8)) lines.push(`- ${id}`);
+  }
+
+  if (result.recommendedActions.length > 0) {
+    lines.push('');
+    lines.push('Recommended action:');
+    for (const action of result.recommendedActions.slice(0, 5)) lines.push(`- ${action}`);
+  }
+
+  return lines.join('\n');
+}
+
+async function runRepeatedFailureDemo({
+  out = console.log,
+  keep = process.argv.includes('--keep'),
+}: {
+  out?: (...args: unknown[]) => void;
+  keep?: boolean;
+} = {}): Promise<void> {
+  const demoDir = createDemoDir();
+  const audrey = new Audrey({
+    dataDir: demoDir,
+    agent: 'audrey-guard-demo',
+    embedding: { provider: 'mock', dimensions: 64 },
+    llm: { provider: 'mock' },
+  });
+
+  try {
+    const controller = new MemoryController(audrey);
+    const action = {
+      tool: 'Bash',
+      action: 'npm run deploy',
+      command: 'npm run deploy',
+      cwd: demoDir,
+      sessionId: 'audrey-demo',
+    };
+
+    out('Audrey Guard repeated-failure demo');
+    out('');
+    out(`Memory store: ${demoDir}`);
+    out('Step 1: the agent tries a deploy and hits a real setup failure.');
+    await controller.afterAction({
+      action,
+      outcome: 'failed',
+      errorSummary: 'Prisma client was not generated. Run npm run db:generate before deploy.',
+      output: 'Error: Cannot find module .prisma/client',
+      metadata: { demo: true, scenario: 'repeated-failure' },
+    });
+
+    const lessonId = await audrey.encode({
+      content: 'Before running npm run deploy, run npm run db:generate because Prisma client must be generated first.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'deploy', 'prisma', 'failure-prevention'],
+      salience: 0.95,
+      context: { tool: 'Bash', command: 'npm run deploy', scenario: 'repeated-failure' },
+    });
+
+    out('Step 2: Audrey stores the failure and the operational rule it implies.');
+    out(`Lesson memory: ${lessonId}`);
+    out('');
+
+    const result = await controller.beforeAction(action);
+    out('Step 3: a new preflight checks the same action before tool use.');
+    out('');
+    out(formatControllerGuardResult(result));
+
+    audrey.validate({ id: lessonId, outcome: 'helpful' });
+    const impactReport = audrey.impact({ windowDays: 7, limit: 3 });
+
+    out('');
+    out('Impact:');
+    out(`- ${result.decision === 'block' ? 1 : 0} repeated failure prevented`);
+    out(`- ${impactReport.validatedTotal} helpful memory validation recorded`);
+    out(`- ${result.evidenceIds.length} evidence id${result.evidenceIds.length === 1 ? '' : 's'} attached`);
+    out('');
+    out('Audrey saw the agent fail once.');
+    out('Audrey stopped it from failing twice.');
+
+    if (keep) {
+      out('');
+      out(`Demo data kept at: ${demoDir}`);
+    }
+  } finally {
+    await audrey.closeAsync();
+    if (!keep) {
+      rmSync(demoDir, { recursive: true, force: true });
+    }
+  }
+}
+
 export async function runDemoCommand({
   out = console.log,
   keep = process.argv.includes('--keep'),
@@ -773,6 +1155,11 @@ export async function runDemoCommand({
   out?: (...args: unknown[]) => void;
   keep?: boolean;
 } = {}): Promise<void> {
+  if (demoScenario() === 'repeated-failure') {
+    await runRepeatedFailureDemo({ out, keep });
+    return;
+  }
+
   const demoDir = createDemoDir();
   const audrey = new Audrey({
     dataDir: demoDir,
@@ -2156,48 +2543,208 @@ async function observeToolCli(): Promise<void> {
 }
 
 function parseGuardArgs(argv: string[]): {
-  json?: boolean;
-  tool?: string;
-  sessionId?: string;
-  cwd?: string;
-  strict?: boolean;
-  includeCapsule?: boolean;
+  tool: string;
   action: string;
+  cwd?: string;
+  sessionId?: string;
+  files: string[];
+  json: boolean;
+  override: boolean;
+  failOnWarn: boolean;
+  explain: boolean;
+  hook: boolean;
+  strict: boolean;
+  includeCapsule: boolean;
 } {
-  const action: string[] = [];
-  const out: Record<string, unknown> = {};
+  const files: string[] = [];
+  const positional: string[] = [];
+  let tool = 'unknown';
+  let cwd: string | undefined;
+  let sessionId: string | undefined;
+  let json = false;
+  let override = false;
+  let failOnWarn = false;
+  let explain = false;
+  let hook = false;
+  let strict = false;
+  let includeCapsule = false;
+
   for (let i = 0; i < argv.length; i++) {
-    const token = argv[i] ?? '';
+    const token = argv[i];
     const next = () => argv[++i];
-    if (token === '--json') out.json = true;
-    else if (token === '--tool') out.tool = next();
-    else if (token === '--session-id') out.sessionId = next();
-    else if (token === '--cwd') out.cwd = next();
-    else if (token === '--strict') out.strict = true;
-    else if (token === '--include-capsule') out.includeCapsule = true;
-    else action.push(token);
+    if (token === '--tool') tool = next() ?? tool;
+    else if (token?.startsWith('--tool=')) tool = token.slice('--tool='.length) || tool;
+    else if (token === '--cwd') cwd = next();
+    else if (token?.startsWith('--cwd=')) cwd = token.slice('--cwd='.length);
+    else if (token === '--session-id') sessionId = next();
+    else if (token?.startsWith('--session-id=')) sessionId = token.slice('--session-id='.length);
+    else if (token === '--file') {
+      const value = next();
+      if (value) files.push(value);
+    } else if (token?.startsWith('--file=')) {
+      const value = token.slice('--file='.length);
+      if (value) files.push(value);
+    } else if (token === '--json') json = true;
+    else if (token === '--override') override = true;
+    else if (token === '--fail-on-warn') failOnWarn = true;
+    else if (token === '--explain') explain = true;
+    else if (token === '--hook') hook = true;
+    else if (token === '--strict') strict = true;
+    else if (token === '--include-capsule') includeCapsule = true;
+    else if (token && token !== '--') positional.push(token);
   }
-  out.action = action.join(' ').trim();
-  return out as ReturnType<typeof parseGuardArgs>;
+
+  const action = positional.join(' ').trim();
+  return {
+    tool,
+    action,
+    cwd,
+    sessionId,
+    files,
+    json,
+    override,
+    failOnWarn,
+    explain,
+    hook,
+    strict,
+    includeCapsule,
+  };
 }
 
-function formatGuardDecision(result: Awaited<ReturnType<Audrey['beforeAction']>>): string {
-  const lines = [
-    `[audrey] guard: decision=${result.decision} receipt=${result.receipt_id}`,
-    `summary: ${result.summary}`,
-  ];
-  if (result.warnings.length > 0) {
-    lines.push(`warnings: ${result.warnings.length}`);
+type GuardCliResult = Awaited<ReturnType<Audrey['beforeAction']>>;
+
+function guardDisplayDecision(result: GuardCliResult): 'allow' | 'warn' | 'block' {
+  if (result.decision === 'block') return 'block';
+  if (result.decision === 'caution') return 'warn';
+  return 'allow';
+}
+
+function summarizeToolInput(payload: Record<string, unknown>, tool: string): {
+  action: string;
+  command?: string;
+  files?: string[];
+} {
+  const input = (payload.tool_input && typeof payload.tool_input === 'object')
+    ? payload.tool_input as Record<string, unknown>
+    : {};
+  const command = typeof input.command === 'string' ? input.command : undefined;
+  const fileFields = ['file_path', 'path', 'notebook_path'];
+  const files = fileFields
+    .map(field => input[field])
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  if (command) return { action: command, command, files };
+  const description = typeof input.description === 'string' ? input.description : undefined;
+  if (description) return { action: `${tool}: ${description}`, files };
+  const compactInput = JSON.stringify(input);
+  return {
+    action: compactInput && compactInput !== '{}'
+      ? `${tool} ${compactInput}`
+      : `Use ${tool}`,
+    files,
+  };
+}
+
+async function readHookPayload(): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  const raw = Buffer.concat(chunks).toString('utf-8').trim();
+  if (!raw) return {};
+  return JSON.parse(raw) as Record<string, unknown>;
+}
+
+function formatHookReason(result: GuardCliResult): string {
+  const recommendations = result.recommended_actions.slice(0, 3);
+  return [
+    result.summary,
+    recommendations.length > 0 ? `Recommended: ${recommendations.join(' ')}` : '',
+    result.evidence_ids.length > 0 ? `Evidence: ${result.evidence_ids.slice(0, 5).join(', ')}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function formatPreToolUseHookOutput(result: GuardCliResult, failOnWarn: boolean): Record<string, unknown> {
+  const decision = guardDisplayDecision(result);
+  const shouldDeny = decision === 'block' || (failOnWarn && decision === 'warn');
+  if (shouldDeny) {
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: formatHookReason(result),
+      },
+    };
   }
+  if (decision === 'warn') {
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        additionalContext: formatHookReason(result),
+      },
+    };
+  }
+  return {};
+}
+
+function formatGuardDecision(result: GuardCliResult, { explain = false }: { explain?: boolean } = {}): string {
+  const display = guardDisplayDecision(result);
+  const label = display === 'block' ? 'BLOCKED' : display === 'warn' ? 'WARN' : 'ALLOW';
+  const lines: string[] = [];
+  lines.push(`Audrey Guard: ${label}`);
+  lines.push('');
+  lines.push(`Receipt: ${result.receipt_id}`);
+  lines.push(`Reason: ${result.summary}`);
+  lines.push(`Risk score: ${result.risk_score.toFixed(2)}`);
+
+  if (result.evidence_ids.length > 0) {
+    lines.push('');
+    lines.push('Evidence:');
+    for (const id of result.evidence_ids.slice(0, 8)) lines.push(`- ${id}`);
+  }
+
+  if (result.recommended_actions.length > 0) {
+    lines.push('');
+    lines.push('Recommended action:');
+    for (const action of result.recommended_actions.slice(0, 5)) lines.push(`- ${action}`);
+  }
+
+  if (result.reflexes.length > 0) {
+    lines.push('');
+    lines.push('Memory reflexes:');
+    for (const reflex of result.reflexes.slice(0, 5)) {
+      lines.push(`- ${reflex.response_type}: ${reflex.response}`);
+    }
+  }
+
+  if (explain && result.capsule) {
+    lines.push('');
+    lines.push('Capsule:');
+    for (const [section, entries] of Object.entries(result.capsule.sections)) {
+      if (!Array.isArray(entries) || entries.length === 0) continue;
+      lines.push(`- ${sectionTitle(section)}:`);
+      for (const entry of entries.slice(0, 3)) {
+        lines.push(`  * ${entry.memory_id}: ${entry.content}`);
+      }
+    }
+  }
+
+  if (display === 'block') {
+    lines.push('');
+    lines.push('Next: fix the warning and retry, or pass --override to allow this guard check.');
+  }
+
   return lines.join('\n');
 }
 
 async function guardCli(): Promise<void> {
   const args = parseGuardArgs(process.argv.slice(3));
-  if (!args.action) {
+  if (!args.action && !args.hook) {
     console.error('[audrey] guard: action is required');
     process.exit(2);
   }
+  const hookPayload = args.hook ? await readHookPayload() : null;
+  const hookTool = hookPayload && typeof hookPayload.tool_name === 'string' ? hookPayload.tool_name : undefined;
+  const hookSessionId = hookPayload && typeof hookPayload.session_id === 'string' ? hookPayload.session_id : undefined;
+  const hookCwd = hookPayload && typeof hookPayload.cwd === 'string' ? hookPayload.cwd : undefined;
+  const hookSummary = hookPayload ? summarizeToolInput(hookPayload, hookTool ?? args.tool) : null;
 
   const dataDir = resolveDataDir(process.env);
   const embedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
@@ -2208,21 +2755,27 @@ async function guardCli(): Promise<void> {
   });
 
   try {
-    const result = await audrey.beforeAction(args.action, {
-      tool: args.tool,
-      sessionId: args.sessionId,
-      cwd: args.cwd,
-      strict: args.strict,
+    const result = await audrey.beforeAction(hookSummary?.action ?? args.action, {
+      tool: hookTool ?? args.tool,
+      sessionId: args.sessionId ?? hookSessionId,
+      cwd: args.cwd ?? hookCwd ?? process.cwd(),
+      files: args.files.length > 0 ? args.files : hookSummary?.files?.length ? hookSummary.files : undefined,
+      strict: args.strict || args.failOnWarn || args.hook,
       recordEvent: true,
-      includeCapsule: args.includeCapsule ?? false,
+      includeCapsule: args.includeCapsule || args.explain,
     });
 
-    if (args.json) {
-      console.log(JSON.stringify(result));
+    if (args.hook) {
+      console.log(JSON.stringify(formatPreToolUseHookOutput(result, args.failOnWarn)));
+    } else if (args.json) {
+      console.log(JSON.stringify(result, null, 2));
     } else {
-      console.log(formatGuardDecision(result));
+      console.log(formatGuardDecision(result, { explain: args.explain }));
     }
-    process.exitCode = result.decision === 'block' ? 1 : 0;
+    const display = guardDisplayDecision(result);
+    if (!args.hook && (display === 'block' || (args.failOnWarn && display === 'warn')) && !args.override) {
+      process.exitCode = 2;
+    }
   } finally {
     await audrey.closeAsync();
   }
@@ -2421,7 +2974,7 @@ const isDirectRun = Boolean(process.argv[1])
   && canonicalEntryPath(process.argv[1]!) === canonicalEntryPath(fileURLToPath(import.meta.url));
 
 const KNOWN_SUBCOMMANDS = [
-  'install', 'uninstall', 'mcp-config', 'demo', 'reembed', 'dream',
+  'install', 'uninstall', 'mcp-config', 'hook-config', 'demo', 'reembed', 'dream',
   'greeting', 'reflect', 'serve', 'status', 'doctor', 'observe-tool', 'guard', 'guard-after', 'promote', 'impact',
 ] as const;
 
@@ -2437,6 +2990,7 @@ Commands:
   install [--host <h>]          Register Audrey with an MCP host (codex, claude-code, generic)
   uninstall                     Remove Audrey from a host's MCP config
   mcp-config <host>             Print raw MCP config block for a host (codex|generic|vscode)
+  hook-config claude-code       Print Claude Code hook config (add --apply to merge settings)
   serve                         Start the REST sidecar (default port 7437; AUDREY_API_KEY recommended)
   dream                         Run consolidation + decay sweep
   reembed                       Recompute vectors after dimension/provider change
@@ -2469,8 +3023,11 @@ Environment:
 
 Quick start:
   npx audrey doctor
-  npx audrey demo
+  npx audrey demo --scenario repeated-failure
+  npx audrey guard --tool Bash "npm run deploy"
   npx audrey install --host codex --dry-run
+  npx audrey hook-config claude-code
+  npx audrey hook-config claude-code --apply --scope project
 
 Docs: https://github.com/Evilander/Audrey
 `);
@@ -2495,6 +3052,8 @@ if (isDirectRun) {
     uninstall();
   } else if (subcommand === 'mcp-config') {
     printMcpConfig();
+  } else if (subcommand === 'hook-config') {
+    printHookConfig();
   } else if (subcommand === 'demo') {
     runDemoCommand().catch(err => {
       console.error('[audrey] demo failed:', err);

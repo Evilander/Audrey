@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0.0",
+  "suite": "GuardBench adapter registry",
+  "adapters": [
+    {
+      "id": "example-allow",
+      "name": "Example Allow Adapter",
+      "path": "benchmarks/adapters/example-allow.mjs",
+      "status": "reference",
+      "credentialMode": "none",
+      "requiredEnv": [],
+      "description": "Credential-free reference adapter for validating module loading, self-test generation, and report validation.",
+      "commands": {
+        "moduleValidate": "npm run bench:guard:adapter-module:validate -- --adapter benchmarks/adapters/example-allow.mjs",
+        "selfTest": "npm run bench:guard:adapter-self-test -- --adapter benchmarks/adapters/example-allow.mjs",
+        "selfTestValidate": "npm run bench:guard:adapter-self-test:validate -- --report benchmarks/output/adapter-self-test/guardbench-adapter-self-test.json",
+        "externalRun": "npm run bench:guard:adapter-conformance"
+      }
+    },
+    {
+      "id": "mem0-platform",
+      "name": "Mem0 Platform",
+      "path": "benchmarks/adapters/mem0-platform.mjs",
+      "status": "external-system",
+      "credentialMode": "runtime-env",
+      "requiredEnv": ["MEM0_API_KEY"],
+      "description": "Mem0 Platform REST adapter using V3 add, V2 search, event polling, and entity cleanup.",
+      "commands": {
+        "moduleValidate": "npm run bench:guard:adapter-module:validate -- --adapter benchmarks/adapters/mem0-platform.mjs",
+        "selfTest": "npm run bench:guard:adapter-self-test -- --adapter benchmarks/adapters/mem0-platform.mjs",
+        "selfTestValidate": "npm run bench:guard:adapter-self-test:validate -- --report benchmarks/output/adapter-self-test/guardbench-adapter-self-test.json",
+        "externalRun": "npm run bench:guard:mem0"
+      }
+    },
+    {
+      "id": "zep-cloud",
+      "name": "Zep Cloud",
+      "path": "benchmarks/adapters/zep-cloud.mjs",
+      "status": "external-system",
+      "credentialMode": "runtime-env",
+      "requiredEnv": ["ZEP_API_KEY"],
+      "description": "Zep Cloud REST adapter using v2 users, sessions, memory.add, graph.search, and user cleanup.",
+      "commands": {
+        "moduleValidate": "npm run bench:guard:adapter-module:validate -- --adapter benchmarks/adapters/zep-cloud.mjs",
+        "selfTest": "npm run bench:guard:adapter-self-test -- --adapter benchmarks/adapters/zep-cloud.mjs",
+        "selfTestValidate": "npm run bench:guard:adapter-self-test:validate -- --report benchmarks/output/adapter-self-test/guardbench-adapter-self-test.json",
+        "externalRun": "npm run bench:guard:zep"
+      }
+    }
+  ]
+}

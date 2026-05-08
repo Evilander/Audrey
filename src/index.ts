@@ -47,13 +47,17 @@ export type {
   ReflexOptions,
   ReflexResponseType,
 } from './reflexes.js';
-export { beforeAction, afterAction } from './controller.js';
+export { beforeAction, afterAction, MemoryController } from './controller.js';
 export type {
+  AgentAction,
+  ControllerGuardDecision,
+  ControllerGuardResult,
   GuardBeforeOptions,
   GuardDecision,
   GuardAfterInput,
   GuardOutcome,
   GuardValidatedEvidence,
+  ToolOutcome,
 } from './controller.js';
 
 export type {

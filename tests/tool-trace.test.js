@@ -61,6 +61,33 @@ describe('observeTool — end-to-end action trace memory', () => {
     expect(event.error_summary).toContain('[REDACTED:generic_bearer]');
   });
 
+  it('redacts long error summaries before truncating them', () => {
+    const { event, redactions } = audrey.observeTool({
+      event: 'PostToolUseFailure',
+      tool: 'Bash',
+      outcome: 'failed',
+      errorSummary: `${'x'.repeat(1990)} Bearer eyJabcdef0123456789abcdefghij`,
+    });
+
+    expect(event.redaction_state).toBe('redacted');
+    expect(redactions.find(r => r.class === 'generic_bearer')).toBeDefined();
+    expect(event.error_summary).not.toContain('Bearer eyJ');
+  });
+
+  it('redacts output summaries before truncating them', () => {
+    const { event, redactions } = audrey.observeTool({
+      event: 'PostToolUse',
+      tool: 'Bash',
+      output: `${'x'.repeat(230)} Bearer eyJabcdef0123456789abcdefghij\nsecond line`,
+      outcome: 'failed',
+    });
+
+    const metadata = JSON.parse(event.metadata ?? '{}');
+    expect(event.redaction_state).toBe('redacted');
+    expect(redactions.find(r => r.class === 'generic_bearer')).toBeDefined();
+    expect(metadata.output_summary).not.toContain('Bearer eyJ');
+  });
+
   it('redacts secrets from metadata payload', () => {
     const { event, redactions } = audrey.observeTool({
       event: 'PostToolUse',
@@ -71,6 +98,25 @@ describe('observeTool — end-to-end action trace memory', () => {
     expect(event.redaction_state).toBe('redacted');
     expect(redactions.find(r => r.class === 'openai_api_key')).toBeDefined();
     expect(event.metadata).not.toContain('sk-abcdefghijklmnopqrstuvwxyz012345');
+  });
+
+  it('redacts sensitive metadata keys and nested sensitive values', () => {
+    const { event, redactions } = audrey.observeTool({
+      event: 'PostToolUse',
+      tool: 'Bash',
+      metadata: {
+        'OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz012345': true,
+        api_key: { current: 'hunter2' },
+        header: 'Authorization: Basic dXNlcjpwYXNzd29yZA==',
+      },
+    });
+
+    expect(event.redaction_state).toBe('redacted');
+    expect(redactions.find(r => r.class === 'openai_api_key')).toBeDefined();
+    expect(redactions.find(r => r.class === 'basic_auth')).toBeDefined();
+    expect(event.metadata).not.toContain('sk-abcdefghijklmnopqrstuvwxyz012345');
+    expect(event.metadata).not.toContain('hunter2');
+    expect(event.metadata).not.toContain('dXNlcjpwYXNzd29yZA');
   });
 
   it('retainDetails stores redacted input and output alongside hashes', () => {
@@ -94,12 +140,28 @@ describe('observeTool — end-to-end action trace memory', () => {
       event: 'PostToolUse',
       tool: 'Edit',
       files: [realFile, join(TEST_DIR, 'missing.txt')],
+      cwd: process.cwd(),
       outcome: 'succeeded',
     });
     const fingerprints = JSON.parse(event.file_fingerprints ?? '[]');
     expect(fingerprints).toHaveLength(1);
-    expect(fingerprints[0]).toContain(realFile);
+    expect(fingerprints[0]).toContain('test-tool-trace-data/hello.txt');
     expect(fingerprints[0].split('|')[1]).toBe('11'); // size of "hello world"
+    expect(fingerprints[0].split('|')).toHaveLength(3);
+  });
+
+  it('does not fingerprint files outside cwd', () => {
+    const realFile = join(TEST_DIR, 'hello.txt');
+    writeFileSync(realFile, 'hello world');
+    const { event } = audrey.observeTool({
+      event: 'PostToolUse',
+      tool: 'Read',
+      files: [realFile],
+      cwd: join(TEST_DIR, 'nested'),
+      outcome: 'succeeded',
+    });
+
+    expect(event.file_fingerprints).toBeNull();
   });
 
   it('recentFailures surfaces previously-failed tools', () => {
