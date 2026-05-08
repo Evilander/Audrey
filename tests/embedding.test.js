@@ -159,14 +159,69 @@ describe('OpenAIEmbeddingProvider.embedBatch', () => {
     global.fetch = originalFetch;
   });
 
+  it('chunks requests by batchSize and preserves result order', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn().mockImplementation(async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return {
+        ok: true,
+        json: async () => ({
+          data: body.input.map((text, i) => ({ embedding: [text.length, i] })),
+        }),
+      };
+    });
+
+    try {
+      const provider = new OpenAIEmbeddingProvider({ apiKey: 'test-key', dimensions: 2, batchSize: 2 });
+      const results = await provider.embedBatch(['a', 'bb', 'ccc', 'dddd', 'eeeee']);
+
+      expect(results).toEqual([[1, 0], [2, 1], [3, 0], [4, 1], [5, 0]]);
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+      const requestSizes = global.fetch.mock.calls.map(call => JSON.parse(call[1].body).input.length);
+      expect(requestSizes).toEqual([2, 2, 1]);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('returns an empty list without calling OpenAI for an empty batch', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn();
+
+    try {
+      const provider = new OpenAIEmbeddingProvider({ apiKey: 'test-key' });
+      await expect(provider.embedBatch([])).resolves.toEqual([]);
+      expect(global.fetch).not.toHaveBeenCalled();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it('throws on non-ok response', async () => {
     const originalFetch = global.fetch;
     global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 429 });
 
-    const provider = new OpenAIEmbeddingProvider({ apiKey: 'test-key' });
-    await expect(provider.embedBatch(['hello'])).rejects.toThrow('OpenAI embedding failed: 429');
+    try {
+      const provider = new OpenAIEmbeddingProvider({ apiKey: 'test-key' });
+      await expect(provider.embedBatch(['hello'])).rejects.toThrow('OpenAI embedding failed: 429');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 
-    global.fetch = originalFetch;
+  it('throws when OpenAI returns fewer embeddings than requested', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ embedding: [0.1, 0.2, 0.3] }] }),
+    });
+
+    try {
+      const provider = new OpenAIEmbeddingProvider({ apiKey: 'test-key', dimensions: 3 });
+      await expect(provider.embedBatch(['hello', 'world'])).rejects.toThrow('OpenAI embedBatch returned 1 embeddings for 2 inputs at offset 0');
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });
 

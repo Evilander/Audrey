@@ -107,7 +107,8 @@ Before publishing a new npm or Python package, capture:
    retrieval strategy manually.
 2. Add adaptive hybrid recall weighting behind an environment flag, then compare
    against the current benchmark output before making it default.
-3. Batch embeddings in `encodeBatch` with provider-level `embedBatch` calls.
+3. Benchmark the batched `encodeBatch` path across mock, OpenAI, and Gemini
+   providers before claiming cloud-provider speedups.
 4. Add a visible `audrey impact` or dashboard story that shows memories used,
    helpful, wrong, decayed, and promoted over time.
 5. Add install smoke tests for generated Codex, Claude Code, VS Code, Cursor,
@@ -163,9 +164,9 @@ Concrete v0.23 work from the audit:
    `afterAction(outcome) -> GuardOutcome` over the existing primitives. This
    chassis also enables splitting `src/audrey.ts` (now ~1.2K lines) into
    focused services.
-3. Actually batch embeddings in `Audrey.encodeBatch()` with
-   `embeddingProvider.embedBatch()` - currently it loops single-encode
-   calls, paying N sequential round-trips for cloud providers.
+3. Shipped after v0.23.0: `Audrey.encodeBatch()` now calls
+   `embeddingProvider.embedBatch()` once, then writes each episode through the
+   existing `encodeEpisode()` path with the precomputed vector.
 4. Hybrid-recall N+1: batch the FTS-only row loaders in
    `src/hybrid-recall.ts` by type instead of per-id SELECTs.
 5. Surface partial recall failures (currently swallowed in

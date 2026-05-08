@@ -119,10 +119,10 @@
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.9.0",
-    "hono": "^4.12.15",
+    "hono": "^4.12.18",
     "sqlite-vec": "^0.1.9",
     "ulid": "^3.0.2",
-    "zod": "^4.4.1"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
