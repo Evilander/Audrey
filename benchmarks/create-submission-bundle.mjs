@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { basename, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { writeGuardBenchConformanceCard } from './create-conformance-card.mjs';
 import { validateGuardBenchArtifacts } from './validate-guardbench-artifacts.mjs';
 import { publicPath } from './public-paths.mjs';
@@ -43,9 +43,17 @@ function copyFileInto(sourceDir, outDir, file) {
   return target;
 }
 
+export function bundleRelativeFilePath(path, root) {
+  const relativePath = relative(root, path);
+  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) {
+    throw new Error(`Cannot add file outside GuardBench submission bundle: ${path}`);
+  }
+  return relativePath.replaceAll('\\', '/');
+}
+
 function fileRecord(path, root) {
   return {
-    path: path.replace(`${root}\\`, '').replaceAll('\\', '/'),
+    path: bundleRelativeFilePath(path, root),
     bytes: readFileSync(path).byteLength,
     sha256: sha256File(path),
   };
