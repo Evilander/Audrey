@@ -46,6 +46,21 @@
         "selfTestValidate": "npm run bench:guard:adapter-self-test:validate -- --report benchmarks/output/adapter-self-test/guardbench-adapter-self-test.json",
         "externalRun": "npm run bench:guard:zep"
       }
+    },
+    {
+      "id": "moriarty-probe",
+      "name": "Moriarty Probe",
+      "path": "benchmarks/adapters/moriarty-probe.mjs",
+      "status": "experimental",
+      "credentialMode": "none",
+      "requiredEnv": [],
+      "description": "Deterministic v1 adapter for the Moriarty Probe (indirect-elicitation behavioral probe). Maps action signatures and seeded evidence to allow/warn/block via the paper's preference-dimension coding scheme (COMP/PRES/CAPX/HELP/EXPL); emits the standard GuardBench result fields plus probe-specific extension fields (probe_method, revealed_dimensions, gap_score, confidence, latency_ms, cost_usd, false_block_note, false_allow_note). Coding scheme provenance: 4yourhuman.com/research/llm-self-knowledge-v1.",
+      "commands": {
+        "moduleValidate": "npm run bench:guard:adapter-module:validate -- --adapter benchmarks/adapters/moriarty-probe.mjs",
+        "selfTest": "npm run bench:guard:adapter-self-test -- --adapter benchmarks/adapters/moriarty-probe.mjs",
+        "selfTestValidate": "npm run bench:guard:adapter-self-test:validate -- --report benchmarks/output/adapter-self-test/guardbench-adapter-self-test.json",
+        "externalRun": "npm run bench:guard:adapter-conformance"
+      }
     }
   ]
 }
