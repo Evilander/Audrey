@@ -17,6 +17,7 @@ npm run release:gate:paper
 npm run release:cut:plan
 npm run release:readiness
 npm run python:release:check
+npm run npm:smoke
 npm run security:audit
 npx audrey doctor
 npx audrey status --fail-on-unhealthy
@@ -26,9 +27,9 @@ python -m build --no-isolation python
 
 `npm run release:readiness` is intentionally pending-aware. It exits cleanly
 when local code and paper artifacts verify but the final 1.0 release is still
-blocked on source-control release state, npm registry/auth readiness, PyPI
-publish readiness, authenticated browser publication URLs, live Mem0/Zep
-evidence, or npm/PyPI account steps. Use
+blocked on source-control release state, GitHub Release object readiness, npm
+registry/auth readiness, PyPI publish readiness, authenticated browser
+publication URLs, live Mem0/Zep evidence, or npm/PyPI account steps. Use
 `npm run release:readiness:strict` only when cutting the actual 1.0 release;
 strict mode must fail until those publish blockers are resolved.
 `npm run release:cut:plan` is the dry-run version/changelog cut. It previews
@@ -44,7 +45,7 @@ previous locked-down Windows temp-directory startup failure while keeping
 `npm run release:gate:sandbox` available for hosts that block child-process
 spawning entirely.
 
-## Audrey Guard Chassis
+## Unreleased v0.23 Guard Chassis
 
 The first Audrey Guard slice is now in the working tree:
 
@@ -68,8 +69,9 @@ The first Audrey Guard slice is now in the working tree:
   lineage claims when the validated memory was not preflight evidence.
 - `npx audrey guard --hook --fail-on-warn` consumes Claude Code `PreToolUse`
   JSON from stdin and emits the current `hookSpecificOutput.permissionDecision`
-  shape; `npx audrey hook-config claude-code` generates PreToolUse,
-  PostToolUse, and PostToolUseFailure command hooks.
+  shape; `npx audrey hook-config claude-code` generates PreToolUse and
+  PostToolUse command hooks, with failed outcomes inferred from the
+  PostToolUse hook payload.
 - `npx audrey hook-config claude-code --apply --scope project|user` now merges
   those hooks into Claude Code settings, preserves unrelated settings/hooks,
   dedupes Audrey handlers, and writes a timestamped backup before changing an
@@ -95,7 +97,8 @@ The first Audrey Guard slice is now in the working tree:
   refreshes performance and behavioral benchmark outputs, runs GuardBench,
   syncs README/paper/ledger metrics from JSON artifacts, verifies paper
   consistency and redaction hygiene, runs the pending-aware 1.0 readiness
-  checklist, then runs the npm pack dry-run.
+  checklist, then runs a clean-consumer npm package smoke test and the npm pack
+  dry-run.
 - Preflight now performs a supplemental tagged control-memory sweep for
   trusted `must-follow` memories so high-salience rules survive irrelevant
   memory noise.
@@ -143,7 +146,7 @@ feedback is recorded but not yet used to tune risk scoring.
   `AUDREY_EMBEDDING_PROVIDER`.
 - MCP stdio now exposes memory tools, `audrey://status`, `audrey://recent`,
   `audrey://principles`, and briefing/recall/reflection prompt templates.
-- Python package metadata builds cleanly as `audrey-memory`.
+- Python package metadata builds cleanly as `audrey-memory 0.22.1`.
 - Release scripts separate full CI (`release:gate`) from a reduced gate
   (`release:gate:sandbox`) for hosts that cannot start Vitest.
 
@@ -159,6 +162,7 @@ Before publishing a new npm or Python package, capture:
 - `npm run release:readiness:strict -- --json` immediately before npm publish, PyPI publish, and browser launch are claimed complete.
 - `npm run release:cut:plan -- --target-version 1.0.0 --json` before applying the final version/changelog bump.
 - `npm run python:release:check` to build wheel/sdist artifacts, inspect package metadata, check for local path leakage, and run `twine check`.
+- `npm run npm:smoke` to prove the packed npm tarball installs in a clean consumer project, imports the public ESM API, runs encode/recall, and executes both CLI shims.
 - `npm run security:audit`.
 - `npm ci --dry-run`.
 - Direct stdio MCP smoke: initialize, `tools/list`, `resources/list`,
@@ -186,20 +190,35 @@ Before publishing a new npm or Python package, capture:
 The local code and paper gates are strong, but the 1.0/publication objective is
 not complete until `release:readiness:strict` passes. Current blockers:
 
-- Source control is not in final release state yet: this working tree still
-  needs a committed release diff and a `v1.0.0` tag on the final release commit.
-  This sandbox also cannot write `.git` metadata, so the commit/tag step must
-  run from a host shell with Git metadata write access or after host ACL repair.
-  Live remote verification works through Git's OpenSSL backend, but the live
-  `origin/master` head is ahead of the stale local tracking ref; fetch/reconcile
-  from a credentialed host before trusting local ahead/behind counts.
+- Source control is partially released remotely but not coherent yet: live
+  GitHub refs now show `release/audrey-1.0.0` at `83eb0ad` while `v1.0.0` is
+  still tag object `9a22dca` peeled to older commit `b3430fa`. Reconcile or
+  recreate the tag on the final release commit before treating 1.0 as cut. This
+  sandbox still cannot write `.git` metadata, the local `origin/master`
+  tracking ref is stale versus live `53761da`, and the working tree still has
+  uncommitted release/launch evidence changes. Fetch/reconcile from a
+  credentialed host or a clean temporary clone before treating this checkout as
+  source-control ready.
+- The GitHub tag exists, but the public GitHub Releases API currently returns
+  `404` for `v1.0.0`, and this browser session is not signed into GitHub. Publish
+  a stable GitHub Release from the verified tag and attach or link the paper and
+  submission artifacts before strict readiness can pass.
 - npm publish readiness still needs CLI authentication: `audrey@1.0.0` is not
-  published on the registry and `npm whoami` currently returns E401.
+  published on the registry and `npm whoami` currently returns E401. The local
+  tarball smoke now passes through `npm run npm:smoke`, including clean-consumer
+  install, ESM import, encode/recall, and both CLI shims.
 - PyPI publish readiness still needs runtime credentials or trusted-publisher
   evidence for the final `audrey-memory` upload.
-- Browser launch results still have zero submitted targets; arXiv, Hacker
-  News, Reddit, X, and LinkedIn need authenticated human publication and
-  recorded public URLs.
+- Browser launch results are still not complete: LinkedIn, Reddit, and Hacker
+  News are submitted and verified, arXiv is account-authorization blocked under
+  support ticket `AH-190018`, and X still needs a logged-in posting session. The
+  first r/LocalLLaMA attempt was removed for insufficient subreddit karma, so
+  the recorded Reddit launch URL is now the rule-checked r/ClaudeCode Showcase
+  post. Audrey-specific Reddit replies in that thread now include the GitHub
+  repo URL, including the PreToolUse/permissions.deny exchange and Moriarty's
+  GuardBench feedback thread. The first Hacker News Show HN path was
+  account-restricted, so the recorded Hacker News launch URL is the verified
+  neutral link submission.
 - Mem0 and Zep GuardBench evidence is still dry-run/pending until
   `MEM0_API_KEY` and `ZEP_API_KEY` are provided at runtime and strict external
   evidence passes.
@@ -282,5 +301,4 @@ releases:
 
 The "first paid feature" line of work — encrypted blob sync of local
 Audrey stores ("Audrey Cloud Sync") — remains the smallest commercial
-primitive that doesn't require rebuilding the product around hosted
-Postgres.
+primitive that doesn't require rebuilding the product around hosted Postgres.
