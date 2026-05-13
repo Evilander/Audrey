@@ -93,7 +93,6 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-          package-manager-cache: false
 
       - run: npm install -g npm@latest
       - run: npm ci
@@ -101,7 +100,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run bench:memory:check
-      - run: npm run npm:smoke
+      - run: npm run smoke:cli
       - run: npm run pack:check
       - name: Verify npm version is unpublished
         shell: bash
