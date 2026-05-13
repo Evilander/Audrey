@@ -14,8 +14,8 @@
       "operatorVerified": false,
       "manualRuleCheckCompleted": true,
       "postSubmitChecksCompleted": [],
-      "blocker": "Logged-in arXiv account page is reachable, but START NEW SUBMISSION is absent and direct /submit routes redirect back to /user with Not authorized. Support request AH-190018 is open; a follow-up reply was sent clarifying this is an account-state/submission-authorization question, not a request for support endorsement.",
-      "notes": "arXiv source upload package is verified and compile-checked; browser evidence shows the account page logged in as Evilander with default category cs.AI, but the submission start control is not exposed. arXiv's endorsement auto-reply was answered on 2026-05-13 asking whether the account is endorsement-gated for cs.AI or blocked by another profile issue."
+      "blocker": "arXiv accepted the paper into the submission queue as submit/7591154, but the account page currently shows status processing and no public arXiv identifier or public abstract URL has been assigned yet.",
+      "notes": "arXiv support confirmed the active username is Evilands and suspended the duplicate account. The active account was recovered, START NEW SUBMISSION appeared, the verified source package was uploaded, arXiv TeX Live 2025 compiled main.tex to a 34-page PDF successfully, the PDF and HTML previews were opened, metadata was saved with primary category cs.AI and cross-list cs.CR, and the article was submitted on 2026-05-13. Record the final public arXiv URL after processing and announcement."
     },
     {
       "id": "hacker-news-show",
