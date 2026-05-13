@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 const DEFAULT_BASE_URL = 'https://api.mem0.ai';
 const DEFAULT_POLL_TIMEOUT_MS = 60_000;
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
@@ -232,7 +234,7 @@ async function addInBatches(client, { userId, scenario, messages }) {
 
 function userIdForScenario(scenario) {
   const prefix = process.env.MEM0_GUARDBENCH_USER_PREFIX ?? 'audrey-guardbench';
-  const runId = process.env.MEM0_GUARDBENCH_RUN_ID ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const runId = process.env.MEM0_GUARDBENCH_RUN_ID ?? `${Date.now()}-${randomBytes(8).toString('hex')}`;
   return `${prefix}-${runId}-${scenario.id}`.toLowerCase();
 }
 
