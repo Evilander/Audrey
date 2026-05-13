@@ -5,7 +5,7 @@ import { guardBenchManifest, loadExternalAdapters, runGuardBench, validateAdapte
 import mem0Adapter, { createGuardBenchAdapter as createMem0GuardBenchAdapter } from '../benchmarks/adapters/mem0-platform.mjs';
 import zepAdapter, { createGuardBenchAdapter as createZepGuardBenchAdapter } from '../benchmarks/adapters/zep-cloud.mjs';
 import { writeGuardBenchConformanceCard } from '../benchmarks/create-conformance-card.mjs';
-import { writeGuardBenchSubmissionBundle } from '../benchmarks/create-submission-bundle.mjs';
+import { bundleRelativeFilePath, writeGuardBenchSubmissionBundle } from '../benchmarks/create-submission-bundle.mjs';
 import { writeGuardBenchLeaderboard } from '../benchmarks/build-leaderboard.mjs';
 import { defineGuardBenchAdapter, defineGuardBenchResult } from '../benchmarks/adapter-kit.mjs';
 import { validateAdapterModuleFile } from '../benchmarks/validate-adapter-module.mjs';
@@ -335,9 +335,65 @@ describe('GuardBench harness', () => {
     expect(report.ok).toBe(true);
     expect(report.ready).toBe(false);
     expect(report.targets).toHaveLength(5);
-    expect(report.targets.every(target => target.status === 'pending')).toBe(true);
+    const byId = new Map(report.targets.map(target => [target.id, target]));
+    expect(byId.get('reddit-discussion')?.status).toBe('submitted');
+    expect(byId.get('linkedin-launch-post')?.status).toBe('submitted');
+    expect(byId.get('arxiv-preprint')?.status).toBe('pending');
+    expect(byId.get('hacker-news-show')?.status).toBe('submitted');
+    expect(byId.get('x-launch-thread')?.status).toBe('pending');
     expect(report.blockers.join('\n')).toContain('arxiv-preprint');
-    expect(report.blockers.join('\n')).toContain('hacker-news-show');
+    expect(report.blockers.join('\n')).toContain('x-launch-thread');
+    expect(report.blockers.join('\n')).not.toContain('reddit-discussion');
+  });
+
+  it('requires submitted marketing launch results to include the GitHub repo URL', async () => {
+    const root = 'benchmarks/.tmp-guardbench';
+    mkdirSync(root, { recursive: true });
+    const tempDir = mkdtempSync(join(root, 'browser-results-'));
+    const tempResults = join(tempDir, 'browser-launch-results.json');
+    try {
+      const results = JSON.parse(readFileSync('docs/paper/browser-launch-results.json', 'utf-8'));
+      const linkedInResult = results.targets.find(target => target.id === 'linkedin-launch-post');
+      linkedInResult.notes = linkedInResult.notes.replace(
+        'https://github.com/Evilander/Audrey',
+        'https://example.com/repo-redacted',
+      );
+      writeFileSync(tempResults, `${JSON.stringify(results, null, 2)}\n`);
+
+      const report = await verifyBrowserLaunchResults({ results: tempResults });
+
+      expect(report.ok).toBe(false);
+      expect(report.failures.join('\n')).toContain(
+        'linkedin-launch-post: submitted marketing result must include https://github.com/Evilander/Audrey',
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not accept the GitHub repo URL when it is embedded inside another host URL', async () => {
+    const root = 'benchmarks/.tmp-guardbench';
+    mkdirSync(root, { recursive: true });
+    const tempDir = mkdtempSync(join(root, 'browser-results-'));
+    const tempResults = join(tempDir, 'browser-launch-results.json');
+    try {
+      const results = JSON.parse(readFileSync('docs/paper/browser-launch-results.json', 'utf-8'));
+      const linkedInResult = results.targets.find(target => target.id === 'linkedin-launch-post');
+      linkedInResult.notes = linkedInResult.notes.replace(
+        'https://github.com/Evilander/Audrey',
+        'https://example.com/https://github.com/Evilander/Audrey',
+      );
+      writeFileSync(tempResults, `${JSON.stringify(results, null, 2)}\n`);
+
+      const report = await verifyBrowserLaunchResults({ results: tempResults });
+
+      expect(report.ok).toBe(false);
+      expect(report.failures.join('\n')).toContain(
+        'linkedin-launch-post: submitted marketing result must include https://github.com/Evilander/Audrey',
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('strict browser launch results fail until post-submit URLs are recorded', async () => {
@@ -1363,6 +1419,10 @@ describe('GuardBench harness', () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('records submission bundle files with portable relative paths on POSIX and Windows roots', () => {
+    expect(bundleRelativeFilePath('/tmp/audrey-bundle/root/schemas/schema.json', '/tmp/audrey-bundle/root')).toBe('schemas/schema.json');
   });
 
   it('rejects submission bundles when a listed artifact is modified after bundling', () => {
