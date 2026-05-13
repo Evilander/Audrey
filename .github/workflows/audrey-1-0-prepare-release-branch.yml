@@ -20,10 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BUNDLE_URL: https://release-source-publisher.vercel.app/audrey-1.0.0.git.bundle
-      BUNDLE_SHA256: f55a3f6525340c051408a400a27f94fb2434cee7ff8f9a1e253f2d69a8800cf9
-      RELEASE_TREE: 89226d20e0d0bddace65ac5a79024bb4cb5ed5a3
-      BUNDLE_COMMIT: c03b8c47fb7c46b0003971794811701e8650fdad
-      BUNDLE_TAG_OBJECT: 30890fc02e37e83b5e74716d8ece65d11cb8d30c
+      BUNDLE_SHA256: 3de7aece61d6511fab1746ed17aef501ad16a8b803082a33af329a9d774dcd32
+      RELEASE_TREE: dfacee14121ea5e8979aee133f9d959d20511b83
+      BUNDLE_COMMIT: b3430faba6faba40a1a0c717956fa85f1deab65e
+      BUNDLE_TAG_OBJECT: 9a22dcaeeadd96cf2d93e35a1e96ee4c440d7c85
       RELEASE_BRANCH: release/audrey-1.0.0
       GITHUB_TOKEN: ${{ github.token }}
     steps:
