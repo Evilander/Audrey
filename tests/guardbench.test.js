@@ -537,8 +537,9 @@ describe('GuardBench harness', () => {
     expect(report.checks.find(check => check.id === 'browser-publication').status).toBe('pending');
     expect(['pending', 'passed']).toContain(report.checks.find(check => check.id === 'npm-package-target').status);
     expect(report.checks.find(check => check.id === 'pypi-package-target').status).toBe('pending');
-    expect(report.blockers.join('\n')).toContain('working-tree');
-    expect(report.blockers.join('\n')).toContain('PyPI publish credentials');
+    const blockers = report.blockers.join('\n');
+    expect(blockers).toContain('source-control:');
+    expect(blockers).toContain('PyPI publish credentials');
   });
 
   it('keeps the 1.0 release cut idempotent after it is applied', () => {
