@@ -1,0 +1,62 @@
+name: Audrey 1.0 prepare release branch
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: audrey-1-0-prepare-release-branch
+  cancel-in-progress: false
+
+jobs:
+  prepare-release-branch:
+    if: github.repository == 'Evilander/Audrey'
+    runs-on: ubuntu-latest
+    env:
+      BUNDLE_URL: https://release-source-publisher.vercel.app/audrey-1.0.0.git.bundle
+      BUNDLE_SHA256: 3de7aece61d6511fab1746ed17aef501ad16a8b803082a33af329a9d774dcd32
+      RELEASE_TREE: dfacee14121ea5e8979aee133f9d959d20511b83
+      BUNDLE_COMMIT: b3430faba6faba40a1a0c717956fa85f1deab65e
+      BUNDLE_TAG_OBJECT: 9a22dcaeeadd96cf2d93e35a1e96ee4c440d7c85
+      RELEASE_BRANCH: release/audrey-1.0.0
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Build release branch from verified bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL "$BUNDLE_URL" -o release.bundle
+          echo "${BUNDLE_SHA256}  release.bundle" | sha256sum -c -
+
+          git init /tmp/audrey-verify
+          git -C /tmp/audrey-verify bundle verify "$PWD/release.bundle"
+          test "$(git -C /tmp/audrey-verify bundle list-heads "$PWD/release.bundle" refs/heads/master | awk '{print $1}')" = "$BUNDLE_COMMIT"
+          test "$(git -C /tmp/audrey-verify bundle list-heads "$PWD/release.bundle" refs/tags/v1.0.0 | awk '{print $1}')" = "$BUNDLE_TAG_OBJECT"
+
+          git clone --no-checkout "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" release-work
+          cd release-work
+          git config user.name "Tyler Eveland"
+          git config user.email "j.tyler.eveland@gmail.com"
+          git checkout -B "$RELEASE_BRANCH" origin/master
+          git fetch ../release.bundle refs/heads/master:refs/remotes/bundle/master
+          git read-tree --reset -u refs/remotes/bundle/master
+          test "$(git write-tree)" = "$RELEASE_TREE"
+
+          GIT_AUTHOR_NAME="Tyler Eveland" \
+          GIT_AUTHOR_EMAIL="j.tyler.eveland@gmail.com" \
+          GIT_COMMITTER_NAME="Tyler Eveland" \
+          GIT_COMMITTER_EMAIL="j.tyler.eveland@gmail.com" \
+          git commit -m "Release Audrey 1.0.0"
+
+          release_commit="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD^{tree})" = "$RELEASE_TREE"
+          git tag -a v1.0.0 -m "Audrey 1.0.0" "$release_commit"
+
+          git push origin "+HEAD:refs/heads/${RELEASE_BRANCH}"
+          git push origin refs/tags/v1.0.0
