@@ -3,7 +3,7 @@ name: Audrey 1.0 source publisher
 on:
   push:
     branches:
-      - codex/audrey-1.0.0-publisher-20260513
+      - master
   workflow_dispatch:
 
 permissions:
@@ -18,7 +18,7 @@ jobs:
     if: github.repository == 'Evilander/Audrey'
     runs-on: ubuntu-latest
     env:
-      BUNDLE_URL: https://release-source-publisher-bp1epeaj4-evilanders-projects.vercel.app/audrey-1.0.0.git.bundle
+      BUNDLE_URL: https://release-source-publisher.vercel.app/audrey-1.0.0.git.bundle
       BUNDLE_SHA256: f55a3f6525340c051408a400a27f94fb2434cee7ff8f9a1e253f2d69a8800cf9
       RELEASE_COMMIT: c03b8c47fb7c46b0003971794811701e8650fdad
       RELEASE_TAG_OBJECT: 30890fc02e37e83b5e74716d8ece65d11cb8d30c
@@ -50,5 +50,5 @@ jobs:
           git --git-dir=/tmp/audrey-release.git \
             -c http.extraheader="AUTHORIZATION: bearer ${GITHUB_TOKEN}" \
             push "https://github.com/${GITHUB_REPOSITORY}.git" \
-            refs/heads/master:refs/heads/master \
+            +refs/heads/master:refs/heads/master \
             refs/tags/v1.0.0:refs/tags/v1.0.0
