@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 const DEFAULT_BASE_URL = 'https://api.getzep.com';
 const DEFAULT_INGEST_DELAY_MS = 0;
 const BATCH_SIZE = 50;
@@ -239,7 +241,7 @@ async function addInBatches(client, { sessionId, messages }) {
 
 function idForScenario(kind, scenario) {
   const prefix = process.env.ZEP_GUARDBENCH_USER_PREFIX ?? 'audrey-guardbench';
-  const runId = process.env.ZEP_GUARDBENCH_RUN_ID ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const runId = process.env.ZEP_GUARDBENCH_RUN_ID ?? `${Date.now()}-${randomBytes(8).toString('hex')}`;
   return `${prefix}-${runId}-${kind}-${scenario.id}`.toLowerCase();
 }
 
