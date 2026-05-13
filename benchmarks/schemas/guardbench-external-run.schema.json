@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/guardbench-external-run.schema.json",
+  "title": "GuardBench External Run Metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "suite",
+    "startedAt",
+    "adapter",
+    "adapterPath",
+    "outDir",
+    "requiredEnv",
+    "missingEnv",
+    "command",
+    "validationCommand",
+    "dryRun",
+    "status"
+  ],
+  "properties": {
+    "suite": { "const": "GuardBench external adapter run" },
+    "startedAt": { "type": "string", "minLength": 1 },
+    "completedAt": { "type": "string", "minLength": 1 },
+    "adapter": { "type": "string", "minLength": 1 },
+    "adapterPath": { "type": "string", "minLength": 1 },
+    "outDir": { "type": "string", "minLength": 1 },
+    "requiredEnv": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "missingEnv": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "command": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "validationCommand": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "dryRun": { "type": "boolean" },
+    "status": {
+      "enum": [
+        "blocked",
+        "dry-run-missing-env",
+        "dry-run-ready",
+        "failed",
+        "passed",
+        "running"
+      ]
+    },
+    "blockReason": { "type": "string", "minLength": 1 },
+    "exitCode": {
+      "anyOf": [
+        { "type": "integer" },
+        { "type": "null" }
+      ]
+    },
+    "signal": {
+      "anyOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "null" }
+      ]
+    },
+    "artifactHashes": { "$ref": "#/$defs/artifactHashes" },
+    "artifactValidation": { "$ref": "#/$defs/artifactValidation" },
+    "adapterConformance": { "$ref": "#/$defs/adapterConformance" }
+  },
+  "$defs": {
+    "artifactHashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "guardbench-manifest.json",
+        "guardbench-summary.json",
+        "guardbench-raw.json"
+      ],
+      "properties": {
+        "guardbench-manifest.json": { "$ref": "#/$defs/sha256" },
+        "guardbench-summary.json": { "$ref": "#/$defs/sha256" },
+        "guardbench-raw.json": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "artifactValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "dir", "schemasDir", "files", "failures"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "dir": { "type": "string", "minLength": 1 },
+        "schemasDir": { "type": "string", "minLength": 1 },
+        "files": {
+          "type": "array",
+          "minItems": 3,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "optionalFiles": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "adapterConformance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "adapter",
+        "requestedAdapter",
+        "scenarios",
+        "expectedScenarios",
+        "fullContractPassRate",
+        "decisionAccuracy",
+        "redactionLeaks",
+        "failures"
+      ],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "adapter": { "type": "string", "minLength": 1 },
+        "requestedAdapter": { "type": "string", "minLength": 1 },
+        "scenarios": { "type": "integer", "minimum": 0 },
+        "expectedScenarios": { "type": "integer", "minimum": 0 },
+        "fullContractPassRate": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "number", "minimum": 0, "maximum": 1 }
+          ]
+        },
+        "decisionAccuracy": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "number", "minimum": 0, "maximum": 1 }
+          ]
+        },
+        "redactionLeaks": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "integer", "minimum": 0 }
+          ]
+        },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

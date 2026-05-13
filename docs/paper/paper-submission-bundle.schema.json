@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/audrey-paper-submission-bundle.schema.json",
+  "title": "Audrey Paper Submission Bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "suite",
+    "generatedAt",
+    "sourceRoot",
+    "outDir",
+    "claimVerification",
+    "publicationPackVerification",
+    "guardBenchSnapshot",
+    "files"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "suite": { "const": "Audrey paper submission bundle" },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "sourceRoot": { "type": "string", "minLength": 1 },
+    "outDir": { "type": "string", "minLength": 1 },
+    "claimVerification": { "$ref": "#/$defs/check" },
+    "publicationPackVerification": { "$ref": "#/$defs/check" },
+    "guardBenchSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "scenarios", "redactionLeaks", "artifactLeaks", "latencyP50Ms", "latencyP95Ms"],
+      "properties": {
+        "passed": { "type": "integer", "minimum": 0 },
+        "scenarios": { "type": "integer", "minimum": 0 },
+        "redactionLeaks": { "type": "integer", "minimum": 0 },
+        "artifactLeaks": { "type": "integer", "minimum": 0 },
+        "latencyP50Ms": { "type": "number", "minimum": 0 },
+        "latencyP95Ms": { "type": "number", "minimum": 0 }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/fileRecord" }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "count"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "fileRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "source", "bytes", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/guardbench-raw.schema.json",
+  "title": "GuardBench Raw Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "suite",
+    "generatedAt",
+    "manifestVersion",
+    "provenance",
+    "cases",
+    "artifactRedactionSweep"
+  ],
+  "properties": {
+    "suite": { "const": "GuardBench comparative" },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "manifestVersion": { "type": "string", "minLength": 1 },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "cases": {
+      "type": "array",
+      "minItems": 10,
+      "items": { "$ref": "#/$defs/caseResult" }
+    },
+    "artifactRedactionSweep": { "$ref": "#/$defs/artifactRedactionSweep" }
+  },
+  "$defs": {
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generatedAt",
+        "gitSha",
+        "gitDirty",
+        "node",
+        "v8",
+        "platform",
+        "arch",
+        "osRelease",
+        "cpuModel",
+        "cpuCount",
+        "totalMemoryGb",
+        "embeddingProvider",
+        "embeddingDimensions",
+        "llmProvider"
+      ],
+      "properties": {
+        "generatedAt": { "type": "string", "minLength": 1 },
+        "gitSha": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "string", "minLength": 7 }
+          ]
+        },
+        "gitDirty": { "type": "boolean" },
+        "node": { "type": "string", "minLength": 1 },
+        "v8": { "type": "string", "minLength": 1 },
+        "platform": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 },
+        "osRelease": { "type": "string", "minLength": 1 },
+        "cpuModel": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "string", "minLength": 1 }
+          ]
+        },
+        "cpuCount": { "type": "integer", "minimum": 1 },
+        "totalMemoryGb": { "type": "number", "minimum": 0 },
+        "embeddingProvider": { "type": "string", "minLength": 1 },
+        "embeddingDimensions": { "type": "integer", "minimum": 1 },
+        "llmProvider": { "type": "string", "minLength": 1 }
+      }
+    },
+    "caseResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "expectedDecision", "results"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^GB-[0-9]{2}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "expectedDecision": { "enum": ["allow", "warn", "block"] },
+        "results": {
+          "type": "array",
+          "minItems": 5,
+          "items": { "$ref": "#/$defs/resultRow" }
+        }
+      }
+    },
+    "resultRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "id",
+        "name",
+        "expectedDecision",
+        "decision",
+        "decisionCorrect",
+        "riskScore",
+        "passed",
+        "latencyMs",
+        "evidenceCount",
+        "evidenceIds",
+        "recommendedActions",
+        "summary",
+        "recallErrors",
+        "leakedSecrets",
+        "requiredEvidenceMatched"
+      ],
+      "properties": {
+        "system": { "type": "string", "minLength": 1 },
+        "external": { "type": "boolean" },
+        "id": { "type": "string", "pattern": "^GB-[0-9]{2}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "expectedDecision": { "enum": ["allow", "warn", "block"] },
+        "decision": { "enum": ["allow", "warn", "block"] },
+        "decisionCorrect": { "type": "boolean" },
+        "riskScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "passed": { "type": "boolean" },
+        "latencyMs": { "type": "number", "minimum": 0 },
+        "evidenceCount": { "type": "integer", "minimum": 0 },
+        "evidenceIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "recommendedActions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "summary": { "type": "string", "minLength": 1 },
+        "recallErrors": { "type": "array" },
+        "leakedSecrets": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "requiredEvidenceMatched": { "type": "boolean" }
+      }
+    },
+    "artifactRedactionSweep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checkedAt",
+        "filesChecked",
+        "seededSecretsChecked",
+        "leakCount",
+        "leaks",
+        "passed"
+      ],
+      "properties": {
+        "checkedAt": { "type": "string", "minLength": 1 },
+        "filesChecked": {
+          "type": "array",
+          "minItems": 3,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "seededSecretsChecked": { "type": "integer", "minimum": 0 },
+        "leakCount": { "type": "integer", "minimum": 0 },
+        "leaks": { "type": "array" },
+        "passed": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/audrey-paper-claim-register.schema.json",
+  "title": "Audrey Paper Claim Register",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "claims"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "suite": { "const": "Audrey paper claim register" },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/claim" }
+    }
+  },
+  "$defs": {
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "claim",
+        "evidence",
+        "artifactChecks",
+        "requiredText",
+        "forbiddenText"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^C[0-9]{2}$"
+        },
+        "status": {
+          "enum": ["blocked", "pending", "supported"]
+        },
+        "claim": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "artifactChecks": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "adapter-registry-has-mem0-zep",
+              "external-evidence-no-secrets",
+              "external-evidence-pending",
+              "guardbench-local-passed",
+              "no-published-secret-leaks",
+              "paper-stage-boundary-excludes-external-scores",
+              "publication-verifier-ok"
+            ]
+          }
+        },
+        "requiredText": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/textNeedle" }
+        },
+        "forbiddenText": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/textNeedle" }
+        }
+      }
+    },
+    "textNeedle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "text"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

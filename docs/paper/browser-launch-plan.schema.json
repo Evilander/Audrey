@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/audrey-browser-launch-plan.schema.json",
+  "title": "Audrey Browser Launch Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "checkedAt", "publicationPack", "sources", "preflightCommands", "targets"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "suite": { "const": "Audrey browser launch plan" },
+    "checkedAt": { "type": "string", "minLength": 1 },
+    "publicationPack": { "type": "string", "minLength": 1 },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "preflightCommands": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/target" }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "url", "checkedAt", "notes"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "url": { "type": "string", "pattern": "^https://.+" },
+        "checkedAt": { "type": "string", "minLength": 1 },
+        "notes": { "type": "string", "minLength": 1 }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "platform",
+        "label",
+        "order",
+        "url",
+        "status",
+        "authRequired",
+        "humanRequired",
+        "captchaPossible",
+        "manualRuleCheckRequired",
+        "contentEntryIds",
+        "artifactRefs",
+        "sourceRefs",
+        "operatorChecks",
+        "postSubmitChecks"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "platform": { "enum": ["arxiv", "hacker-news", "linkedin", "reddit", "x"] },
+        "label": { "type": "string", "minLength": 1 },
+        "order": { "type": "integer", "minimum": 1 },
+        "url": { "type": "string", "pattern": "^https://.+" },
+        "status": { "enum": ["ready-manual", "blocked-until-artifact-url", "blocked-until-login"] },
+        "authRequired": { "type": "boolean" },
+        "humanRequired": { "type": "boolean" },
+        "captchaPossible": { "type": "boolean" },
+        "manualRuleCheckRequired": { "type": "boolean" },
+        "contentEntryIds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+        },
+        "artifactRefs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "sourceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" }
+        },
+        "operatorChecks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "postSubmitChecks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

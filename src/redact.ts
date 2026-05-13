@@ -18,6 +18,7 @@ export type RedactionClass =
   | 'google_api_key'
   | 'slack_token'
   | 'generic_bearer'
+  | 'basic_auth'
   | 'private_key_block'
   | 'jwt'
   | 'url_credentials'
@@ -116,6 +117,11 @@ const RULES: RedactionRule[] = [
     class: 'generic_bearer',
     pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b/g,
     replacement: () => 'Bearer [REDACTED:generic_bearer]',
+  },
+  {
+    class: 'basic_auth',
+    pattern: /\bBasic\s+[A-Za-z0-9+/=]{12,}\b/g,
+    replacement: () => 'Basic [REDACTED:basic_auth]',
   },
   {
     class: 'credit_card_number',
@@ -265,7 +271,13 @@ function isSensitiveKey(key: string): boolean {
 export function redactJson(value: unknown): { value: unknown; redactions: RedactionHit[]; state: 'clean' | 'redacted' } {
   const counts = new Map<RedactionClass, number>();
 
-  function walk(node: unknown, parentKey?: string): unknown {
+  function addHits(hits: RedactionHit[]): void {
+    for (const hit of hits) {
+      counts.set(hit.class, (counts.get(hit.class) ?? 0) + hit.count);
+    }
+  }
+
+  function walk(node: unknown, parentKey?: string, sensitiveAncestor = false): unknown {
     if (node == null) return node;
     if (typeof node === 'string') {
       // Try specific pattern redaction first so a value like
@@ -273,24 +285,26 @@ export function redactJson(value: unknown): { value: unknown; redactions: Redact
       // generic password_assignment class.
       const r = redact(node);
       if (r.redactions.length > 0) {
-        for (const hit of r.redactions) {
-          counts.set(hit.class, (counts.get(hit.class) ?? 0) + hit.count);
-        }
+        addHits(r.redactions);
         return r.text;
       }
-      if (parentKey && isSensitiveKey(parentKey) && node.length > 0) {
+      if ((sensitiveAncestor || (parentKey && isSensitiveKey(parentKey))) && node.length > 0) {
         counts.set('password_assignment', (counts.get('password_assignment') ?? 0) + 1);
         return '[REDACTED:password_assignment]';
       }
       return node;
     }
     if (Array.isArray(node)) {
-      return node.map(item => walk(item, parentKey));
+      return node.map(item => walk(item, parentKey, sensitiveAncestor));
     }
     if (typeof node === 'object') {
       const out: Record<string, unknown> = {};
       for (const [key, val] of Object.entries(node as Record<string, unknown>)) {
-        out[key] = walk(val, key);
+        const keyRedaction = redact(key);
+        if (keyRedaction.redactions.length > 0) addHits(keyRedaction.redactions);
+        const redactedKey = keyRedaction.text;
+        const keyIsSensitive = isSensitiveKey(key) || keyRedaction.redactions.length > 0;
+        out[redactedKey] = walk(val, key, sensitiveAncestor || keyIsSensitive);
       }
       return out;
     }
@@ -309,4 +323,48 @@ export function redactJson(value: unknown): { value: unknown; redactions: Redact
 export function summarizeRedactions(hits: RedactionHit[]): string {
   if (hits.length === 0) return 'clean';
   return hits.map(h => `${h.class}:${h.count}`).join(',');
+}
+
+function markerForHit(text: string, hit: RedactionHit): string {
+  const pattern = new RegExp(`\\[REDACTED:${hit.class}(?::[^\\]]+)?\\]`);
+  return text.match(pattern)?.[0] ?? `[REDACTED:${hit.class}]`;
+}
+
+/**
+ * Truncate already-redacted text without cutting redaction markers in half.
+ * If a marker would be omitted by the prefix budget, preserve the marker class
+ * near the truncation suffix so logs/memories still prove what was removed.
+ */
+export function truncateRedactedText(
+  text: string,
+  maxChars: number,
+  redactions: RedactionHit[] = [],
+): string {
+  if (text.length <= maxChars) return text;
+
+  const suffix = '...[truncated]';
+  const initialBudget = Math.max(0, maxChars - suffix.length);
+  let prefix = text.slice(0, initialBudget).trimEnd();
+  const missingMarkers = [...new Set(
+    redactions
+      .map(hit => markerForHit(text, hit))
+      .filter(marker => text.includes(marker) && !prefix.includes(marker)),
+  )];
+
+  if (missingMarkers.length > 0) {
+    const markerSuffix = ` ${missingMarkers.join(' ')}`;
+    if (markerSuffix.length + suffix.length >= maxChars) {
+      return `${markerSuffix.trim()}${suffix}`.slice(0, maxChars);
+    }
+    const budget = maxChars - suffix.length - markerSuffix.length;
+    prefix = text
+      .slice(0, budget)
+      .replace(/\s*(?:Bearer\s*)?\[REDACTED:[^\]]*$/i, '')
+      .replace(/\s*Bearer$/i, '')
+      .trimEnd();
+    return `${prefix}${markerSuffix}${suffix}`;
+  }
+
+  prefix = prefix.replace(/\s*(?:Bearer\s*)?\[REDACTED:[^\]]*$/i, '').trimEnd();
+  return `${prefix}${suffix}`;
 }

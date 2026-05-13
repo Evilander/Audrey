@@ -1,20 +1,49 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 - 2026-05-13
 
-### Performance
+### Audrey Guard
+
+- Ships Audrey Guard as the release-defining loop: receipt-backed `go`,
+  `caution`, and `block` decisions before tool use, followed by auditable
+  outcome capture through CLI, REST, MCP, and SDK surfaces.
+- Adds Claude Code hook generation and an idempotent hook-apply path so
+  `guard --hook --fail-on-warn` can run at `PreToolUse` and post-tool events
+  can feed Audrey's redacted trace memory.
+- Binds validation feedback to preflight event ids, evidence ids, and action
+  fingerprints so remembered guidance can be audited after use.
+
+### GuardBench And Paper Artifacts
+
+- Ships GuardBench, a local comparative benchmark for pre-action memory control
+  across Audrey Guard, no-memory, recent-window, vector-only, and FTS-only
+  baselines.
+- Adds portable GuardBench bundles, conformance cards, JSON schemas, adapter
+  self-tests, leaderboard generation, external adapter dry-runs, and pending
+  external evidence reports for Mem0 Platform and Zep Cloud.
+- Ships the Audrey Guard paper source, claim register, publication-pack
+  verifier, browser launch plan/results ledger, deterministic arXiv source
+  package, local arXiv compile proof, and paper submission bundle.
+
+### Release Controls
+
+- Adds pending-aware `release:readiness` and strict `release:readiness:strict`
+  gates so code, paper, source control, npm, PyPI, browser publication, and
+  external-evidence blockers stay separate.
+- Adds `release:cut:plan` and `release:cut:apply` so npm, lockfile, MCP,
+  Python, and changelog version surfaces are cut consistently.
+- Adds production dependency audit coverage to release gates and keeps
+  `npm audit --omit=dev --audit-level=moderate` clean.
+
+### Runtime And Client Hardening
 
 - `Audrey.encodeBatch()` now calls provider-level `embedBatch()` once per batch
   and writes each episode through the existing `encodeEpisode()` path with the
-  precomputed vector. Cloud embedding providers no longer pay one embedding
-  request per memory during batch encode.
+  precomputed vector.
 - OpenAI embedding batches are chunked by `batchSize` so large batch encodes do
   not turn into one oversized API request.
-
-### Security
-
-- Updated `hono`, `zod`, and the lockfile's `express-rate-limit` /
-  `ip-address` chain so `npm audit --omit=dev --audit-level=moderate` is clean.
+- Improves recall degradation reporting across capsules, strict preflights,
+  status surfaces, and Guard decisions.
 
 ## 0.23.0 - 2026-05-05
 

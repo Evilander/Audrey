@@ -5,6 +5,10 @@ services:
       dockerfile: Dockerfile
     image: audrey:local
     restart: unless-stopped
+    # Run with tini as PID 1 so SIGTERM from `docker stop` reaches Node and
+    # triggers closeAsync(), which drains the post-encode queue before the
+    # SQLite handle closes (see src/server.ts).
+    init: true
     ports:
       - "${AUDREY_PUBLISHED_PORT:-3487}:3487"
     environment:
@@ -14,13 +18,23 @@ services:
       AUDREY_DEVICE: ${AUDREY_DEVICE:-cpu}
       AUDREY_EMBEDDING_PROVIDER: ${AUDREY_EMBEDDING_PROVIDER:-local}
       AUDREY_LLM_PROVIDER: ${AUDREY_LLM_PROVIDER:-}
-      AUDREY_API_KEY: ${AUDREY_API_KEY:-}
+      # Fail-closed: compose refuses to start without an API key, matching the
+      # server's own non-loopback auth requirement (src/server.ts).
+      AUDREY_API_KEY: ${AUDREY_API_KEY:?Set AUDREY_API_KEY in .env before running docker compose}
+      # Admin tools (export/import/forget) stay disabled unless explicitly opted
+      # in. AUDREY_ALLOW_NO_AUTH is intentionally NOT plumbed through — Docker
+      # exposes the sidecar to a network, so the no-auth escape hatch must be
+      # set on the host out-of-band if it is ever needed.
+      AUDREY_ENABLE_ADMIN_TOOLS: ${AUDREY_ENABLE_ADMIN_TOOLS:-0}
+      AUDREY_DEBUG: ${AUDREY_DEBUG:-0}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - audrey-data:/data
+    # /health is unauthenticated (routes.ts:141), so the probe needs no Bearer
+    # header. The probe also remains healthy across AUDREY_API_KEY rotations.
     healthcheck:
       test:
         [
@@ -28,12 +42,40 @@ services:
           "node",
           "--input-type=module",
           "-e",
-          "const headers = process.env.AUDREY_API_KEY ? { Authorization: 'Bearer ' + process.env.AUDREY_API_KEY } : {}; fetch('http://127.0.0.1:3487/health', { headers }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));"
+          "fetch('http://127.0.0.1:3487/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1));"
         ]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 20s
+    # Hardening: drop all Linux capabilities (Audrey only needs userspace) and
+    # forbid privilege escalation. The rootfs is intentionally writable rather
+    # than read_only because @huggingface/transformers writes its model cache
+    # under node_modules/ on first use; the local 384-dim provider would fail
+    # under a read-only rootfs without baking the model into the image at
+    # build time. The non-root `node` user, cap_drop:ALL, and
+    # no-new-privileges already block the realistic attack paths.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Resource ceilings keep a runaway embedding warmup or recall storm from
+    # starving the host. Override AUDREY_MEM_LIMIT / AUDREY_CPU_LIMIT in .env
+    # for larger workloads. The local 384-dim provider needs ~512 MiB headroom
+    # during model warmup; cloud providers can run far smaller.
+    deploy:
+      resources:
+        limits:
+          memory: ${AUDREY_MEM_LIMIT:-1g}
+          cpus: "${AUDREY_CPU_LIMIT:-1.0}"
+        reservations:
+          memory: 256m
+    # Bound log volume so a chatty session doesn't fill the host disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   audrey-data:

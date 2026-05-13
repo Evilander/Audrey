@@ -8,7 +8,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { statSync, readFileSync, existsSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
+import { isAbsolute, relative, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
 import {
@@ -18,7 +19,7 @@ import {
   type MemoryEvent,
   type RedactionState,
 } from './events.js';
-import { redact, redactJson, summarizeRedactions, type RedactionHit } from './redact.js';
+import { redact, redactJson, summarizeRedactions, truncateRedactedText, type RedactionHit } from './redact.js';
 
 const MAX_ERROR_SUMMARY_CHARS = 2000;
 
@@ -54,31 +55,39 @@ function hashOf(value: unknown): string | null {
   return sha256(text);
 }
 
-function fingerprintFile(path: string): string | null {
+function canonicalPath(path: string): string {
+  return realpathSync(path).replace(/^\\\\\?\\/, '');
+}
+
+function isInside(base: string, candidate: string): boolean {
+  const rel = relative(base, candidate);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+function fingerprintFile(path: string, cwd: string | undefined): string | null {
   try {
-    if (!existsSync(path)) return null;
-    const stat = statSync(path);
+    const base = canonicalPath(resolve(cwd || process.cwd()));
+    const resolved = resolve(base, path);
+    if (!existsSync(resolved)) return null;
+    const canonical = canonicalPath(resolved);
+    if (!isInside(base, canonical)) return null;
+    const stat = statSync(canonical);
     if (!stat.isFile()) return null;
-    if (stat.size === 0) return `${path}|0|${stat.mtimeMs.toFixed(0)}|empty`;
-    if (stat.size > 16 * 1024 * 1024) {
-      // Files over 16 MB get a size/mtime-only fingerprint. Avoids blowing
-      // out memory on huge binaries while still giving us a change signal.
-      return `${path}|${stat.size}|${stat.mtimeMs.toFixed(0)}|skip`;
-    }
-    const contentHash = sha256(readFileSync(path).toString('hex'));
-    return `${path}|${stat.size}|${stat.mtimeMs.toFixed(0)}|${contentHash.slice(0, 16)}`;
+    const rel = relative(base, canonical).replace(/\\/g, '/');
+    return `${rel}|${stat.size}|${stat.mtimeMs.toFixed(0)}`;
   } catch {
     return null;
   }
 }
 
+function truncateText(text: string, maxChars: number, redactions: RedactionHit[] = []): string {
+  return truncateRedactedText(text, maxChars, redactions);
+}
+
 function safeErrorSummary(input: string | undefined): { text: string | null; hits: RedactionHit[] } {
   if (!input) return { text: null, hits: [] };
-  const trimmed = input.length > MAX_ERROR_SUMMARY_CHARS
-    ? input.slice(0, MAX_ERROR_SUMMARY_CHARS) + '…[truncated]'
-    : input;
-  const result = redact(trimmed);
-  return { text: result.text, hits: result.redactions };
+  const result = redact(input);
+  return { text: truncateText(result.text, MAX_ERROR_SUMMARY_CHARS, result.redactions), hits: result.redactions };
 }
 
 /**
@@ -86,13 +95,18 @@ function safeErrorSummary(input: string | undefined): { text: string | null; hit
  * provides raw output text; we never store the raw content, only the summary.
  */
 export function summarizeOutput(output: unknown, maxChars: number = 240): string | null {
-  if (output == null) return null;
+  return summarizeOutputWithRedactions(output, maxChars).text;
+}
+
+function summarizeOutputWithRedactions(output: unknown, maxChars: number = 240): { text: string | null; hits: RedactionHit[] } {
+  if (output == null) return { text: null, hits: [] };
   const text = typeof output === 'string' ? output : safeStringify(output);
-  if (!text) return null;
+  if (!text) return { text: null, hits: [] };
   const firstLine = text.split(/\r?\n/).find(line => line.trim().length > 0) ?? text;
   const trimmed = firstLine.trim();
-  if (trimmed.length <= maxChars) return trimmed;
-  return trimmed.slice(0, maxChars - 1) + '…';
+  if (!trimmed) return { text: null, hits: [] };
+  const result = redact(trimmed);
+  return { text: truncateText(result.text, maxChars, result.redactions), hits: result.redactions };
 }
 
 function safeStringify(value: unknown): string {
@@ -115,6 +129,9 @@ function mergeHits(...sets: RedactionHit[][]): RedactionHit[] {
 
 export function observeTool(db: Database.Database, input: ObserveToolInput): ObserveToolResult {
   const errorSummary = safeErrorSummary(input.errorSummary);
+  const outputSummary = input.retainDetails
+    ? { text: null, hits: [] as RedactionHit[] }
+    : summarizeOutputWithRedactions(input.output);
   const metadataRaw: Record<string, unknown> = {
     ...(input.metadata ?? {}),
   };
@@ -123,16 +140,16 @@ export function observeTool(db: Database.Database, input: ObserveToolInput): Obs
     if (input.input !== undefined) metadataRaw.redacted_input = input.input;
     if (input.output !== undefined) metadataRaw.redacted_output = input.output;
   } else {
-    const summary = summarizeOutput(input.output);
-    if (summary) metadataRaw.output_summary = summary;
+    if (outputSummary.text) metadataRaw.output_summary = outputSummary.text;
   }
 
   const { value: redactedMetadata, redactions: metadataHits } = redactJson(metadataRaw);
   const fileFingerprints = (input.files ?? [])
-    .map(fingerprintFile)
+    .slice(0, 50)
+    .map(file => fingerprintFile(file, input.cwd))
     .filter((fp): fp is string => fp != null);
 
-  const allHits = mergeHits(errorSummary.hits, metadataHits);
+  const allHits = mergeHits(errorSummary.hits, outputSummary.hits, metadataHits);
   let redactionState: RedactionState;
   if (allHits.length > 0) {
     redactionState = 'redacted';

@@ -18,7 +18,7 @@
 
 import type Database from 'better-sqlite3';
 import type { Audrey } from './audrey.js';
-import type { RecallResult, RecallOptions, MemoryType, MemoryState } from './types.js';
+import type { RecallError, RecallResult, RecallOptions, MemoryType, MemoryState } from './types.js';
 import { recentFailures, type FailurePattern } from './events.js';
 
 export type CapsuleMode = 'balanced' | 'conservative' | 'aggressive';
@@ -71,6 +71,7 @@ export interface MemoryCapsule {
     uncertain_or_disputed: CapsuleEntry[];
   };
   evidence_ids: string[];
+  recall_errors?: RecallError[];
 }
 
 const MUST_FOLLOW_TAGS = new Set(['must-follow', 'must', 'required', 'never', 'always', 'policy']);
@@ -239,9 +240,12 @@ function categorize(
 ): Array<keyof MemoryCapsule['sections']> {
   const sections = new Set<keyof MemoryCapsule['sections']>();
   const lowerTags = tags.map(t => t.toLowerCase());
+  const trustedControlSource = result.source === 'direct-observation' || result.source === 'told-by-user';
 
-  if (hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
+  if (trustedControlSource && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
     sections.add('must_follow');
+  } else if (!trustedControlSource && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
+    sections.add('uncertain_or_disputed');
   }
 
   if (hashMatchesAny(lowerTags, RISK_TAGS)) {
@@ -329,6 +333,7 @@ export async function buildCapsule(
     limit: recallLimit,
     scope: 'agent',
   });
+  const recallErrors = results.errors ?? [];
 
   const db = audrey.db;
 
@@ -425,5 +430,6 @@ export async function buildCapsule(
     },
     sections: prunedSections,
     evidence_ids: [...evidenceIds],
+    ...(recallErrors.length > 0 ? { recall_errors: recallErrors } : {}),
   };
 }

@@ -17,13 +17,16 @@ import {
   VERSION,
 } from '../dist/mcp-server/config.js';
 import {
+  applyClaudeCodeHookConfig,
   MAX_MEMORY_CONTENT_LENGTH,
   buildDoctorReport,
   buildStatusReport,
+  formatClaudeCodeHookConfig,
   formatDoctorReport,
   formatInstallGuide,
   formatStatusReport,
   initializeEmbeddingProvider,
+  mergeClaudeCodeHookSettings,
   memoryEncodeToolSchema,
   memoryForgetToolSchema,
   memoryValidateToolSchema,
@@ -33,6 +36,7 @@ import {
   memoryPreflightToolSchema,
   memoryRecallToolSchema,
   memoryReflexesToolSchema,
+  recallPayload,
   registerHostPrompts,
   registerHostResources,
   registerShutdownHandlers,
@@ -42,7 +46,7 @@ import {
   runStatusCommand,
   validateForgetSelection,
 } from '../dist/mcp-server/index.js';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 const TEST_DIR = './test-mcp-server';
 
@@ -412,7 +416,69 @@ describe('MCP CLI: install guidance', () => {
     const text = formatInstallGuide('claude-code', {}, true);
     expect(text).toContain('claude-code');
     expect(text).toContain('Run without --dry-run');
+    expect(text).toContain('Generated Claude Code hook config');
+    expect(text).toContain('guard --hook --fail-on-warn');
+    expect(text).toContain('hook-config claude-code --apply --scope project');
     expect(text).toContain('AUDREY_AGENT');
+  });
+
+  it('formats Claude Code hooks for preflight and tool observation', () => {
+    const text = formatClaudeCodeHookConfig('B:/audrey/dist/mcp-server/index.js');
+    const parsed = JSON.parse(text);
+    expect(parsed.hooks.PreToolUse[0].matcher).toBe('.*');
+    expect(parsed.hooks.PreToolUse[0].hooks[0].command).toContain('guard --hook --fail-on-warn');
+    expect(parsed.hooks.PostToolUse[0].hooks[0].command).toContain('observe-tool --event PostToolUse');
+    expect(parsed.hooks.PostToolUseFailure[0].hooks[0].command).toContain('observe-tool --event PostToolUseFailure');
+  });
+
+  it('merges Claude Code hooks without removing unrelated settings', () => {
+    const merged = mergeClaudeCodeHookSettings({
+      permissions: { allow: ['Bash(npm test)'] },
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'command', command: 'existing-check' }],
+          },
+        ],
+      },
+    }, JSON.parse(formatClaudeCodeHookConfig('B:/audrey/dist/mcp-server/index.js')));
+
+    expect(merged.permissions).toEqual({ allow: ['Bash(npm test)'] });
+    expect(merged.hooks.PreToolUse.some(group => group.matcher === 'Bash')).toBe(true);
+    expect(merged.hooks.PreToolUse.some(group => group.matcher === '.*')).toBe(true);
+    expect(merged.hooks.PostToolUse[0].hooks[0].command).toContain('observe-tool --event PostToolUse');
+  });
+
+  it('applies Claude Code hooks with a backup and is idempotent', () => {
+    const settingsDir = `${TEST_DIR}/claude-hooks/.claude`;
+    const settingsPath = `${settingsDir}/settings.local.json`;
+    mkdirSync(settingsDir, { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'command', command: 'existing-check' }],
+          },
+        ],
+      },
+    }, null, 2), 'utf-8');
+
+    const first = applyClaudeCodeHookConfig({
+      settingsPath,
+      now: new Date('2026-05-12T12:00:00.000Z'),
+    });
+    expect(first.changed).toBe(true);
+    expect(first.backupPath).toContain('.audrey-2026-05-12T12-00-00-000Z.bak');
+    expect(existsSync(first.backupPath)).toBe(true);
+    const parsed = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(parsed.hooks.PreToolUse.some(group => group.matcher === 'Bash')).toBe(true);
+    expect(parsed.hooks.PreToolUse.some(group => group.matcher === '.*')).toBe(true);
+
+    const second = applyClaudeCodeHookConfig({ settingsPath });
+    expect(second.changed).toBe(false);
+    expect(second.backupPath).toBeNull();
   });
 });
 
@@ -426,6 +492,22 @@ describe('MCP CLI: demo command', () => {
     expect(output).toContain('Recall proof:');
     expect(output).toContain('npx audrey doctor');
     expect(output).toContain('npx audrey mcp-config codex');
+  });
+
+  it('prints the deterministic repeated-failure guard demo', async () => {
+    const originalArgv = process.argv;
+    process.argv = [originalArgv[0], originalArgv[1], 'demo', '--scenario', 'repeated-failure'];
+    const lines = [];
+    try {
+      await runDemoCommand({ out: (...args) => lines.push(args.join(' ')) });
+    } finally {
+      process.argv = originalArgv;
+    }
+    const output = lines.join('\n');
+    expect(output).toContain('Audrey Guard repeated-failure demo');
+    expect(output).toContain('Audrey Guard: BLOCKED');
+    expect(output).toContain('repeated failure prevented');
+    expect(output).toContain('Audrey stopped it from failing twice.');
   });
 });
 
@@ -593,6 +675,13 @@ describe('MCP validation hardening', () => {
   it('memory_validate accepts the closed-loop outcome enum', () => {
     const schema = z.object(memoryValidateToolSchema);
     expect(schema.safeParse({ id: 'mem_1', outcome: 'helpful' }).success).toBe(true);
+    expect(schema.safeParse({
+      id: 'mem_1',
+      outcome: 'helpful',
+      preflight_event_id: '01guardevent',
+      action_key: 'a'.repeat(64),
+      evidence_ids: ['mem_1', 'risk_2'],
+    }).success).toBe(true);
     expect(schema.safeParse({ id: 'mem_1', outcome: 'used' }).success).toBe(true);
     expect(schema.safeParse({ id: 'mem_1', outcome: 'wrong' }).success).toBe(true);
     expect(schema.safeParse({ id: 'mem_1', outcome: 'maybe' }).success).toBe(false);
@@ -956,6 +1045,16 @@ describe('MCP tool: memory_recall', () => {
     for (const r of results) {
       expect(r.type).toBe('episodic');
     }
+  });
+
+  it('serializes recall diagnostics in the MCP payload shape', async () => {
+    audrey.db.exec('DROP TABLE fts_episodes');
+    const results = await audrey.recall('Node.js', { retrieval: 'hybrid' });
+    const payload = JSON.parse(JSON.stringify(recallPayload(results)));
+
+    expect(Array.isArray(payload.results)).toBe(true);
+    expect(payload.partial_failure).toBe(true);
+    expect(payload.errors.some(error => error.type === 'fts' && error.stage === 'recall.fts_lookup')).toBe(true);
   });
 });
 

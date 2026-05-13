@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/guardbench-publication-verification.schema.json",
+  "title": "GuardBench Publication Artifact Verification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "generatedAt", "ok", "checks", "failures"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "suite": { "const": "GuardBench publication artifact verification" },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "ok": { "type": "boolean" },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry", "adapterModule", "selfTest", "artifacts", "bundle", "externalDryRun", "externalEvidence", "leaderboard", "localPaths"],
+      "properties": {
+        "registry": { "$ref": "#/$defs/basicCheck" },
+        "adapterModule": { "$ref": "#/$defs/basicCheck" },
+        "selfTest": { "$ref": "#/$defs/basicCheck" },
+        "artifacts": { "$ref": "#/$defs/basicCheck" },
+        "bundle": { "$ref": "#/$defs/basicCheck" },
+        "externalDryRun": { "$ref": "#/$defs/basicCheck" },
+        "externalEvidence": { "$ref": "#/$defs/basicCheck" },
+        "leaderboard": { "$ref": "#/$defs/basicCheck" },
+        "localPaths": { "$ref": "#/$defs/basicCheck" }
+      }
+    },
+    "failures": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "basicCheck": {
+      "type": "object",
+      "required": ["ok", "failures"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

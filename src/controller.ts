@@ -1,8 +1,11 @@
 import type { Audrey } from './audrey.js';
+import { guardActionKey } from './action-key.js';
+import type { MemoryCapsule } from './capsule.js';
 import type { EventOutcome, MemoryEvent } from './events.js';
 import type { MemoryValidateOutcome, MemoryValidateResult } from './feedback.js';
 import { buildPreflight, type MemoryPreflight, type PreflightOptions } from './preflight.js';
 import { buildReflexReportFromPreflight, type MemoryReflex } from './reflexes.js';
+import { redact, truncateRedactedText, type RedactionHit } from './redact.js';
 
 export interface GuardBeforeOptions extends PreflightOptions {
   recordEvent?: boolean;
@@ -59,6 +62,37 @@ export interface GuardOutcome {
   outcome: EventOutcome;
   validated_evidence: GuardValidatedEvidence[];
   learning_summary: string;
+}
+
+export interface AgentAction {
+  tool?: string;
+  command?: string;
+  action: string;
+  cwd?: string;
+  files?: string[];
+  sessionId?: string;
+}
+
+export type ControllerGuardDecision = 'allow' | 'warn' | 'block';
+
+export interface ControllerGuardResult {
+  decision: ControllerGuardDecision;
+  riskScore: number;
+  summary: string;
+  evidenceIds: string[];
+  recommendedActions: string[];
+  capsule?: MemoryCapsule;
+  reflexes: MemoryReflex[];
+  preflightEventId?: string;
+}
+
+export interface ToolOutcome {
+  action: AgentAction;
+  outcome: EventOutcome;
+  output?: unknown;
+  errorSummary?: string;
+  retainDetails?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 function parseMetadata(value: string | null): Record<string, unknown> {
@@ -130,6 +164,168 @@ function summarizeLearning(validated: GuardValidatedEvidence[]): string {
   if (validated.length === 0) return 'Recorded action outcome; no evidence feedback supplied.';
   return `Recorded action outcome; validated ${applied} evidence item${applied === 1 ? '' : 's'}`
     + (skipped > 0 ? ` and skipped ${skipped} non-memory evidence item${skipped === 1 ? '' : 's'}.` : '.');
+}
+
+function displayDecision(decision: MemoryPreflight['decision']): ControllerGuardDecision {
+  if (decision === 'block') return 'block';
+  if (decision === 'caution') return 'warn';
+  return 'allow';
+}
+
+function compact(
+  value: string | undefined,
+  max = 2000,
+  redactions: RedactionHit[] = [],
+): string | undefined {
+  if (!value) return undefined;
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (text.length <= max) return text;
+  return truncateRedactedText(text, max, redactions);
+}
+
+function redactedText(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const result = redact(value);
+  return compact(result.text, 2000, result.redactions);
+}
+
+function contextFor(action: AgentAction): Record<string, string> {
+  const context: Record<string, string> = {};
+  if (action.cwd) context.cwd = action.cwd;
+  if (action.sessionId) context.sessionId = action.sessionId;
+  if (action.tool) context.tool = action.tool;
+  if (action.command) context.command = redactedText(action.command) ?? action.command;
+  if (action.files?.length) context.files = action.files.join('\n');
+  return context;
+}
+
+function sameActionEvents(audrey: Audrey, action: AgentAction): MemoryEvent[] {
+  if (!action.tool) return [];
+  const key = guardActionKey(action);
+  const tool = action.tool.toLowerCase();
+  return audrey.listEvents({ limit: 1000 })
+    .filter(event => {
+      if (event.tool_name?.toLowerCase() !== tool) return false;
+      if (event.actor_agent && event.actor_agent !== audrey.agent) return false;
+      if (!event.metadata) return false;
+      try {
+        const metadata = JSON.parse(event.metadata) as Record<string, unknown>;
+        return metadata.audrey_guard_action_key === key;
+      } catch {
+        return false;
+      }
+    });
+}
+
+function latestSucceededEvent(events: MemoryEvent[]): MemoryEvent | undefined {
+  return events
+    .filter(event => event.outcome === 'succeeded')
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .at(-1);
+}
+
+function matchingFailureEvents(audrey: Audrey, action: AgentAction): MemoryEvent[] {
+  const events = sameActionEvents(audrey, action);
+  const latestSuccessAt = latestSucceededEvent(events)?.created_at;
+  return events
+    .filter(event => event.outcome === 'failed')
+    .filter(event => !latestSuccessAt || event.created_at > latestSuccessAt);
+}
+
+function recoveredFailureEvent(audrey: Audrey, action: AgentAction): MemoryEvent | undefined {
+  const events = sameActionEvents(audrey, action);
+  const latestSuccess = latestSucceededEvent(events);
+  if (!latestSuccess) return undefined;
+  const priorFailure = events
+    .filter(event => event.outcome === 'failed' && event.created_at < latestSuccess.created_at)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+  return priorFailure ? latestSuccess : undefined;
+}
+
+export class MemoryController {
+  constructor(private readonly audrey: Audrey) {}
+
+  async beforeAction(action: AgentAction): Promise<ControllerGuardResult> {
+    const result = await beforeAction(this.audrey, action.action, {
+      tool: action.tool,
+      cwd: action.cwd,
+      files: action.files,
+      sessionId: action.sessionId,
+      strict: true,
+      includeCapsule: true,
+      includeStatus: true,
+      recordEvent: true,
+      scope: 'agent',
+    });
+    const exactFailures = matchingFailureEvents(this.audrey, action);
+    const recoveredFailure = recoveredFailureEvent(this.audrey, action);
+    const exactFailureEvidence = exactFailures.map(event => event.id);
+    const exactRepeatedFailure = exactFailures.length > 0;
+    const recoveredExactFailure = !exactRepeatedFailure && recoveredFailure && result.decision !== 'block';
+    const recommendedActions = [...result.recommended_actions];
+    if (exactRepeatedFailure) {
+      recommendedActions.unshift('Do not repeat the exact failed action until the prior error is understood or the command is changed.');
+    } else if (recoveredExactFailure) {
+      recommendedActions.unshift('This exact action has succeeded since its last failure; proceed with normal validation.');
+    }
+
+    return {
+      decision: exactRepeatedFailure ? 'block' : recoveredExactFailure ? 'allow' : displayDecision(result.decision),
+      riskScore: exactRepeatedFailure ? Math.max(result.risk_score, 0.9) : recoveredExactFailure ? Math.min(result.risk_score, 0.2) : result.risk_score,
+      summary: exactRepeatedFailure
+        ? `Blocked: this exact ${action.tool ?? 'tool'} action failed before. ${result.summary}`
+        : recoveredExactFailure
+          ? `Allowed: this exact ${action.tool ?? 'tool'} action has succeeded since the prior failure. ${result.summary}`
+          : result.summary,
+      evidenceIds: [...new Set([...exactFailureEvidence, ...(recoveredFailure ? [recoveredFailure.id] : []), ...result.evidence_ids])],
+      recommendedActions: [...new Set(recommendedActions)],
+      capsule: result.capsule,
+      reflexes: result.reflexes,
+      preflightEventId: result.preflight_event_id,
+    };
+  }
+
+  async afterAction(outcome: ToolOutcome): Promise<void> {
+    const tool = outcome.action.tool ?? 'unknown';
+    const event = outcome.outcome === 'failed' ? 'PostToolUseFailure' : 'PostToolUse';
+    const safeAction = redactedText(outcome.action.action) ?? outcome.action.action;
+    const safeCommand = redactedText(outcome.action.command);
+    const safeError = redactedText(outcome.errorSummary);
+
+    this.audrey.observeTool({
+      event,
+      tool,
+      sessionId: outcome.action.sessionId,
+      input: {
+        action: outcome.action.action,
+        command: outcome.action.command,
+      },
+      output: outcome.output,
+      outcome: outcome.outcome,
+      errorSummary: outcome.errorSummary,
+      cwd: outcome.action.cwd,
+      files: outcome.action.files,
+      retainDetails: outcome.retainDetails,
+      metadata: {
+        ...(outcome.metadata ?? {}),
+        audrey_guard_action_key: guardActionKey(outcome.action),
+      },
+    });
+
+    if (outcome.outcome !== 'failed' || !safeError) return;
+
+    await this.audrey.encode({
+      content: [
+        `Tool failure: ${tool} failed while attempting: ${safeAction}.`,
+        safeCommand ? `Command: ${safeCommand}.` : '',
+        `Error: ${safeError}`,
+      ].filter(Boolean).join(' '),
+      source: 'tool-result',
+      tags: ['tool-failure', tool],
+      salience: 0.85,
+      context: contextFor(outcome.action),
+    });
+  }
 }
 
 export async function beforeAction(

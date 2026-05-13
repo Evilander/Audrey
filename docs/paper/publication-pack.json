@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "1.0.0",
+  "suite": "Audrey publication pack",
+  "claimRegister": "docs/paper/claim-register.json",
+  "entries": [
+    {
+      "id": "arxiv-title",
+      "platform": "arxiv",
+      "kind": "title",
+      "claimIds": ["C01", "C03"],
+      "maxChars": 180,
+      "text": "Audrey: Local-First Pre-Action Memory Control for AI Agents"
+    },
+    {
+      "id": "arxiv-abstract",
+      "platform": "arxiv",
+      "kind": "abstract",
+      "claimIds": ["C01", "C02", "C03", "C04"],
+      "maxChars": 1920,
+      "text": "AI agents increasingly rely on long-running tool use, but most memory systems are evaluated as retrieval layers rather than as pre-action control systems. Audrey is a local-first memory runtime that records episodes, procedures, contradictions, tool traces, validation outcomes, and salience, then checks relevant memory before an agent touches tools. The paper introduces GuardBench, a Stage-A benchmark specification for memory-before-action behavior, and reports a local comparative run across Audrey Guard, no-memory, recent-window, vector-only, and FTS-only adapters. In the current repository artifacts, Audrey Guard passes 10/10 local GuardBench scenarios with zero seeded raw-secret leaks in published artifacts. The paper does not report external-system GuardBench scores; Mem0 and Zep adapters exist, but live credentialed outputs remain pending strict evidence verification. The release includes schema-bound manifests, raw outputs, conformance cards, submission bundles, leaderboard artifacts, an external evidence verifier, and a claim register that blocks unsupported public claims."
+    },
+    {
+      "id": "hacker-news-title",
+      "platform": "hacker-news",
+      "kind": "title",
+      "claimIds": ["C01", "C03"],
+      "maxChars": 80,
+      "text": "Show HN: Audrey, a local-first memory firewall for AI agents"
+    },
+    {
+      "id": "hacker-news-comment",
+      "platform": "hacker-news",
+      "kind": "body",
+      "claimIds": ["C01", "C02", "C03", "C04"],
+      "maxChars": 1800,
+      "text": "Audrey is my local-first memory runtime for agents. The core idea is memory-before-action: before an agent runs a command, edits files, or touches tools, Audrey recalls relevant failures, rules, procedures, contradictions, and validation history, then returns allow/warn/block with evidence. The research paper introduces GuardBench, a Stage-A benchmark spec for this pre-action control problem. Current local artifacts show Audrey Guard passing 10/10 local scenarios with zero seeded raw-secret leaks in published artifacts. I am deliberately not claiming external-system scores yet: Mem0 and Zep adapters are implemented, but live credentialed runs are still pending strict evidence verification. The repo includes schemas, raw outputs, conformance cards, a submission bundle, a leaderboard builder, an external evidence verifier, and a claim register that blocks public overclaims."
+    },
+    {
+      "id": "reddit-title",
+      "platform": "reddit",
+      "kind": "title",
+      "claimIds": ["C01", "C03"],
+      "maxChars": 300,
+      "text": "Audrey: a local-first memory firewall for agents, with a GuardBench paper and auditable benchmark artifacts"
+    },
+    {
+      "id": "reddit-body",
+      "platform": "reddit",
+      "kind": "body",
+      "claimIds": ["C01", "C02", "C03", "C04"],
+      "maxChars": 4000,
+      "text": "I have been building Audrey as a local-first memory layer for agents, but the framing has shifted from simple recall to pre-action control. Instead of only asking whether memory can retrieve facts, Audrey asks whether memory changes the next tool action before it happens. It records tool failures, rules, procedures, contradictions, validations, and salience, then returns allow/warn/block decisions with evidence. The paper introduces GuardBench as a reproducibility contract for this memory-before-action behavior. The current Stage-A result is intentionally narrow: local Audrey Guard passes 10/10 local GuardBench scenarios with zero seeded raw-secret leaks in published artifacts. External Mem0/Zep scores are not claimed yet; those adapters exist, but live credentialed outputs are pending strict evidence verification. The repo now includes the benchmark manifest, raw outputs, schemas, conformance card, submission bundle, leaderboard builder, external evidence verifier, and claim register so the public claims can be audited."
+    },
+    {
+      "id": "x-post-1",
+      "platform": "x",
+      "kind": "post",
+      "claimIds": ["C01", "C02"],
+      "maxChars": 280,
+      "requiresArtifactUrl": true,
+      "reservedUrlChars": 24,
+      "text": "Audrey is a local-first memory firewall for AI agents: recall failures, rules, contradictions, and validations before tools run. Stage-A GuardBench: local Audrey Guard passes 10/10. External Mem0/Zep scores remain pending."
+    },
+    {
+      "id": "x-post-2",
+      "platform": "x",
+      "kind": "post",
+      "claimIds": ["C03", "C04"],
+      "maxChars": 280,
+      "text": "The Audrey paper ships with auditable benchmark artifacts: schemas, raw outputs, conformance cards, submission bundle, leaderboard, external evidence verifier, and a claim register that blocks unsupported public claims."
+    },
+    {
+      "id": "linkedin-post",
+      "platform": "linkedin",
+      "kind": "post",
+      "claimIds": ["C01", "C02", "C03", "C04"],
+      "maxChars": 3000,
+      "text": "I am preparing Audrey as a local-first memory runtime for AI agents, centered on pre-action memory control. Most agent memory work is evaluated as retrieval: can the system find the right fact? Audrey focuses on a different operational question: can memory change the next tool action before the tool runs? Audrey records episodes, procedures, contradictions, tool traces, validation outcomes, and salience, then returns allow/warn/block decisions with evidence. The accompanying paper introduces GuardBench, a Stage-A benchmark specification for memory-before-action behavior. Current local artifacts show Audrey Guard passing 10/10 local GuardBench scenarios with zero seeded raw-secret leaks in published artifacts. I am intentionally not reporting external-system scores yet: Mem0 and Zep adapters are implemented, but live credentialed runs remain pending strict evidence verification. The release includes machine-readable schemas, raw outputs, conformance cards, submission bundles, leaderboard artifacts, an external evidence verifier, and a public claim register so the claims can be audited before publication."
+    }
+  ]
+}

@@ -1,7 +1,8 @@
 import type { Audrey } from './audrey.js';
+import { guardActionKey } from './action-key.js';
 import type { CapsuleEntry, CapsuleMode, MemoryCapsule } from './capsule.js';
 import type { FailurePattern } from './events.js';
-import type { MemoryStatusResult, RecallOptions } from './types.js';
+import type { MemoryStatusResult, RecallOptions, RecallResult } from './types.js';
 
 export type PreflightDecision = 'go' | 'caution' | 'block';
 export type PreflightSeverity = 'info' | 'low' | 'medium' | 'high';
@@ -66,6 +67,7 @@ const SEVERITY_SCORE: Record<PreflightSeverity, number> = {
   medium: 0.55,
   high: 0.85,
 };
+const TRUSTED_CONTROL_SOURCES = new Set(['direct-observation', 'told-by-user']);
 
 function isNonEmptyText(value: string): boolean {
   return value.trim().length > 0;
@@ -109,6 +111,12 @@ function warningFromEntry(
   };
 }
 
+function toolFromFailureEntry(entry: CapsuleEntry): string | undefined {
+  const fromId = entry.memory_id.match(/^failure:([^:]+):/)?.[1];
+  if (fromId) return fromId;
+  return entry.content.match(/^([^\s]+) failed\b/)?.[1];
+}
+
 function addWarning(
   warnings: PreflightWarning[],
   seen: Set<string>,
@@ -118,6 +126,24 @@ function addWarning(
   if (seen.has(key)) return;
   seen.add(key);
   warnings.push(warning);
+}
+
+function warningFromTaggedRecall(
+  result: RecallResult,
+  fallbackAction: string,
+): PreflightWarning {
+  return {
+    type: 'must_follow',
+    severity: 'high',
+    message: shorten(result.content),
+    reason: 'Matched trusted must-follow memory through the tagged control-memory sweep.',
+    evidence_id: result.id,
+    recommended_action: fallbackAction,
+  };
+}
+
+function isTrustedControlMemory(result: RecallResult): boolean {
+  return TRUSTED_CONTROL_SOURCES.has(result.source);
 }
 
 function recommendationFromWarning(warning: PreflightWarning): string {
@@ -201,6 +227,39 @@ export async function buildPreflight(
     });
   }
 
+  for (const error of capsule.recall_errors ?? []) {
+    addWarning(warnings, seen, {
+      type: 'memory_health',
+      severity: 'high',
+      message: `Audrey recall degraded while building preflight: ${error.type} ${error.stage} failed.`,
+      reason: shorten(error.message, 220),
+      evidence_id: `recall:${error.type}:${error.stage}`,
+      recommended_action: 'Run npx audrey status and repair the degraded recall path before relying on Guard.',
+    });
+  }
+
+  const existingMustFollowIds = new Set(capsule.sections.must_follow.map(entry => entry.memory_id));
+  if (existingMustFollowIds.size === 0) {
+    try {
+      const taggedMustFollow = await audrey.recall(query, {
+        limit: 50,
+        minConfidence: 0.01,
+        tags: ['must-follow'],
+        scope: options.scope ?? 'agent',
+      });
+      const trustedResults = taggedMustFollow.filter(isTrustedControlMemory);
+      for (const result of trustedResults.slice(0, 5)) {
+        addWarning(warnings, seen, warningFromTaggedRecall(
+          result,
+          'Apply this must-follow rule before acting.',
+        ));
+      }
+    } catch {
+      // The primary capsule path already reports recall degradation. Avoid
+      // converting a supplemental sweep failure into duplicate noise.
+    }
+  }
+
   const since = new Date(
     Date.now() - (options.recentFailureWindowHours ?? 168) * 60 * 60 * 1000,
   ).toISOString();
@@ -212,7 +271,7 @@ export async function buildPreflight(
     const toolLabel = failure.tool_name || options.tool || 'tool';
     addWarning(warnings, seen, {
       type: 'recent_failure',
-      severity: failure.failure_count >= 3 ? 'high' : 'medium',
+      severity: 'medium',
       message: failure.last_error_summary
         ? `${toolLabel} failed ${failure.failure_count}x recently: ${shorten(failure.last_error_summary, 220)}`
         : `${toolLabel} failed ${failure.failure_count}x recently.`,
@@ -232,6 +291,10 @@ export async function buildPreflight(
   }
 
   for (const entry of capsule.sections.risks) {
+    if (entry.memory_type === 'tool_failure') {
+      const failedTool = toolFromFailureEntry(entry);
+      if (!matchesToolOrAction(action, options.tool, failedTool)) continue;
+    }
     addWarning(warnings, seen, warningFromEntry(
       entry.memory_type === 'tool_failure' ? 'recent_failure' : 'risk',
       entry.memory_type === 'tool_failure' ? 'medium' : 'high',
@@ -282,6 +345,9 @@ export async function buildPreflight(
   if (decision === 'block') {
     recommendedActions.unshift('Do not proceed until the high-severity memory warning is addressed.');
   }
+  const evidenceIds = [...new Set(
+    warnings.map(w => w.evidence_id).filter((id): id is string => Boolean(id)),
+  )];
 
   const preflightEvent = options.recordEvent && options.tool
     ? audrey.observeTool({
@@ -295,6 +361,13 @@ export async function buildPreflight(
         metadata: {
           preflight_decision: decision,
           preflight_warning_count: warnings.length,
+          preflight_evidence_ids: evidenceIds,
+          audrey_guard_action_key: guardActionKey({
+            tool: options.tool,
+            action: action.trim(),
+            cwd: options.cwd,
+            files: options.files,
+          }),
         },
       }).event
     : undefined;
@@ -314,10 +387,7 @@ export async function buildPreflight(
     recent_failures: matchingFailures,
     ...(status ? { status } : {}),
     recommended_actions: recommendedActions,
-    evidence_ids: [...new Set([
-      ...capsule.evidence_ids,
-      ...warnings.map(w => w.evidence_id).filter((id): id is string => Boolean(id)),
-    ])],
+    evidence_ids: evidenceIds,
     ...(preflightEvent ? { preflight_event_id: preflightEvent.id } : {}),
     ...(options.includeCapsule === false ? {} : { capsule }),
   };

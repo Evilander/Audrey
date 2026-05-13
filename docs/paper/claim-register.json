@@ -1,0 +1,138 @@
+{
+  "schemaVersion": "1.0.0",
+  "suite": "Audrey paper claim register",
+  "claims": [
+    {
+      "id": "C01",
+      "status": "supported",
+      "claim": "Audrey Guard passes the local Stage-A GuardBench comparative suite without leaking seeded secrets in published artifacts.",
+      "evidence": [
+        "benchmarks/output/guardbench-summary.json",
+        "benchmarks/output/guardbench-raw.json",
+        "docs/paper/evidence-ledger.md#E46",
+        "docs/paper/evidence-ledger.md#E65"
+      ],
+      "artifactChecks": [
+        "guardbench-local-passed",
+        "no-published-secret-leaks"
+      ],
+      "requiredText": [
+        {
+          "path": "README.md",
+          "text": "Latest local result in this checkout: 10/10 scenarios passed"
+        },
+        {
+          "path": "docs/paper/audrey-paper-v1.md",
+          "text": "Local comparative GuardBench reports decision accuracy and full-contract pass rate across all ten scenarios"
+        }
+      ],
+      "forbiddenText": []
+    },
+    {
+      "id": "C02",
+      "status": "pending",
+      "claim": "External Mem0 and Zep GuardBench scores are not reported until credentialed live bundles pass strict evidence verification.",
+      "evidence": [
+        "benchmarks/output/external/guardbench-external-evidence.json",
+        "benchmarks/adapters/registry.json",
+        "docs/paper/evidence-ledger.md#E77",
+        "docs/paper/evidence-ledger.md#E81"
+      ],
+      "artifactChecks": [
+        "adapter-registry-has-mem0-zep",
+        "external-evidence-pending",
+        "paper-stage-boundary-excludes-external-scores"
+      ],
+      "requiredText": [
+        {
+          "path": "docs/paper/audrey-paper-v1.md",
+          "text": "this paper does not report external-system GuardBench scores"
+        },
+        {
+          "path": "docs/paper/SUBMISSION_README.md",
+          "text": "live Mem0 run is still pending"
+        },
+        {
+          "path": "docs/paper/SUBMISSION_README.md",
+          "text": "live Zep run is still pending"
+        }
+      ],
+      "forbiddenText": [
+        {
+          "path": "docs/paper/audrey-paper-v1.md",
+          "text": "Mem0 Platform passes 10/10"
+        },
+        {
+          "path": "docs/paper/audrey-paper-v1.md",
+          "text": "Zep Cloud passes 10/10"
+        },
+        {
+          "path": "README.md",
+          "text": "external-system scores are reported"
+        }
+      ]
+    },
+    {
+      "id": "C03",
+      "status": "supported",
+      "claim": "The public GuardBench artifact set has a one-command verifier that covers registry, modules, self-test, artifacts, bundle, external readiness, external evidence, and leaderboard.",
+      "evidence": [
+        "benchmarks/verify-publication-artifacts.mjs",
+        "benchmarks/schemas/guardbench-publication-verification.schema.json",
+        "docs/paper/evidence-ledger.md#E75",
+        "docs/paper/evidence-ledger.md#E80",
+        "docs/paper/evidence-ledger.md#E81"
+      ],
+      "artifactChecks": [
+        "publication-verifier-ok"
+      ],
+      "requiredText": [
+        {
+          "path": "README.md",
+          "text": "bench:guard:publication:verify"
+        },
+        {
+          "path": "docs/paper/audrey-paper-v1.md",
+          "text": "external evidence verification report"
+        }
+      ],
+      "forbiddenText": []
+    },
+    {
+      "id": "C04",
+      "status": "supported",
+      "claim": "Published benchmark artifacts and external evidence reports do not contain seeded raw secrets or runtime credential values.",
+      "evidence": [
+        "benchmarks/output/guardbench-summary.json",
+        "benchmarks/output/guardbench-raw.json",
+        "benchmarks/output/external/guardbench-external-evidence.json",
+        "docs/paper/evidence-ledger.md#E65",
+        "docs/paper/evidence-ledger.md#E81"
+      ],
+      "artifactChecks": [
+        "no-published-secret-leaks",
+        "external-evidence-no-secrets"
+      ],
+      "requiredText": [
+        {
+          "path": "README.md",
+          "text": "0 published artifact leaks"
+        },
+        {
+          "path": "docs/paper/SUBMISSION_README.md",
+          "text": "runtime credential leaks"
+        }
+      ],
+      "forbiddenText": [
+        {
+          "path": "benchmarks/output/guardbench-summary.json",
+          "text": "sk-guardbench-secret-0000000000000000000000000000"
+        },
+        {
+          "path": "benchmarks/output/external/guardbench-external-evidence.json",
+          "text": "runtime-key"
+        }
+      ]
+    }
+  ]
+}

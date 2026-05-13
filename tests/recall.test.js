@@ -212,17 +212,29 @@ describe('recall', () => {
     expect(incremented).toBe(true);
   });
 
-  // Skipped: recall()'s partialFailure surface is planned.
-  // (silent-failure-hunter principle — surface KNN errors to callers instead of swallowing).
-  it.skip('surfaces partial failures when a recall path breaks', async () => {
+  it('surfaces partial failures when a recall path breaks', async () => {
     db.exec('DROP TABLE vec_semantics');
 
-    const results = await recall(db, embedding, 'Stripe rate limit', { types: ['semantic'] });
+    const results = await recall(db, embedding, 'Stripe rate limit', { types: ['semantic'], retrieval: 'vector' });
 
     expect(results).toHaveLength(0);
     expect(results.partialFailure).toBe(true);
     expect(results.errors).toEqual([
       expect.objectContaining({ type: 'semantic' }),
+    ]);
+  });
+
+  it('surfaces partial failures when FTS lookup breaks', async () => {
+    db.exec('DROP TABLE fts_episodes');
+
+    const results = await recall(db, embedding, 'Stripe rate limit', { types: ['episodic'], retrieval: 'hybrid' });
+
+    expect(results.partialFailure).toBe(true);
+    expect(results.errors).toEqual([
+      expect.objectContaining({
+        type: 'fts',
+        stage: 'recall.fts_lookup',
+      }),
     ]);
   });
 
@@ -315,6 +327,29 @@ describe('recall', () => {
     for (const mem of results) {
       expect(mem.content).toContain('alpha');
     }
+  });
+
+  it('requires all requested tags when multiple tag filters are provided', async () => {
+    await encodeEpisode(db, embedding, {
+      content: 'MemoryGym run one scenario alpha',
+      source: 'direct-observation',
+      tags: ['memorygym', 'run-one', 'scenario-alpha'],
+    });
+    await encodeEpisode(db, embedding, {
+      content: 'MemoryGym run one scenario beta',
+      source: 'direct-observation',
+      tags: ['memorygym', 'run-one', 'scenario-beta'],
+    });
+
+    const results = await recall(db, embedding, 'MemoryGym scenario', {
+      tags: ['memorygym', 'run-one', 'scenario-alpha'],
+      types: ['episodic'],
+      limit: 10,
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.some(mem => mem.content.includes('scenario alpha'))).toBe(true);
+    expect(results.some(mem => mem.content.includes('scenario beta'))).toBe(false);
   });
 
   it('returns all episodic when no tag filter', async () => {
