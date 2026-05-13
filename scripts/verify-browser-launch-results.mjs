@@ -10,6 +10,8 @@ const DEFAULT_RESULTS = 'docs/paper/browser-launch-results.json';
 const DEFAULT_SCHEMA = 'docs/paper/browser-launch-results.schema.json';
 const DEFAULT_PLAN = 'docs/paper/browser-launch-plan.json';
 const SEEDED_SECRET = 'sk-guardbench-secret-0000000000000000000000000000';
+const GITHUB_REPO_URL = 'https://github.com/Evilander/Audrey';
+const PLATFORMS_REQUIRING_REPO_LINK = new Set(['hacker-news', 'reddit', 'linkedin', 'x']);
 const PLATFORM_HOSTS = {
   arxiv: ['arxiv.org'],
   'hacker-news': ['news.ycombinator.com'],
@@ -90,6 +92,10 @@ function containsLocalPath(text) {
   return /(^|[^a-z])[A-Z]:\\/i.test(text) || /\\\\\?\\/.test(text) || /file:\/\//i.test(text);
 }
 
+function includesGitHubRepoUrl(result) {
+  return JSON.stringify(result).includes(GITHUB_REPO_URL);
+}
+
 function validateResultTarget(result, planTarget) {
   const failures = [];
   const blockers = [];
@@ -129,6 +135,9 @@ function validateResultTarget(result, planTarget) {
     if (!result.operatorVerified) failures.push(`${result.id}: submitted result must be operator verified`);
     if (planTarget.manualRuleCheckRequired && !result.manualRuleCheckCompleted) {
       failures.push(`${result.id}: submitted result must record manual rule check completion`);
+    }
+    if (PLATFORMS_REQUIRING_REPO_LINK.has(result.platform) && !includesGitHubRepoUrl(result)) {
+      failures.push(`${result.id}: submitted marketing result must include ${GITHUB_REPO_URL}`);
     }
     for (const check of planTarget.postSubmitChecks) {
       if (!result.postSubmitChecksCompleted.includes(check)) {
