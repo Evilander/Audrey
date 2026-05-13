@@ -27,7 +27,7 @@ jobs:
       RELEASE_BRANCH: release/audrey-1.0.0
       GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - name: Build release branch from verified bundle
+      - name: Push verified bundle refs
         shell: bash
         run: |
           set -euo pipefail
@@ -41,22 +41,13 @@ jobs:
 
           git clone --no-checkout "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" release-work
           cd release-work
-          git config user.name "Tyler Eveland"
-          git config user.email "j.tyler.eveland@gmail.com"
-          git checkout -B "$RELEASE_BRANCH" origin/master
-          git fetch ../release.bundle refs/heads/master:refs/remotes/bundle/master
-          git read-tree --reset -u refs/remotes/bundle/master
-          test "$(git write-tree)" = "$RELEASE_TREE"
+          git fetch ../release.bundle \
+            refs/heads/master:refs/remotes/bundle/master \
+            refs/tags/v1.0.0:refs/tags/v1.0.0
 
-          GIT_AUTHOR_NAME="Tyler Eveland" \
-          GIT_AUTHOR_EMAIL="j.tyler.eveland@gmail.com" \
-          GIT_COMMITTER_NAME="Tyler Eveland" \
-          GIT_COMMITTER_EMAIL="j.tyler.eveland@gmail.com" \
-          git commit -m "Release Audrey 1.0.0"
+          test "$(git rev-parse refs/remotes/bundle/master)" = "$BUNDLE_COMMIT"
+          test "$(git rev-parse refs/remotes/bundle/master^{tree})" = "$RELEASE_TREE"
+          test "$(git rev-parse refs/tags/v1.0.0)" = "$BUNDLE_TAG_OBJECT"
 
-          release_commit="$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD^{tree})" = "$RELEASE_TREE"
-          git tag -a v1.0.0 -m "Audrey 1.0.0" "$release_commit"
-
-          git push origin "+HEAD:refs/heads/${RELEASE_BRANCH}"
-          git push origin refs/tags/v1.0.0
+          git push origin "refs/remotes/bundle/master:refs/heads/${RELEASE_BRANCH}"
+          git push origin "refs/tags/v1.0.0:refs/tags/v1.0.0"
