@@ -14,37 +14,42 @@
       "operatorVerified": false,
       "manualRuleCheckCompleted": true,
       "postSubmitChecksCompleted": [],
-      "blocker": "Logged-in arXiv account page is reachable, but START NEW SUBMISSION is absent and direct /submit routes redirect back to /user, so no valid submission flow is available from this account session.",
-      "notes": "arXiv source upload package is verified and compile-checked; browser evidence shows the account page logged in as Evilander with default category cs.AI, but the submission start control is not exposed."
+      "blocker": "Logged-in arXiv account page is reachable, but START NEW SUBMISSION is absent and direct /submit routes redirect back to /user with Not authorized. Support request AH-190018 is open; a follow-up reply was sent clarifying this is an account-state/submission-authorization question, not a request for support endorsement.",
+      "notes": "arXiv source upload package is verified and compile-checked; browser evidence shows the account page logged in as Evilander with default category cs.AI, but the submission start control is not exposed. arXiv's endorsement auto-reply was answered on 2026-05-13 asking whether the account is endorsement-gated for cs.AI or blocked by another profile issue."
     },
     {
       "id": "hacker-news-show",
       "platform": "hacker-news",
-      "status": "pending",
-      "publicUrl": null,
+      "status": "submitted",
+      "publicUrl": "https://news.ycombinator.com/item?id=48123428",
       "artifactUrl": "https://paper-site-r3jdakujn-evilanders-projects.vercel.app",
-      "submittedAt": null,
-      "operatorVerified": false,
+      "submittedAt": "2026-05-13T10:44:16-05:00",
+      "operatorVerified": true,
       "manualRuleCheckCompleted": true,
-      "postSubmitChecksCompleted": [],
-      "blocker": "HN returned https://news.ycombinator.com/showlim after the Show HN submit attempt, stating that Show HN submissions are temporarily restricted for this account.",
-      "notes": "Title, URL, and comment were filled in the logged-in HN form; the platform rejected the Show HN path before creating an item, so no alternate non-Show submission was made."
+      "postSubmitChecksCompleted": [
+        "Record the HN item URL.",
+        "Stay available to answer questions in the thread without marketing language.",
+        "Record the follow-up HN source/repo item URL."
+      ],
+      "blocker": null,
+      "notes": "The logged-in Show HN route returned https://news.ycombinator.com/showlim and stated that Show HN submissions are temporarily restricted for this account. A neutral normal HN link submission was made instead through https://news.ycombinator.com/submit with title Audrey: Local-first pre-action memory control for AI agents and URL https://paper-site-r3jdakujn-evilanders-projects.vercel.app/. HN newest showed item 48123428 as 1 point by evilanders with edit/delete controls, confirming account ownership of the submission. The original item exposed no comment box and the HN edit screen only allowed title editing, so a follow-up source submission was posted with title Audrey: local-first memory guard for AI agents (source) and URL https://github.com/Evilander/Audrey at https://news.ycombinator.com/item?id=48123903."
     },
     {
       "id": "reddit-discussion",
       "platform": "reddit",
       "status": "submitted",
-      "publicUrl": "https://www.reddit.com/r/LocalLLaMA/comments/1tc0i6a/audrey_a_localfirst_memory_firewall_for_agents/",
+      "publicUrl": "https://www.reddit.com/r/ClaudeCode/comments/1tc3dhb/audrey_localfirst_memory_guard_for_claude_code/",
       "artifactUrl": "https://paper-site-r3jdakujn-evilanders-projects.vercel.app",
-      "submittedAt": "2026-05-13T08:59:31-05:00",
+      "submittedAt": "2026-05-13T10:40:46-05:00",
       "operatorVerified": true,
       "manualRuleCheckCompleted": true,
       "postSubmitChecksCompleted": [
         "Record the Reddit post URL and selected subreddit.",
-        "If removed, do not repost without moderator guidance or materially different context."
+        "If removed, do not repost without moderator guidance or materially different context.",
+        "Verify the original Reddit post body includes the GitHub repo URL."
       ],
       "blocker": null,
-      "notes": "Submitted once to r/LocalLLaMA with Resources flair after reading its current rules, including the LLM-topic rule and self-promotion disclosure rule; post text and public artifact URL were visible after submission."
+      "notes": "Submitted to r/ClaudeCode with Showcase flair after reading its current rules. The post discloses builder affiliation and cost, links the public paper/artifact preview plus the GitHub repo URL https://github.com/Evilander/Audrey, and avoids unsupported external Mem0/Zep score claims. A question about Audrey versus PreToolUse plus permissions.deny was answered with the explicit split between static deny rules and learned/contextual memory guards (https://old.reddit.com/r/ClaudeCode/comments/1tc3dhb/audrey_localfirst_memory_guard_for_claude_code/olla7zf/). Earlier r/LocalLLaMA submission was removed by AutoModerator for insufficient subreddit karma (https://www.reddit.com/r/LocalLLaMA/comments/1tc0i6a/audrey_a_localfirst_memory_firewall_for_agents/), so no duplicate LocalLLaMA repost was attempted. Follow-up participation was posted without Audrey links or promo in r/LocalLLaMA (https://old.reddit.com/r/LocalLLaMA/comments/1tc1d3c/is_it_worth_getting_a_5090_for_my_needs/olkulwp/), r/ClaudeAI (https://old.reddit.com/r/ClaudeAI/comments/1tc1o81/i_built_skills_curator_a_contextaware_claude/olkuwsi/), r/ChatGPT (https://old.reddit.com/r/ChatGPT/comments/1tbfzs6/ive_been_customizing_codex_to_do_automated/olkv6fd/), r/codex (https://old.reddit.com/r/codex/comments/1tbyd5c/most_vibecoders_have_poor_project_management/olkvjy3/), r/VibeCodingSaaS (https://old.reddit.com/r/VibeCodingSaaS/comments/1tbf0x7/every_session_ends_with_a_10layer_audit_heres/olkvu31/), r/ClaudeCode memory/guard threads (https://old.reddit.com/r/ClaudeCode/comments/1tc1h7w/are_you_guys_actually_using_memory/olkz22s/ and https://old.reddit.com/r/ClaudeCode/comments/1tc2k1z/one_thumbsdown_stopped_my_claude_code_agent_from/oll34lg/), and an r/artificial agent-security thread (https://old.reddit.com/r/artificial/comments/1tc1570/built_a_tool_that_stops_ai_agents_from_being/oll6eke/)."
     },
     {
       "id": "x-launch-thread",
@@ -70,10 +75,11 @@
       "manualRuleCheckCompleted": false,
       "postSubmitChecksCompleted": [
         "Record the LinkedIn post URL.",
-        "Verify the preview points at the public paper or repo URL."
+        "Verify the preview points at the public paper or repo URL.",
+        "Verify the LinkedIn thread includes the GitHub repo URL."
       ],
       "blocker": null,
-      "notes": "LinkedIn reported Post successful and exposes the post at the recorded update URL; the published post contains the Audrey launch text and LinkedIn's shortened outbound link for the public paper URL."
+      "notes": "LinkedIn reported Post successful and exposes the post at the recorded update URL; the published post contains the Audrey launch text and LinkedIn's shortened outbound link for the public paper URL. A follow-up comment was posted on the same LinkedIn update with the GitHub repo URL https://github.com/Evilander/Audrey."
     }
   ]
 }
