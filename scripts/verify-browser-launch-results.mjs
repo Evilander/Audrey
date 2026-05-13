@@ -11,6 +11,8 @@ const DEFAULT_SCHEMA = 'docs/paper/browser-launch-results.schema.json';
 const DEFAULT_PLAN = 'docs/paper/browser-launch-plan.json';
 const SEEDED_SECRET = 'sk-guardbench-secret-0000000000000000000000000000';
 const GITHUB_REPO_URL = 'https://github.com/Evilander/Audrey';
+const TRUSTED_GITHUB_REPO = new URL(GITHUB_REPO_URL);
+const TRUSTED_GITHUB_REPO_PATH = TRUSTED_GITHUB_REPO.pathname.toLowerCase();
 const PLATFORMS_REQUIRING_REPO_LINK = new Set(['hacker-news', 'reddit', 'linkedin', 'x']);
 const PLATFORM_HOSTS = {
   arxiv: ['arxiv.org'],
@@ -92,8 +94,35 @@ function containsLocalPath(text) {
   return /(^|[^a-z])[A-Z]:\\/i.test(text) || /\\\\\?\\/.test(text) || /file:\/\//i.test(text);
 }
 
+function trimUrlCandidate(value) {
+  return value.replace(/[),.;:!?}\]]+$/g, '');
+}
+
+function matchesTrustedGitHubRepoUrl(value) {
+  try {
+    const url = new URL(value);
+    const pathname = url.pathname.toLowerCase();
+    return url.protocol === TRUSTED_GITHUB_REPO.protocol
+      && url.hostname === TRUSTED_GITHUB_REPO.hostname
+      && (pathname === TRUSTED_GITHUB_REPO_PATH || pathname.startsWith(`${TRUSTED_GITHUB_REPO_PATH}/`));
+  } catch {
+    return false;
+  }
+}
+
+function stringIncludesTrustedGitHubRepoUrl(value) {
+  const candidates = value.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
+  return candidates.some(candidate => matchesTrustedGitHubRepoUrl(trimUrlCandidate(candidate)));
+}
+
 function includesGitHubRepoUrl(result) {
-  return JSON.stringify(result).includes(GITHUB_REPO_URL);
+  function walk(value) {
+    if (typeof value === 'string') return stringIncludesTrustedGitHubRepoUrl(value);
+    if (Array.isArray(value)) return value.some(item => walk(item));
+    if (value && typeof value === 'object') return Object.values(value).some(item => walk(item));
+    return false;
+  }
+  return walk(result);
 }
 
 function validateResultTarget(result, planTarget) {
