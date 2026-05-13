@@ -3,13 +3,33 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_VERSION = '1.0.0';
 const DEFAULT_ARTIFACT_DIR = '.tmp/release-artifacts';
 const NPM_REGISTRY = 'https://registry.npmjs.org/';
+const RELEASE_COMMANDS = new Set(['git', 'node', 'npm', 'python']);
+const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+const INHERITED_ENV_KEYS = [
+  'PATH',
+  'Path',
+  'PATHEXT',
+  'SystemRoot',
+  'SYSTEMROOT',
+  'WINDIR',
+  'HOME',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'TEMP',
+  'TMP',
+  'NPM_CONFIG_USERCONFIG',
+  'NPM_TOKEN',
+  'TWINE_USERNAME',
+  'TWINE_PASSWORD',
+];
 
 function fromRoot(path) {
   return resolve(ROOT, path);
@@ -17,6 +37,57 @@ function fromRoot(path) {
 
 function readJson(path) {
   return JSON.parse(readFileSync(fromRoot(path), 'utf-8'));
+}
+
+function safeString(value, label) {
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
+    throw new Error(`${label} must be a non-empty string without NUL bytes`);
+  }
+  return value;
+}
+
+function safeVersion(value) {
+  const version = safeString(value, '--version');
+  if (!RELEASE_VERSION_PATTERN.test(version)) {
+    throw new Error(`Invalid release version: ${version}`);
+  }
+  return version;
+}
+
+function safeRepoRelativePath(value, label) {
+  const raw = safeString(value, label);
+  const resolved = fromRoot(raw);
+  const rel = relative(ROOT, resolved);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error(`${label} must stay inside the Audrey repository`);
+  }
+  return rel.replaceAll('\\', '/');
+}
+
+function normalizeArgs(args) {
+  args.version = safeVersion(args.version);
+  args.artifactDir = safeRepoRelativePath(args.artifactDir, '--artifact-dir');
+  if (args.commitMessage !== null) args.commitMessage = safeString(args.commitMessage, '--commit-message');
+  if (args.npmOtp !== null) args.npmOtp = safeString(args.npmOtp, '--npm-otp');
+  return args;
+}
+
+function releaseEnv(extra = {}) {
+  const env = {};
+  for (const key of INHERITED_ENV_KEYS) {
+    if (process.env[key]) env[key] = process.env[key];
+  }
+  for (const [key, value] of Object.entries(extra)) {
+    env[key] = safeString(String(value), `environment ${key}`);
+  }
+  return {
+    ...env,
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'never',
+    GIT_ASKPASS: '',
+    SSH_ASKPASS: '',
+    TWINE_NON_INTERACTIVE: '1',
+  };
 }
 
 function parseArgs(argv = process.argv.slice(2)) {
@@ -63,7 +134,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     else throw new Error(`Unknown argument: ${token}`);
   }
 
-  return args;
+  return normalizeArgs(args);
 }
 
 function usage() {
@@ -88,10 +159,14 @@ Options:
 }
 
 function commandFor(command, args) {
-  if (process.platform === 'win32' && command === 'npm') {
-    return { command: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/c', 'npm', ...args] };
+  if (!RELEASE_COMMANDS.has(command)) {
+    throw new Error(`Unsupported release command: ${command}`);
   }
-  return { command, args };
+  const safeArgs = args.map((arg, index) => safeString(String(arg), `${command} argument ${index + 1}`));
+  if (process.platform === 'win32' && command === 'npm') {
+    return { command: 'cmd.exe', args: ['/d', '/c', 'npm', ...safeArgs] };
+  }
+  return { command, args: safeArgs };
 }
 
 function run(command, args, options = {}) {
@@ -101,15 +176,7 @@ function run(command, args, options = {}) {
     encoding: 'utf-8',
     stdio: options.stdio ?? 'pipe',
     timeout: options.timeout ?? 120_000,
-    env: {
-      ...process.env,
-      GIT_TERMINAL_PROMPT: '0',
-      GCM_INTERACTIVE: 'never',
-      GIT_ASKPASS: '',
-      SSH_ASKPASS: '',
-      TWINE_NON_INTERACTIVE: '1',
-      ...options.env,
-    },
+    env: releaseEnv(options.env),
   });
   return {
     command: [command, ...args].join(' '),
