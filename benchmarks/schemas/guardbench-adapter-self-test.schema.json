@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/guardbench-adapter-self-test.schema.json",
+  "title": "GuardBench Adapter Self-Test",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "suite",
+    "generatedAt",
+    "ok",
+    "adapter",
+    "conformance",
+    "score",
+    "contract",
+    "failures"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "suite": { "const": "GuardBench adapter self-test" },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "ok": { "type": "boolean" },
+    "adapter": { "$ref": "#/$defs/adapter" },
+    "conformance": { "$ref": "#/$defs/conformance" },
+    "score": { "$ref": "#/$defs/score" },
+    "contract": { "$ref": "#/$defs/contract" },
+    "failures": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path", "moduleFile", "description"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "moduleFile": { "type": "string", "minLength": 1 },
+        "description": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "conformance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "adapter",
+        "requestedAdapter",
+        "scenarios",
+        "expectedScenarios",
+        "fullContractPassRate",
+        "decisionAccuracy",
+        "redactionLeaks",
+        "failures"
+      ],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "adapter": { "type": "string", "minLength": 1 },
+        "requestedAdapter": { "type": "string", "minLength": 1 },
+        "scenarios": { "type": "integer", "minimum": 0 },
+        "expectedScenarios": { "type": "integer", "minimum": 0 },
+        "fullContractPassRate": { "$ref": "#/$defs/nullableRate" },
+        "decisionAccuracy": { "$ref": "#/$defs/nullableRate" },
+        "redactionLeaks": { "$ref": "#/$defs/nullableNumber" },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenarios",
+        "fullContractPassRate",
+        "decisionAccuracy",
+        "evidenceRecall",
+        "redactionLeaks",
+        "latency"
+      ],
+      "properties": {
+        "scenarios": { "type": "integer", "minimum": 0 },
+        "fullContractPassRate": { "$ref": "#/$defs/nullableRate" },
+        "decisionAccuracy": { "$ref": "#/$defs/nullableRate" },
+        "evidenceRecall": { "$ref": "#/$defs/nullableRate" },
+        "redactionLeaks": { "$ref": "#/$defs/nullableNumber" },
+        "latency": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["p50Ms", "p95Ms", "maxMs"],
+              "properties": {
+                "p50Ms": { "type": "number", "minimum": 0 },
+                "p95Ms": { "type": "number", "minimum": 0 },
+                "maxMs": { "type": "number", "minimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expectedAnswersWithheld",
+        "lowScoreAllowed",
+        "requiredScenarioRows",
+        "requiredResultFields",
+        "redactionLeakTolerance"
+      ],
+      "properties": {
+        "expectedAnswersWithheld": { "const": true },
+        "lowScoreAllowed": { "const": true },
+        "requiredScenarioRows": { "type": "integer", "minimum": 1 },
+        "requiredResultFields": {
+          "type": "array",
+          "minItems": 6,
+          "items": {
+            "enum": [
+              "decision",
+              "riskScore",
+              "evidenceIds",
+              "recommendedActions",
+              "summary",
+              "recallErrors"
+            ]
+          }
+        },
+        "redactionLeakTolerance": { "const": 0 }
+      }
+    },
+    "nullableNumber": {
+      "anyOf": [
+        { "type": "number", "minimum": 0 },
+        { "type": "null" }
+      ]
+    },
+    "nullableRate": {
+      "anyOf": [
+        { "type": "number", "minimum": 0, "maximum": 1 },
+        { "type": "null" }
+      ]
+    }
+  }
+}

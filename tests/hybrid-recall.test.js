@@ -79,6 +79,10 @@ describe('hybrid-recall — RRF fusion', () => {
     expect(out.get('episodic') ?? []).toEqual([]);
   });
 
+  it("ftsIdsByType sanitizes path punctuation", () => {
+    expect(() => ftsIdsByType(audrey.db, 'cwd:B:\\projects\\claude\\audrey\\.tmp-vitest tool:Bash', ['episodic'], 10)).not.toThrow();
+  });
+
   it("hybrid respects tag filters on FTS-only hits", async () => {
     await audrey.encode({ content: 'alpha-tagged memory about deploys', source: 'direct-observation', tags: ['alpha'] });
     await audrey.encode({ content: 'beta-tagged memory about deploys', source: 'direct-observation', tags: ['beta'] });
@@ -86,6 +90,20 @@ describe('hybrid-recall — RRF fusion', () => {
     const results = await audrey.recall('deploys', { retrieval: 'hybrid', tags: ['alpha'], limit: 5 });
     expect(results.every(r => r.content.includes('alpha-tagged'))).toBe(true);
     expect(results.some(r => r.content.includes('beta-tagged'))).toBe(false);
+  });
+
+  it("hybrid requires all requested tags on FTS-only hits", async () => {
+    await audrey.encode({ content: 'memorygym alpha deploy note', source: 'direct-observation', tags: ['memorygym', 'run-a', 'scenario-alpha'] });
+    await audrey.encode({ content: 'memorygym beta deploy note', source: 'direct-observation', tags: ['memorygym', 'run-a', 'scenario-beta'] });
+
+    const results = await audrey.recall('deploy note', {
+      retrieval: 'hybrid',
+      tags: ['memorygym', 'run-a', 'scenario-alpha'],
+      limit: 5,
+    });
+
+    expect(results.some(r => r.content.includes('alpha deploy'))).toBe(true);
+    expect(results.some(r => r.content.includes('beta deploy'))).toBe(false);
   });
 
   it("hybrid respects source filters on FTS-only hits", async () => {

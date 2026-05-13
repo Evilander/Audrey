@@ -93,12 +93,13 @@ class RecallResult(AudreyModel):
 
 class RecallError(AudreyModel):
     type: str | None = None
+    stage: str | None = None
     message: str | None = None
 
 
 class RecallResponse(AudreyModel):
     results: list[RecallResult] = Field(default_factory=list)
-    partialFailure: bool = False
+    partialFailure: bool = Field(default=False, alias="partial_failure")
     errors: list[RecallError] = Field(default_factory=list)
 
 

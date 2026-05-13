@@ -1,0 +1,209 @@
+{
+  "schemaVersion": "1.0.0",
+  "suite": "Audrey browser launch plan",
+  "checkedAt": "2026-05-13",
+  "publicationPack": "docs/paper/publication-pack.json",
+  "sources": [
+    {
+      "id": "arxiv-submission-guidelines",
+      "url": "https://info.arxiv.org/help/submit/index.html",
+      "checkedAt": "2026-05-13",
+      "notes": "Use the registered-author user page to start a new submission; verify uploaded files and metadata before final submit."
+    },
+    {
+      "id": "arxiv-category-taxonomy",
+      "url": "https://arxiv.org/category_taxonomy",
+      "checkedAt": "2026-05-13",
+      "notes": "cs.AI covers artificial intelligence; cs.CR covers cryptography and security. Use cs.AI primary and cs.CR secondary only if the final paper framing still matches both."
+    },
+    {
+      "id": "hacker-news-guidelines",
+      "url": "https://news.ycombinator.com/newsguidelines.html",
+      "checkedAt": "2026-05-13",
+      "notes": "Use a neutral title, submit the original source, avoid promotion-first behavior, do not solicit votes or comments, and keep comments human-written."
+    },
+    {
+      "id": "hacker-news-submit",
+      "url": "https://news.ycombinator.com/submit",
+      "checkedAt": "2026-05-13",
+      "notes": "Submission form for title, URL, and optional text/comment after login."
+    },
+    {
+      "id": "reddit-submit-api",
+      "url": "https://www.reddit.com/dev/api/",
+      "checkedAt": "2026-05-13",
+      "notes": "Reddit submit supports link or self posts, titles up to 300 characters, subreddit selection, and captcha fields."
+    },
+    {
+      "id": "reddit-spam-policy",
+      "url": "https://support.reddithelp.com/hc/en-us/articles/360043504051-What-constitutes-spam",
+      "checkedAt": "2026-05-13",
+      "notes": "Avoid repeated, unsolicited, mass, or automation-assisted posting. Check subreddit rules before any self-promotional post."
+    },
+    {
+      "id": "x-web-intent",
+      "url": "https://developer.x.com/en/docs/twitter-for-websites/tweet-button/guides/web-intent",
+      "checkedAt": "2026-05-13",
+      "notes": "Tweet intent supports prefilled text and enforces the 280-character limit across text, URL, hashtags, and via fields."
+    },
+    {
+      "id": "x-counting-characters",
+      "url": "https://docs.x.com/fundamentals/counting-characters",
+      "checkedAt": "2026-05-13",
+      "notes": "X wraps valid URLs with t.co and counts each detected URL as 23 characters, so the publication pack uses reservedUrlChars: 24 including a separator."
+    },
+    {
+      "id": "linkedin-share-help",
+      "url": "https://www.linkedin.com/help/linkedin/answer/a525301/sharing-articles-or-links",
+      "checkedAt": "2026-05-13",
+      "notes": "Use the LinkedIn home feed share box; posts can include text up to 3000 characters plus a URL preview."
+    }
+  ],
+  "preflightCommands": [
+    "npm run release:gate:paper",
+    "npm run paper:publication-pack",
+    "npm run paper:bundle:verify",
+    "npm run paper:launch-plan"
+  ],
+  "targets": [
+    {
+      "id": "arxiv-preprint",
+      "platform": "arxiv",
+      "label": "arXiv preprint submission",
+      "order": 1,
+      "url": "https://arxiv.org/user/",
+      "status": "blocked-until-login",
+      "authRequired": true,
+      "humanRequired": true,
+      "captchaPossible": false,
+      "manualRuleCheckRequired": true,
+      "contentEntryIds": ["arxiv-title", "arxiv-abstract"],
+      "artifactRefs": [
+        "docs/paper/output/arxiv/",
+        "docs/paper/audrey-paper-v1.md",
+        "docs/paper/references.bib",
+        "docs/paper/output/submission-bundle/"
+      ],
+      "sourceRefs": ["arxiv-submission-guidelines", "arxiv-category-taxonomy"],
+      "operatorChecks": [
+        "Confirm the logged-in account is a registered arXiv author and has endorsement if arXiv requests it.",
+        "Convert the Markdown paper to the chosen arXiv upload format before final submit.",
+        "Use cs.AI as the primary category and cs.CR as secondary only after reviewing the final arXiv category screen.",
+        "Preview the compiled PDF and metadata before pressing the final submit button."
+      ],
+      "postSubmitChecks": [
+        "Record the arXiv identifier or pending submission ID.",
+        "Update launch links in the publication copy before posting to social channels."
+      ]
+    },
+    {
+      "id": "hacker-news-show",
+      "platform": "hacker-news",
+      "label": "Hacker News Show HN submission",
+      "order": 2,
+      "url": "https://news.ycombinator.com/submit",
+      "status": "blocked-until-artifact-url",
+      "authRequired": true,
+      "humanRequired": true,
+      "captchaPossible": false,
+      "manualRuleCheckRequired": true,
+      "contentEntryIds": ["hacker-news-title", "hacker-news-comment"],
+      "artifactRefs": [
+        "docs/paper/publication-pack.json",
+        "README.md",
+        "docs/paper/output/submission-bundle/"
+      ],
+      "sourceRefs": ["hacker-news-guidelines", "hacker-news-submit"],
+      "operatorChecks": [
+        "Use the original public URL after the paper or repo release is live.",
+        "Keep the title neutral and at or below the Hacker News 80-character title target.",
+        "Do not solicit votes, comments, or submissions from anyone.",
+        "Write any follow-up comments manually; do not paste generated replies."
+      ],
+      "postSubmitChecks": [
+        "Record the HN item URL.",
+        "Stay available to answer questions in the thread without marketing language."
+      ]
+    },
+    {
+      "id": "reddit-discussion",
+      "platform": "reddit",
+      "label": "Reddit discussion post",
+      "order": 3,
+      "url": "https://www.reddit.com/submit",
+      "status": "blocked-until-login",
+      "authRequired": true,
+      "humanRequired": true,
+      "captchaPossible": true,
+      "manualRuleCheckRequired": true,
+      "contentEntryIds": ["reddit-title", "reddit-body"],
+      "artifactRefs": [
+        "docs/paper/publication-pack.json",
+        "docs/paper/output/submission-bundle/"
+      ],
+      "sourceRefs": ["reddit-submit-api", "reddit-spam-policy"],
+      "operatorChecks": [
+        "Choose exactly one subreddit after reading that community's current rules and self-promotion policy in the browser.",
+        "Do not cross-post the same launch copy to multiple subreddits.",
+        "Disclose author affiliation plainly if the chosen subreddit allows the post.",
+        "Handle any captcha or subreddit flair requirement manually."
+      ],
+      "postSubmitChecks": [
+        "Record the Reddit post URL and selected subreddit.",
+        "If removed, do not repost without moderator guidance or materially different context."
+      ]
+    },
+    {
+      "id": "x-launch-thread",
+      "platform": "x",
+      "label": "X launch thread",
+      "order": 4,
+      "url": "https://twitter.com/intent/tweet",
+      "status": "blocked-until-artifact-url",
+      "authRequired": true,
+      "humanRequired": true,
+      "captchaPossible": true,
+      "manualRuleCheckRequired": false,
+      "contentEntryIds": ["x-post-1", "x-post-2"],
+      "artifactRefs": [
+        "docs/paper/publication-pack.json"
+      ],
+      "sourceRefs": ["x-web-intent", "x-counting-characters"],
+      "operatorChecks": [
+        "Use the publication-pack URL reserve before appending the public paper or repo URL.",
+        "Post the second entry as a human-authored reply, not as an automated batch.",
+        "Do not claim external Mem0/Zep scores unless strict evidence has passed."
+      ],
+      "postSubmitChecks": [
+        "Record the first post URL.",
+        "Check that the thread links to the final public artifact, not a local path."
+      ]
+    },
+    {
+      "id": "linkedin-launch-post",
+      "platform": "linkedin",
+      "label": "LinkedIn launch post",
+      "order": 5,
+      "url": "https://www.linkedin.com/feed/",
+      "status": "blocked-until-artifact-url",
+      "authRequired": true,
+      "humanRequired": true,
+      "captchaPossible": true,
+      "manualRuleCheckRequired": false,
+      "contentEntryIds": ["linkedin-post"],
+      "artifactRefs": [
+        "docs/paper/publication-pack.json"
+      ],
+      "sourceRefs": ["linkedin-share-help"],
+      "operatorChecks": [
+        "Paste the final public URL into the share box and wait for the link preview.",
+        "Keep the post within LinkedIn's 3000-character text limit.",
+        "Do not claim external Mem0/Zep scores unless strict evidence has passed."
+      ],
+      "postSubmitChecks": [
+        "Record the LinkedIn post URL.",
+        "Verify the preview points at the public paper or repo URL."
+      ]
+    }
+  ]
+}

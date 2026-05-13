@@ -72,9 +72,28 @@ describe('HTTP API', () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(Array.isArray(body)).toBe(true);
-    expect(body.length).toBeGreaterThan(0);
-    expect(body[0].content).toContain('SQLite');
+    expect(Array.isArray(body.results)).toBe(true);
+    expect(body.partial_failure).toBe(false);
+    expect(body.errors).toEqual([]);
+    expect(body.results.length).toBeGreaterThan(0);
+    expect(body.results[0].content).toContain('SQLite');
+  });
+
+  it('POST /v1/recall serializes recall degradation diagnostics', async () => {
+    await audrey.encode({ content: 'The deployment checklist mentions SQLite migrations', source: 'direct-observation' });
+    audrey.db.exec('DROP TABLE fts_episodes');
+
+    const res = await app.request('/v1/recall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'SQLite migrations', retrieval: 'hybrid' }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Array.isArray(body.results)).toBe(true);
+    expect(body.partial_failure).toBe(true);
+    expect(body.errors.some(error => error.type === 'fts' && error.stage === 'recall.fts_lookup')).toBe(true);
   });
 
   it('POST /v1/capsule returns a structured memory packet', async () => {
@@ -126,6 +145,44 @@ describe('HTTP API', () => {
     expect(body.warnings.some(w => w.type === 'recent_failure')).toBe(true);
     expect(body.preflight_event_id).toMatch(/^01/);
     expect(body.capsule).toBeUndefined();
+  });
+
+  it('POST /v1/validate binds feedback to a preflight event', async () => {
+    const memoryId = await audrey.encode({
+      content: 'Never run release automation before npm pack --dry-run passes.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'release'],
+    });
+
+    const preflightRes = await app.request('/v1/preflight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'run release automation',
+        tool: 'Bash',
+        record_event: true,
+      }),
+    });
+    const preflight = await preflightRes.json();
+    expect(preflight.preflight_event_id).toMatch(/^01/);
+    expect(preflight.evidence_ids).toContain(memoryId);
+
+    const validateRes = await app.request('/v1/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: memoryId,
+        outcome: 'helpful',
+        preflight_event_id: preflight.preflight_event_id,
+        evidence_ids: preflight.evidence_ids,
+      }),
+    });
+
+    expect(validateRes.status).toBe(200);
+    const body = await validateRes.json();
+    expect(body.ok).toBe(true);
+    expect(body.preflightEventId).toBe(preflight.preflight_event_id);
+    expect(body.evidenceIds).toContain(memoryId);
   });
 
   it('POST /v1/reflexes returns trigger-response memory reflexes', async () => {
@@ -322,6 +379,18 @@ describe('HTTP API', () => {
     expect(typeof body.healthy).toBe('boolean');
   });
 
+  it('GET /v1/status exposes the latest recall degradation signal', async () => {
+    await audrey.encode({ content: 'status degraded recall memory', source: 'direct-observation' });
+    audrey.db.exec('DROP TABLE fts_episodes');
+    await audrey.recall('status degraded recall memory', { types: ['episodic'], retrieval: 'hybrid' });
+
+    const res = await app.request('/v1/status');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.recall_degraded).toBe(true);
+    expect(body.last_recall_errors.some(error => error.type === 'fts')).toBe(true);
+  });
+
   it('GET /v1/export is disabled unless admin tools are enabled', async () => {
     const res = await app.request('/v1/export');
     expect(res.status).toBe(403);
@@ -410,7 +479,7 @@ describe('HTTP API', () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    for (const result of body) {
+    for (const result of body.results) {
       expect(result.content).not.toContain('sk-secret-xxxx');
       expect(result.content).not.toContain('PRIVATE:');
     }
@@ -438,7 +507,7 @@ describe('HTTP API', () => {
         confidenceConfig: { weights: { affect: 999 } },
       }),
     });
-    expect((await baseline.json()).map(r => r.id)).toEqual((await tampered.json()).map(r => r.id));
+    expect((await baseline.json()).results.map(r => r.id)).toEqual((await tampered.json()).results.map(r => r.id));
   });
 
   it('POST /v1/validate adjusts salience and returns the new state', async () => {

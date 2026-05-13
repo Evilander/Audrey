@@ -170,16 +170,20 @@ class Audrey:
     def recall(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any):
         request = _build_model_payload(payload, RecallRequest, "query", kwargs)
         data = _decode_json(self._client.post("/v1/recall", json=_dump_payload(request)))
-        # The TS server returns a bare list of results. Validate each row.
-        if not isinstance(data, list):
+        if isinstance(data, dict) and isinstance(data.get("results"), list):
+            data = data["results"]
+        elif not isinstance(data, list):
             raise TypeError(f"unexpected /v1/recall payload shape: {type(data).__name__}")
         return [_validate(RecallResult, row) for row in data]
 
     def recall_response(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> RecallResponse:
-        # Wraps recall() into a RecallResponse for callers that want the
-        # structured shape. The TS server returns a bare list at /v1/recall;
-        # we adapt client-side rather than changing the wire format.
-        return RecallResponse(results=self.recall(payload, **kwargs))
+        request = _build_model_payload(payload, RecallRequest, "query", kwargs)
+        data = _decode_json(self._client.post("/v1/recall", json=_dump_payload(request)))
+        if isinstance(data, list):
+            return RecallResponse(results=[_validate(RecallResult, row) for row in data])
+        if isinstance(data, dict):
+            return _validate(RecallResponse, data)
+        raise TypeError(f"unexpected /v1/recall payload shape: {type(data).__name__}")
 
     def dream(self, payload: DreamRequest | Mapping[str, Any] | None = None, /, **kwargs: Any) -> OperationResult:
         request = _optional_model_payload(payload, DreamRequest, kwargs)
@@ -201,7 +205,15 @@ class Audrey:
         data = _decode_json(self._client.post("/v1/mark-used", json=_dump_payload(request)))
         return _validate(AckResponse, data)
 
-    def validate(self, memory_id: str, outcome: str = "used") -> dict[str, Any]:
+    def validate(
+        self,
+        memory_id: str,
+        outcome: str = "used",
+        *,
+        preflight_event_id: str | None = None,
+        action_key: str | None = None,
+        evidence_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Closed-loop feedback. outcome is one of {"used","helpful","wrong"}.
 
         "helpful" reinforces salience and retrieval. "wrong" decreases
@@ -210,7 +222,14 @@ class Audrey:
         """
         if outcome not in ("used", "helpful", "wrong"):
             raise ValueError(f"outcome must be used|helpful|wrong, got {outcome!r}")
-        return _decode_json(self._client.post("/v1/validate", json={"id": memory_id, "outcome": outcome}))
+        payload: dict[str, Any] = {"id": memory_id, "outcome": outcome}
+        if preflight_event_id is not None:
+            payload["preflight_event_id"] = preflight_event_id
+        if action_key is not None:
+            payload["action_key"] = action_key
+        if evidence_ids is not None:
+            payload["evidence_ids"] = evidence_ids
+        return _decode_json(self._client.post("/v1/validate", json=payload))
 
     def forget(
         self,
@@ -295,12 +314,20 @@ class AsyncAudrey:
     async def recall(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any):
         request = _build_model_payload(payload, RecallRequest, "query", kwargs)
         data = _decode_json(await self._client.post("/v1/recall", json=_dump_payload(request)))
-        if not isinstance(data, list):
+        if isinstance(data, dict) and isinstance(data.get("results"), list):
+            data = data["results"]
+        elif not isinstance(data, list):
             raise TypeError(f"unexpected /v1/recall payload shape: {type(data).__name__}")
         return [_validate(RecallResult, row) for row in data]
 
     async def recall_response(self, payload: RecallRequest | Mapping[str, Any] | str, /, **kwargs: Any) -> RecallResponse:
-        return RecallResponse(results=await self.recall(payload, **kwargs))
+        request = _build_model_payload(payload, RecallRequest, "query", kwargs)
+        data = _decode_json(await self._client.post("/v1/recall", json=_dump_payload(request)))
+        if isinstance(data, list):
+            return RecallResponse(results=[_validate(RecallResult, row) for row in data])
+        if isinstance(data, dict):
+            return _validate(RecallResponse, data)
+        raise TypeError(f"unexpected /v1/recall payload shape: {type(data).__name__}")
 
     async def dream(self, payload: DreamRequest | Mapping[str, Any] | None = None, /, **kwargs: Any) -> OperationResult:
         request = _optional_model_payload(payload, DreamRequest, kwargs)
@@ -322,11 +349,26 @@ class AsyncAudrey:
         data = _decode_json(await self._client.post("/v1/mark-used", json=_dump_payload(request)))
         return _validate(AckResponse, data)
 
-    async def validate(self, memory_id: str, outcome: str = "used") -> dict[str, Any]:
+    async def validate(
+        self,
+        memory_id: str,
+        outcome: str = "used",
+        *,
+        preflight_event_id: str | None = None,
+        action_key: str | None = None,
+        evidence_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Closed-loop feedback. See sync validate()."""
         if outcome not in ("used", "helpful", "wrong"):
             raise ValueError(f"outcome must be used|helpful|wrong, got {outcome!r}")
-        return _decode_json(await self._client.post("/v1/validate", json={"id": memory_id, "outcome": outcome}))
+        payload: dict[str, Any] = {"id": memory_id, "outcome": outcome}
+        if preflight_event_id is not None:
+            payload["preflight_event_id"] = preflight_event_id
+        if action_key is not None:
+            payload["action_key"] = action_key
+        if evidence_ids is not None:
+            payload["evidence_ids"] = evidence_ids
+        return _decode_json(await self._client.post("/v1/validate", json=payload))
 
     async def forget(
         self,

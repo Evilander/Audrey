@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/guardbench-summary.schema.json",
+  "title": "GuardBench Summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "suite",
+    "generatedAt",
+    "manifest",
+    "provenance",
+    "subjects",
+    "scenarios",
+    "passed",
+    "passRate",
+    "preventionRate",
+    "falseBlockRate",
+    "decisionAccuracy",
+    "evidenceRecall",
+    "redactionLeaks",
+    "recallDegradationDetectionRate",
+    "latency",
+    "systemSummaries",
+    "comparisons",
+    "rows",
+    "cases",
+    "artifactRedactionSweep"
+  ],
+  "properties": {
+    "suite": { "const": "GuardBench comparative" },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "manifest": { "type": "object" },
+    "provenance": { "type": "object" },
+    "subjects": {
+      "type": "array",
+      "minItems": 5,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "scenarios": { "type": "integer", "minimum": 10 },
+    "passed": { "type": "integer", "minimum": 0 },
+    "passRate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "preventionRate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "falseBlockRate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "decisionAccuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+    "usefulWarningPrecision": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "number", "minimum": 0, "maximum": 1 }
+      ]
+    },
+    "evidenceRecall": { "type": "number", "minimum": 0, "maximum": 1 },
+    "redactionLeaks": { "type": "integer", "minimum": 0 },
+    "recallDegradationDetectionRate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "latency": { "$ref": "#/$defs/latency" },
+    "systemSummaries": {
+      "type": "array",
+      "minItems": 5,
+      "items": { "$ref": "#/$defs/systemSummary" }
+    },
+    "comparisons": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bestBaseline", "audreyMarginOverBestBaseline"],
+      "properties": {
+        "bestBaseline": { "$ref": "#/$defs/systemSummary" },
+        "audreyMarginOverBestBaseline": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "number", "minimum": 0, "maximum": 1 }
+          ]
+        }
+      }
+    },
+    "rows": {
+      "type": "array",
+      "minItems": 10,
+      "items": { "$ref": "#/$defs/resultRow" }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 10,
+      "items": { "$ref": "#/$defs/caseResult" }
+    },
+    "artifactRedactionSweep": { "$ref": "#/$defs/artifactRedactionSweep" }
+  },
+  "$defs": {
+    "latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["p50Ms", "p95Ms", "maxMs"],
+      "properties": {
+        "p50Ms": { "type": "number", "minimum": 0 },
+        "p95Ms": { "type": "number", "minimum": 0 },
+        "maxMs": { "type": "number", "minimum": 0 }
+      }
+    },
+    "systemSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "generatedAt",
+        "scenarios",
+        "passed",
+        "passRate",
+        "decisionCorrect",
+        "decisionAccuracy",
+        "preventionRate",
+        "falseBlockRate",
+        "usefulWarningPrecision",
+        "evidenceRecall",
+        "redactionLeaks",
+        "recallDegradationDetectionRate",
+        "latency"
+      ],
+      "properties": {
+        "system": { "type": "string", "minLength": 1 },
+        "generatedAt": { "type": "string", "minLength": 1 },
+        "scenarios": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "passRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "decisionCorrect": { "type": "integer", "minimum": 0 },
+        "decisionAccuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+        "preventionRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "falseBlockRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "usefulWarningPrecision": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "number", "minimum": 0, "maximum": 1 }
+          ]
+        },
+        "evidenceRecall": { "type": "number", "minimum": 0, "maximum": 1 },
+        "redactionLeaks": { "type": "integer", "minimum": 0 },
+        "recallDegradationDetectionRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "latency": { "$ref": "#/$defs/latency" }
+      }
+    },
+    "resultRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "id",
+        "name",
+        "expectedDecision",
+        "decision",
+        "decisionCorrect",
+        "riskScore",
+        "passed",
+        "latencyMs",
+        "evidenceCount",
+        "evidenceIds",
+        "recommendedActions",
+        "summary",
+        "recallErrors",
+        "leakedSecrets",
+        "requiredEvidenceMatched"
+      ],
+      "properties": {
+        "system": { "type": "string", "minLength": 1 },
+        "external": { "type": "boolean" },
+        "id": { "type": "string", "pattern": "^GB-[0-9]{2}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "expectedDecision": { "enum": ["allow", "warn", "block"] },
+        "decision": { "enum": ["allow", "warn", "block"] },
+        "decisionCorrect": { "type": "boolean" },
+        "riskScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "passed": { "type": "boolean" },
+        "latencyMs": { "type": "number", "minimum": 0 },
+        "evidenceCount": { "type": "integer", "minimum": 0 },
+        "evidenceIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "recommendedActions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "summary": { "type": "string", "minLength": 1 },
+        "recallErrors": { "type": "array" },
+        "leakedSecrets": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "requiredEvidenceMatched": { "type": "boolean" }
+      }
+    },
+    "caseResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "expectedDecision", "results"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^GB-[0-9]{2}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "expectedDecision": { "enum": ["allow", "warn", "block"] },
+        "results": {
+          "type": "array",
+          "minItems": 5,
+          "items": { "$ref": "#/$defs/resultRow" }
+        }
+      }
+    },
+    "artifactRedactionSweep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checkedAt",
+        "filesChecked",
+        "seededSecretsChecked",
+        "leakCount",
+        "leaks",
+        "passed"
+      ],
+      "properties": {
+        "checkedAt": { "type": "string", "minLength": 1 },
+        "filesChecked": {
+          "type": "array",
+          "minItems": 3,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "seededSecretsChecked": { "type": "integer", "minimum": 0 },
+        "leakCount": { "type": "integer", "minimum": 0 },
+        "leaks": { "type": "array" },
+        "passed": { "type": "boolean" }
+      }
+    }
+  }
+}

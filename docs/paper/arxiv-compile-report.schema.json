@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/audrey-arxiv-compile-report.schema.json",
+  "title": "Audrey arXiv Compile Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "suite",
+    "generatedAt",
+    "source",
+    "outputDir",
+    "status",
+    "compiler",
+    "outputPdf",
+    "outputPdfSha256",
+    "logFile",
+    "blockers",
+    "failures"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "suite": { "const": "Audrey arXiv compile check" },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "source": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sourceDir",
+            "manifest",
+            "manifestSha256",
+            "mainTex",
+            "mainTexSha256",
+            "referencesBib",
+            "referencesBibSha256"
+          ],
+          "properties": {
+            "sourceDir": { "type": "string", "minLength": 1 },
+            "manifest": { "type": "string", "minLength": 1 },
+            "manifestSha256": { "$ref": "#/$defs/sha256" },
+            "mainTex": { "type": "string", "minLength": 1 },
+            "mainTexSha256": { "$ref": "#/$defs/sha256" },
+            "referencesBib": { "type": "string", "minLength": 1 },
+            "referencesBibSha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      ]
+    },
+    "outputDir": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["passed", "failed", "toolchain-missing"] },
+    "compiler": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "stages"],
+          "properties": {
+            "name": { "enum": ["tectonic", "latexmk", "pdflatex+bibtex", "uvx-tecto"] },
+            "stages": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["command", "args"],
+                "properties": {
+                  "command": { "type": "string", "minLength": 1 },
+                  "args": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "outputPdf": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1 }
+      ]
+    },
+    "outputPdfSha256": {
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/sha256" }
+      ]
+    },
+    "logFile": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "minLength": 1 }
+      ]
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "failures": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

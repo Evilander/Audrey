@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audrey-memory.org/schemas/guardbench-conformance-card.schema.json",
+  "title": "GuardBench Conformance Card",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "suite",
+    "generatedAt",
+    "sourceDir",
+    "manifestVersion",
+    "suiteId",
+    "subject",
+    "run",
+    "score",
+    "conformance",
+    "integrity",
+    "provenance"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "suite": { "const": "GuardBench conformance card" },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "sourceDir": { "type": "string", "minLength": 1 },
+    "manifestVersion": { "type": "string", "minLength": 1 },
+    "suiteId": { "type": "string", "minLength": 1 },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "requestedAdapter", "external"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "requestedAdapter": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "external": { "type": "boolean" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "startedAt", "completedAt", "command", "validationCommand"],
+      "properties": {
+        "status": { "type": "string", "minLength": 1 },
+        "startedAt": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "completedAt": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            { "type": "null" }
+          ]
+        },
+        "validationCommand": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "score": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenarios",
+        "fullContractPassed",
+        "fullContractPassRate",
+        "decisionAccuracy",
+        "evidenceRecall",
+        "redactionLeaks",
+        "latency"
+      ],
+      "properties": {
+        "scenarios": { "type": "integer", "minimum": 0 },
+        "fullContractPassed": { "$ref": "#/$defs/nullableNumber" },
+        "fullContractPassRate": { "$ref": "#/$defs/nullableRate" },
+        "decisionAccuracy": { "$ref": "#/$defs/nullableRate" },
+        "evidenceRecall": { "$ref": "#/$defs/nullableRate" },
+        "redactionLeaks": { "$ref": "#/$defs/nullableNumber" },
+        "latency": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["p50Ms", "p95Ms", "maxMs"],
+              "properties": {
+                "p50Ms": { "type": "number", "minimum": 0 },
+                "p95Ms": { "type": "number", "minimum": 0 },
+                "maxMs": { "type": "number", "minimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "conformance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "failures", "artifactValidationOk", "artifactValidationFailures"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "artifactValidationOk": { "type": "boolean" },
+        "artifactValidationFailures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactHashes", "externalRunMetadataHash"],
+      "properties": {
+        "artifactHashes": { "$ref": "#/$defs/artifactHashes" },
+        "externalRunMetadataHash": {
+          "anyOf": [
+            { "$ref": "#/$defs/sha256" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "provenance": { "type": "object" }
+  },
+  "$defs": {
+    "artifactHashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "guardbench-manifest.json",
+        "guardbench-summary.json",
+        "guardbench-raw.json"
+      ],
+      "properties": {
+        "guardbench-manifest.json": { "$ref": "#/$defs/sha256" },
+        "guardbench-summary.json": { "$ref": "#/$defs/sha256" },
+        "guardbench-raw.json": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "nullableNumber": {
+      "anyOf": [
+        { "type": "number", "minimum": 0 },
+        { "type": "null" }
+      ]
+    },
+    "nullableRate": {
+      "anyOf": [
+        { "type": "number", "minimum": 0, "maximum": 1 },
+        { "type": "null" }
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

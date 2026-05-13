@@ -108,8 +108,8 @@ Metrics:
 
 - Use the existing repeated-failure demo as the first qualitative figure.
 - Run `npm run bench:memory:check` as the memory-regression baseline.
-- Run `npm run bench:memory:guard` as the GuardBench draft until the paper artifact gets a dedicated harness.
-- Report machine provenance for all timings, matching the existing 0.23.0 benchmark snapshot style.
+- Keep the `bench:guard` command wired into release evidence before paper submission.
+- Report machine provenance for all timings, matching the existing 0.22.2 benchmark snapshot style.
 - Include ablations:
   - Without exact action hash.
   - Without file scope.
@@ -123,16 +123,18 @@ Metrics:
 - Why tool annotations are hints, not policy guarantees.
 - What Audrey borrows from graph memory without adding a graph database to the core.
 - Limitations:
-  - No real host hook installer yet.
-  - Validation is not fully bound to exact preflight event lineage yet.
-  - No public GuardBench numbers yet.
+  - Claude Code hook config can be applied with a guarded settings merge, but
+    equivalent Codex hook wiring still depends on a stable host hook surface.
+  - Validation lineage is bound to exact preflight event evidence, but feedback
+    does not yet tune risk scoring.
+  - Local comparative GuardBench numbers exist; no external-system numbers yet.
   - Temporal belief fields are still future work.
 
 ### 9. Conclusion
 
 - Agent memory should be judged by whether it changes future actions, not just whether it retrieves relevant text.
 - Audrey Guard demonstrates a practical local loop for using memory as a pre-action control layer.
-- The next publishable milestone is GuardBench plus host-hook integration.
+- The next publishable milestone is live external-adapter GuardBench output plus broader host-hook integration.
 
 ## Figures and Tables
 
@@ -145,8 +147,8 @@ Metrics:
 
 ## Artifact Checklist Before Submission
 
-- `bench:memory:guard` script output or a dedicated GuardBench JSON artifact.
-- Public GuardBench scenario manifest.
+- `bench:guard` script and JSON output.
+- Public GuardBench scenario manifest, comparative adapter package, and external-run metadata bundle.
 - Reproducible benchmark snapshot with Node version, CPU, RAM, git SHA.
 - CLI smoke transcript for `audrey demo --scenario repeated-failure`.
 - MCP smoke transcript for `tools/list`, `resources/list`, `prompts/list`, and `memory_status`.

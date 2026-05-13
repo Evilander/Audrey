@@ -74,21 +74,17 @@ export function ftsIdsByType(
   const sanitized = sanitizeFTSQuery(query);
   const out = new Map<MemoryType, string[]>();
   if (!sanitized) return out;
-  try {
-    if (types.includes('episodic')) {
-      const hits = searchFTSEpisodes(db, sanitized, limit, agentFilter ?? null);
-      out.set('episodic', hits.map(h => h.id));
-    }
-    if (types.includes('semantic')) {
-      const hits = searchFTSSemantics(db, sanitized, limit, agentFilter ?? null);
-      out.set('semantic', hits.map(h => h.id));
-    }
-    if (types.includes('procedural')) {
-      const hits = searchFTSProcedures(db, sanitized, limit, agentFilter ?? null);
-      out.set('procedural', hits.map(h => h.id));
-    }
-  } catch {
-    // FTS tables may not exist on very old DBs. Return whatever we collected so far.
+  if (types.includes('episodic')) {
+    const hits = searchFTSEpisodes(db, sanitized, limit, agentFilter ?? null);
+    out.set('episodic', hits.map(h => h.id));
+  }
+  if (types.includes('semantic')) {
+    const hits = searchFTSSemantics(db, sanitized, limit, agentFilter ?? null);
+    out.set('semantic', hits.map(h => h.id));
+  }
+  if (types.includes('procedural')) {
+    const hits = searchFTSProcedures(db, sanitized, limit, agentFilter ?? null);
+    out.set('procedural', hits.map(h => h.id));
   }
   return out;
 }
@@ -183,6 +179,11 @@ function passesDateFilters(createdAt: string | null | undefined, filters: FuseFi
   return true;
 }
 
+function matchesTagFilters(rowTags: string[], requiredTags: string[] | undefined): boolean {
+  if (!requiredTags?.length) return true;
+  return requiredTags.every(tag => rowTags.includes(tag));
+}
+
 function passesFilters(row: EpisodeFTSRow, filters: FuseFilters): boolean {
   if (!passesDateFilters(row.created_at, filters)) return false;
   if (filters.sources?.length && !filters.sources.includes(row.source)) return false;
@@ -194,7 +195,7 @@ function passesFilters(row: EpisodeFTSRow, filters: FuseFilters): boolean {
     } catch {
       rowTags = [];
     }
-    if (!filters.tags.some(t => rowTags.includes(t))) return false;
+    if (!matchesTagFilters(rowTags, filters.tags)) return false;
   }
   return true;
 }
