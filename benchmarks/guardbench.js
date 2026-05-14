@@ -19,6 +19,16 @@ const SUBJECTS = [
   'FTS Only',
 ];
 const DECISIONS = new Set(['allow', 'warn', 'block']);
+const STANDARD_ADAPTER_RESULT_KEYS = new Set([
+  'decision',
+  'riskScore',
+  'evidenceIds',
+  'recommendedActions',
+  'summary',
+  'recallErrors',
+  'adapterExtensions',
+]);
+const RESERVED_ADAPTER_EXTENSION_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const SUBJECT_DESCRIPTIONS = {
   'Audrey Guard': 'Full Audrey pre-action MemoryController with capsule, preflight, reflex, event lineage, degradation handling, and action-key recovery.',
   'No Memory': 'Allows every proposed action without memory state, evidence, or retrieval.',
@@ -576,6 +586,71 @@ function validateStringArray(value, field, errors) {
   }
 }
 
+function isPlainJsonObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function validateJsonExtensionValue(value, field, errors) {
+  if (value === null) return;
+  if (typeof value === 'string' || typeof value === 'boolean') return;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) errors.push(`${field} must be JSON-serializable`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      validateJsonExtensionValue(value[i], `${field}[${i}]`, errors);
+    }
+    return;
+  }
+  if (isPlainJsonObject(value)) {
+    for (const [key, nestedValue] of Object.entries(value)) {
+      if (RESERVED_ADAPTER_EXTENSION_KEYS.has(key)) {
+        errors.push(`${field}.${key} uses a reserved key`);
+        continue;
+      }
+      validateJsonExtensionValue(nestedValue, `${field}.${key}`, errors);
+    }
+    return;
+  }
+  errors.push(`${field} must be JSON-serializable`);
+}
+
+function collectAdapterExtensions(result, errors) {
+  const extensions = {};
+  const addExtension = (key, value) => {
+    if (RESERVED_ADAPTER_EXTENSION_KEYS.has(key)) {
+      errors.push(`adapter extension ${key} uses a reserved key`);
+      return;
+    }
+    validateJsonExtensionValue(value, `adapter extension ${key}`, errors);
+    extensions[key] = value;
+  };
+
+  if (result.adapterExtensions !== undefined) {
+    if (!isPlainJsonObject(result.adapterExtensions)) {
+      errors.push('adapterExtensions must be a plain object when present');
+    } else {
+      for (const [key, value] of Object.entries(result.adapterExtensions)) {
+        addExtension(key, value);
+      }
+    }
+  }
+
+  for (const [key, value] of Object.entries(result)) {
+    if (STANDARD_ADAPTER_RESULT_KEYS.has(key)) continue;
+    if (Object.hasOwn(extensions, key)) {
+      errors.push(`adapterExtensions.${key} duplicates top-level adapter extension ${key}`);
+      continue;
+    }
+    addExtension(key, value);
+  }
+
+  return extensions;
+}
+
 export function validateAdapterResult(result, adapterName, scenarioId) {
   const label = `GuardBench adapter ${adapterName} returned invalid result for ${scenarioId}`;
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
@@ -583,6 +658,7 @@ export function validateAdapterResult(result, adapterName, scenarioId) {
   }
 
   const errors = [];
+  const adapterExtensions = collectAdapterExtensions(result, errors);
   if (!DECISIONS.has(result.decision)) {
     errors.push('decision must be one of allow, warn, block');
   }
@@ -602,7 +678,7 @@ export function validateAdapterResult(result, adapterName, scenarioId) {
     throw new Error(`${label}: ${errors.join('; ')}`);
   }
 
-  return {
+  const normalized = {
     decision: result.decision,
     riskScore: result.riskScore,
     evidenceIds: result.evidenceIds,
@@ -610,6 +686,10 @@ export function validateAdapterResult(result, adapterName, scenarioId) {
     summary: result.summary,
     recallErrors: result.recallErrors ?? [],
   };
+  if (Object.keys(adapterExtensions).length > 0) {
+    normalized.adapterExtensions = adapterExtensions;
+  }
+  return normalized;
 }
 
 export async function loadExternalAdapters(adapterPaths = []) {
@@ -835,6 +915,7 @@ async function runScenarioForAdapter(scenario, adapter) {
       recommendedActions: normalized.recommendedActions,
       summary: normalized.summary,
       recallErrors: normalized.recallErrors,
+      ...(normalized.adapterExtensions ? { adapterExtensions: normalized.adapterExtensions } : {}),
       leakedSecrets,
       requiredEvidenceMatched: hasRequiredText,
     };
