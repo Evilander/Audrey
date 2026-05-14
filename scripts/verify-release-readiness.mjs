@@ -16,6 +16,7 @@ const ROOT = process.cwd();
 const DEFAULT_TARGET_VERSION = '1.0.0';
 const PYPI_CREDENTIAL_ENVS = ['TWINE_PASSWORD', 'PYPI_API_TOKEN', 'UV_PUBLISH_TOKEN'];
 const NPM_REGISTRY = 'https://registry.npmjs.org/';
+const PYPI_JSON_BASE = 'https://pypi.org/pypi';
 
 function fromRoot(path) {
   return resolve(ROOT, path);
@@ -35,6 +36,7 @@ function parseArgs(argv = process.argv.slice(2)) {
   const args = {
     targetVersion: DEFAULT_TARGET_VERSION,
     allowPending: false,
+    checkPypiRegistry: true,
     json: false,
   };
 
@@ -42,6 +44,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     const token = argv[i];
     if ((token === '--target-version' || token === '--version') && argv[i + 1]) args.targetVersion = argv[++i];
     else if (token === '--allow-pending') args.allowPending = true;
+    else if (token === '--skip-pypi-registry') args.checkPypiRegistry = false;
     else if (token === '--json') args.json = true;
     else if (token === '--help' || token === '-h') args.help = true;
     else throw new Error(`Unknown argument: ${token}`);
@@ -56,6 +59,7 @@ function usage() {
 Options:
   --target-version <version>  Target release version. Default: ${DEFAULT_TARGET_VERSION}.
   --allow-pending            Exit 0 when only publish/account/credential blockers remain.
+  --skip-pypi-registry       Do not check whether the target PyPI version is already public.
   --json                     Print the machine-readable readiness report.
 `;
 }
@@ -501,10 +505,21 @@ function pythonDistCheck(targetVersion) {
   );
 }
 
-function pypiPublishCheck(targetVersion) {
-  const pyproject = readText('python/pyproject.toml');
-  const packageName = pyproject.match(/^name\s*=\s*"([^"]+)"/m)?.[1] ?? 'unknown';
-  const version = pythonVersion();
+async function pypiRegistryVersionStatus(packageName, targetVersion, fetchImpl = fetch) {
+  try {
+    const response = await fetchImpl(`${PYPI_JSON_BASE}/${encodeURIComponent(packageName)}/${encodeURIComponent(targetVersion)}/json`, {
+      headers: { accept: 'application/json' },
+    });
+    if (response.ok) return { ok: true, published: true, status: response.status };
+    if (response.status === 404) return { ok: true, published: false, status: response.status };
+    return { ok: false, published: false, status: response.status, error: `PyPI returned HTTP ${response.status}` };
+  } catch (error) {
+    return { ok: false, published: false, status: 'network-error', error: error.message };
+  }
+}
+
+export async function pypiPackageTargetStatus({ packageName, version }, targetVersion, options = {}) {
+  const env = options.env ?? process.env;
   const evidence = [`python package=${packageName}`, `python version=${version ?? 'missing'}`];
 
   if (version !== targetVersion) {
@@ -516,7 +531,26 @@ function pypiPublishCheck(targetVersion) {
     );
   }
 
-  const credentialEnv = PYPI_CREDENTIAL_ENVS.find(name => Boolean(process.env[name]));
+  if (options.checkRegistry === true) {
+    const registry = await pypiRegistryVersionStatus(packageName, targetVersion, options.fetchImpl);
+    if (registry.ok && registry.published) {
+      return ok('pypi-package-target', `PyPI package is already published as ${targetVersion}`, [
+        ...evidence,
+        `registry=${packageName}==${targetVersion}`,
+      ]);
+    }
+    if (!registry.ok) {
+      return pending(
+        'pypi-package-target',
+        `PyPI package is ready to publish as ${targetVersion}`,
+        evidence,
+        [`Verify PyPI registry availability before publishing (${registry.error ?? `status=${registry.status}`})`],
+      );
+    }
+
+    evidence.push(`registry=${packageName}==${targetVersion}:unpublished`);
+  }
+  const credentialEnv = PYPI_CREDENTIAL_ENVS.find(name => Boolean(env[name]));
   if (!credentialEnv) {
     return pending(
       'pypi-package-target',
@@ -527,6 +561,16 @@ function pypiPublishCheck(targetVersion) {
   }
 
   return ok('pypi-package-target', `PyPI package is ready to publish as ${targetVersion}`, [...evidence, `credentialEnv=${credentialEnv}`]);
+}
+
+async function pypiPublishCheck(targetVersion, options = {}) {
+  const pyproject = readText('python/pyproject.toml');
+  const packageName = pyproject.match(/^name\s*=\s*"([^"]+)"/m)?.[1] ?? 'unknown';
+  return pypiPackageTargetStatus(
+    { packageName, version: pythonVersion() },
+    targetVersion,
+    { checkRegistry: options.checkPypiRegistry === true },
+  );
 }
 
 async function paperChecks() {
@@ -688,7 +732,7 @@ export async function verifyReleaseReadiness(options = {}) {
     await browserPublicationCheck(),
     await externalEvidenceCheck(),
     packageDryRunCheck(targetVersion),
-    pypiPublishCheck(targetVersion),
+    await pypiPublishCheck(targetVersion, options),
   ];
   const failures = checks.flatMap(row => row.failures.map(failure => `${row.id}: ${failure}`));
   const blockers = checks.flatMap(row => row.blockers.map(blocker => `${row.id}: ${blocker}`));
