@@ -84,6 +84,23 @@
     "artifactRedactionSweep": { "$ref": "#/$defs/artifactRedactionSweep" }
   },
   "$defs": {
+    "jsonValue": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string" },
+        { "type": "boolean" },
+        { "type": "number" },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/jsonValue" }
+        },
+        { "$ref": "#/$defs/jsonObject" }
+      ]
+    },
+    "jsonObject": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/jsonValue" }
+    },
     "latency": {
       "type": "object",
       "additionalProperties": false,
@@ -178,6 +195,7 @@
         },
         "summary": { "type": "string", "minLength": 1 },
         "recallErrors": { "type": "array" },
+        "adapterExtensions": { "$ref": "#/$defs/jsonObject" },
         "leakedSecrets": {
           "type": "array",
           "items": { "type": "string" }
