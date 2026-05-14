@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,27 @@ if (!existsSync(cli)) {
   fail(`missing built CLI at ${cli}; run npm run build first`);
 }
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'audrey-smoke-'));
+function createTempRoot() {
+  const candidates = [
+    process.env.AUDREY_SMOKE_TMPDIR,
+    tmpdir(),
+    join(root, '.tmp'),
+  ].filter(Boolean);
+  const failures = [];
+
+  for (const candidate of candidates) {
+    try {
+      mkdirSync(candidate, { recursive: true });
+      return mkdtempSync(join(candidate, 'audrey-smoke-'));
+    } catch (error) {
+      failures.push(`${candidate}: ${error.code ?? error.message}`);
+    }
+  }
+
+  fail(`unable to create smoke temp directory (${failures.join('; ')})`);
+}
+
+const tempRoot = createTempRoot();
 const env = {
   ...process.env,
   AUDREY_DATA_DIR: join(tempRoot, 'store'),
