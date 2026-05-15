@@ -19,6 +19,9 @@ benchmarks/.tmp-guardbench/
 docs/paper/output/
 memorybench/
 windows-smoke-job-*.log
+gcm-diagnose.log
+*.log
+audrey-arxiv-preview.png
 
 # Node build output
 dist/
