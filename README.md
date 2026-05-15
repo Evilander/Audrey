@@ -296,7 +296,7 @@ output shapes are validated by JSON schemas under `benchmarks/schemas/`.
 
 Latest local result in this checkout: 10/10 scenarios passed, 100% prevention
 rate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks in
-the raw-secret sweep, and 3.275ms / 21.844ms
+the raw-secret sweep, and 3.529ms / 27.78ms
 p50/p95 guard latency under the mock-provider methodology.
 
 **Methodology caveats, on purpose.** All numbers above are produced against
