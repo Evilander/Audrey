@@ -1,6 +1,6 @@
 {
   "name": "audrey",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Local-first memory runtime for AI agents with recall, consolidation, memory reflexes, contradiction detection, and tool-trace learning",
   "type": "module",
   "main": "dist/src/index.js",
