@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.0.1 - 2026-05-15
+
+### Honest benchmarking
+
+- **GuardBench pass gate rewritten.** The `passed` check no longer requires Audrey-specific lineage substrings (`"failed before"`, `"recall:"`, `"must-follow"`, etc.) in the subject's `summary`. A scenario passes when the decision matches the expected verdict, no seeded secrets leak, and (for `block`/`warn` scenarios) the subject returns at least one evidence id. The prior phrase-substring gate was structurally biased toward Audrey because only its controller emitted those exact tokens; baselines or external adapters that produced semantically correct decisions could still fail the gate on phrasing alone. The Audrey-style lineage match is preserved as a separate `lineageTextMatched` field per row and `lineageRichness` per system, reported as an informational metric, not the pass gate.
+- Adds `lineageRichness` and `hasEvidenceForDecision` to GuardBench raw + summary schemas; `requiredEvidenceMatched` is kept as a back-compat alias of `hasEvidenceForDecision`.
+
+### Guard runtime
+
+- **`MemoryController` no longer hard-blocks repeated failures forever.** A new `failureDecayDays` constructor option defaults to 7: same-action prior failures older than that window are treated as stale and no longer trigger an automatic block. Pass `failureDecayDays: 0` to restore the pre-1.0.1 behavior.
+- Adds `AgentAction.acknowledgePriorFailure` on the `MemoryController` SDK surface. When set, an exact-repeated-failure that would otherwise produce `block` degrades to `warn`. Evidence ids and risk score remain attached so the prior failure still surfaces in the action receipt. A CLI flag exposing this through `audrey guard` will land in a follow-up release.
+
+### Structured errors
+
+- `Audrey.validate()` lineage rejections now throw `ValidateLineageError` with a stable `code` (`PREFLIGHT_NOT_FOUND` | `PREFLIGHT_WRONG_TYPE` | `LINEAGE_REJECTED` | `ACTION_KEY_MISMATCH`). `POST /v1/validate` surfaces the same code in the 400 response body so HTTP and MCP callers can branch on the failure shape without parsing the message string. `ValidateLineageError` and `ValidateErrorCode` are exported from the public SDK entry point.
+
+### Documentation
+
+- README's GuardBench section caveats the headline number against the mock 64-dim provider, the 5-of-10 expected-block scenario count, and the new evidence-non-empty gate so the "10/10 vs baselines" framing matches the actual contract.
+- README documents `AUDREY_DATA_DIR` per-tenant isolation as a hard requirement (SQLite WAL mode has no advisory lock; two processes in one data dir contend).
+- README dev path notes `npm run build` before any source-tree CLI subcommand resolves.
+- Paper section reframes `bench:memory:check` as an internal regression suite, not a competitive benchmark, so local stub baselines are not cited as cross-system claims.
+- Personal-env diagnostic logs (`gcm-diagnose.log`, scratch `*.log`, `audrey-arxiv-preview.png`) excluded from repo root and `.gitignore` broadened.
+
 ## 1.0.0 - 2026-05-13
 
 ### Audrey Guard

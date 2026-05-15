@@ -1,4 +1,5 @@
-export { Audrey } from './audrey.js';
+export { Audrey, ValidateLineageError } from './audrey.js';
+export type { ValidateErrorCode } from './audrey.js';
 export { startServer } from './server.js';
 export type { ServerOptions } from './server.js';
 export { createApp } from './routes.js';
