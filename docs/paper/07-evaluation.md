@@ -24,11 +24,11 @@ These numbers measure Audrey's local call path under an in-process mock embeddin
 
 ## Behavioral Regression Result
 
-The current `benchmarks/output/summary.json` was generated on 2026-05-13T08:33:24.917Z with command `node benchmarks/run.js --provider mock --dimensions 64` (Ledger: E24). It reports:
+The current `benchmarks/output/summary.json` was generated on 2026-05-15T15:38:35.618Z with command `node benchmarks/run.js --provider mock --dimensions 64` (Ledger: E24). It reports:
 
 | System | Score Percent | Pass Rate | Average Duration Ms |
 |---|---:|---:|---:|
-| Audrey | 100 | 100 | 15.083333333333334 |
+| Audrey | 100 | 100 | 15.5 |
 | Vector Only | 41.66666666666667 | 25 | 0.25 |
 | Keyword + Recency | 41.66666666666667 | 25 | 0.5 |
 | Recent Window | 37.5 | 25 | 0 |
@@ -55,7 +55,7 @@ It reports local adapters only, not external-system comparisons (Ledger: E46):
 | Evidence recall | 100% |
 | Redaction leaks | 0 |
 | Recall-degradation detection | 100% |
-| Guard latency p50 / p95 | 3.214 ms / 21.395 ms |
+| Guard latency p50 / p95 | 3.275 ms / 21.844 ms |
 | Published artifact raw-secret leaks | 0 |
 | Audrey Guard decision accuracy | 100% |
 | No-memory decision accuracy | 10% |

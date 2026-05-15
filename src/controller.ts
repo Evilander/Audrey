@@ -71,7 +71,25 @@ export interface AgentAction {
   cwd?: string;
   files?: string[];
   sessionId?: string;
+  /**
+   * If true, an exact-repeated-failure block degrades to `warn` rather than `block`.
+   * Evidence and risk score remain attached. Use when the caller has explicitly
+   * acknowledged the prior failure (e.g. the human said "retry exactly this") so a
+   * deliberate retry is not silently blocked. Does not bypass other guard reasons.
+   */
+  acknowledgePriorFailure?: boolean;
 }
+
+export interface MemoryControllerOptions {
+  /**
+   * Window in days after which a same-action prior failure no longer triggers an
+   * automatic block. Defaults to 7. Set to 0 to disable time-based decay (legacy
+   * pre-1.0.1 hard-block-forever behavior).
+   */
+  failureDecayDays?: number;
+}
+
+const DEFAULT_FAILURE_DECAY_DAYS = 7;
 
 export type ControllerGuardDecision = 'allow' | 'warn' | 'block';
 
@@ -224,12 +242,20 @@ function latestSucceededEvent(events: MemoryEvent[]): MemoryEvent | undefined {
     .at(-1);
 }
 
-function matchingFailureEvents(audrey: Audrey, action: AgentAction): MemoryEvent[] {
+function matchingFailureEvents(
+  audrey: Audrey,
+  action: AgentAction,
+  failureDecayDays: number,
+): MemoryEvent[] {
   const events = sameActionEvents(audrey, action);
   const latestSuccessAt = latestSucceededEvent(events)?.created_at;
+  const cutoffMs = failureDecayDays > 0
+    ? Date.now() - failureDecayDays * 24 * 60 * 60 * 1000
+    : -Infinity;
   return events
     .filter(event => event.outcome === 'failed')
-    .filter(event => !latestSuccessAt || event.created_at > latestSuccessAt);
+    .filter(event => !latestSuccessAt || event.created_at > latestSuccessAt)
+    .filter(event => Date.parse(event.created_at) >= cutoffMs);
 }
 
 function recoveredFailureEvent(audrey: Audrey, action: AgentAction): MemoryEvent | undefined {
@@ -243,7 +269,14 @@ function recoveredFailureEvent(audrey: Audrey, action: AgentAction): MemoryEvent
 }
 
 export class MemoryController {
-  constructor(private readonly audrey: Audrey) {}
+  private readonly failureDecayDays: number;
+
+  constructor(
+    private readonly audrey: Audrey,
+    options: MemoryControllerOptions = {},
+  ) {
+    this.failureDecayDays = options.failureDecayDays ?? DEFAULT_FAILURE_DECAY_DAYS;
+  }
 
   async beforeAction(action: AgentAction): Promise<ControllerGuardResult> {
     const result = await beforeAction(this.audrey, action.action, {
@@ -257,26 +290,49 @@ export class MemoryController {
       recordEvent: true,
       scope: 'agent',
     });
-    const exactFailures = matchingFailureEvents(this.audrey, action);
+    const exactFailures = matchingFailureEvents(this.audrey, action, this.failureDecayDays);
     const recoveredFailure = recoveredFailureEvent(this.audrey, action);
     const exactFailureEvidence = exactFailures.map(event => event.id);
-    const exactRepeatedFailure = exactFailures.length > 0;
-    const recoveredExactFailure = !exactRepeatedFailure && recoveredFailure && result.decision !== 'block';
+    const hasExactFailure = exactFailures.length > 0;
+    const acknowledgedPriorFailure = hasExactFailure && action.acknowledgePriorFailure === true;
+    const exactRepeatedFailure = hasExactFailure && !acknowledgedPriorFailure;
+    const recoveredExactFailure = !hasExactFailure && recoveredFailure && result.decision !== 'block';
     const recommendedActions = [...result.recommended_actions];
     if (exactRepeatedFailure) {
       recommendedActions.unshift('Do not repeat the exact failed action until the prior error is understood or the command is changed.');
+    } else if (acknowledgedPriorFailure) {
+      recommendedActions.unshift('Prior failure acknowledged; proceeding with extra caution. Surface the prior error in your action notes.');
     } else if (recoveredExactFailure) {
       recommendedActions.unshift('This exact action has succeeded since its last failure; proceed with normal validation.');
     }
 
+    let decision: ControllerGuardDecision;
+    if (exactRepeatedFailure) decision = 'block';
+    else if (acknowledgedPriorFailure) decision = displayDecision(result.decision) === 'block' ? 'block' : 'warn';
+    else if (recoveredExactFailure) decision = 'allow';
+    else decision = displayDecision(result.decision);
+
+    let riskScore: number;
+    if (exactRepeatedFailure) riskScore = Math.max(result.risk_score, 0.9);
+    else if (acknowledgedPriorFailure) riskScore = Math.max(result.risk_score, 0.6);
+    else if (recoveredExactFailure) riskScore = Math.min(result.risk_score, 0.2);
+    else riskScore = result.risk_score;
+
+    let summary: string;
+    if (exactRepeatedFailure) {
+      summary = `Blocked: this exact ${action.tool ?? 'tool'} action failed before. ${result.summary}`;
+    } else if (acknowledgedPriorFailure) {
+      summary = `Warn: prior failure acknowledged for this exact ${action.tool ?? 'tool'} action; proceed with caution. ${result.summary}`;
+    } else if (recoveredExactFailure) {
+      summary = `Allowed: this exact ${action.tool ?? 'tool'} action has succeeded since the prior failure. ${result.summary}`;
+    } else {
+      summary = result.summary;
+    }
+
     return {
-      decision: exactRepeatedFailure ? 'block' : recoveredExactFailure ? 'allow' : displayDecision(result.decision),
-      riskScore: exactRepeatedFailure ? Math.max(result.risk_score, 0.9) : recoveredExactFailure ? Math.min(result.risk_score, 0.2) : result.risk_score,
-      summary: exactRepeatedFailure
-        ? `Blocked: this exact ${action.tool ?? 'tool'} action failed before. ${result.summary}`
-        : recoveredExactFailure
-          ? `Allowed: this exact ${action.tool ?? 'tool'} action has succeeded since the prior failure. ${result.summary}`
-          : result.summary,
+      decision,
+      riskScore,
+      summary,
       evidenceIds: [...new Set([...exactFailureEvidence, ...(recoveredFailure ? [recoveredFailure.id] : []), ...result.evidence_ids])],
       recommendedActions: [...new Set(recommendedActions)],
       capsule: result.capsule,

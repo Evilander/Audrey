@@ -151,7 +151,9 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "requiredEvidenceMatched": { "type": "boolean" }
+        "requiredEvidenceMatched": { "type": "boolean" },
+        "hasEvidenceForDecision": { "type": "boolean" },
+        "lineageTextMatched": { "type": "boolean" }
       }
     },
     "artifactRedactionSweep": {

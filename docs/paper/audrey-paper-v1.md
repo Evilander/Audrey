@@ -344,7 +344,7 @@ The deterministic demo, `audrey demo --scenario repeated-failure`, constructs a 
 
 The current paper version has two implemented empirical anchors. First, `benchmarks/snapshots/perf-0.22.2.json` reports canonical local performance under the mock-provider methodology: generated on 2026-05-01 from git SHA `e2e821b`, using mock 64-dimensional in-process embeddings, hybrid recall limit 5, and corpus sizes 100, 1,000, and 5,000 on Node 25.5.0 with a 24-core Ryzen 9 7900X3D and 62.9 GB RAM (Ledger: E20). Under that methodology, hybrid recall p95 is 1.82 ms, 2.364 ms, and 3.417 ms for those three sizes, and encode p95 is 0.589 ms, 2.147 ms, and 1.838 ms (Ledger: E21-E22).
 
-Second, `bench:memory:check` is wired into the release gate and enforces retrieval/lifecycle benchmark guardrails against weak local baselines (Ledger: E23). The current checked-in output reports a 2026-05-08 mock-provider run in which Audrey scores 100% with 100% pass rate, while the strongest listed local baselines score 41.67% with 25% pass rate in that output (Ledger: E24). These numbers support regression-gate honesty; they do not replace GuardBench.
+Second, `bench:memory:check` is wired into the release gate as an **internal regression suite**, not a competitive benchmark. It exists to catch retrieval/lifecycle regressions in Audrey itself. The suite includes hand-tuned weak local baselines (vector-only, keyword-plus-recency, recent-window) whose role is to anchor a relative pass margin — they are not stand-ins for production memory systems, and their scores should not be cited as comparative claims about any external system (Ledger: E23). The current checked-in output reports a 2026-05-08 mock-provider run in which Audrey scores 100% with 100% pass rate and the listed local stub baselines score in the 25-42% range in that same run (Ledger: E24). These numbers support regression-gate honesty inside this repository; they are not cross-system results and they do not replace GuardBench.
 
 The README benchmark table currently differs from the canonical JSON snapshot, so the paper quotes only the JSON snapshot and tracks the README correction as a follow-up (Ledger: E28).
 
@@ -895,11 +895,11 @@ These numbers measure Audrey's local call path under an in-process mock embeddin
 
 ### Behavioral Regression Result
 
-The current `benchmarks/output/summary.json` was generated on 2026-05-13T08:33:24.917Z with command `node benchmarks/run.js --provider mock --dimensions 64` (Ledger: E24). It reports:
+The current `benchmarks/output/summary.json` was generated on 2026-05-15T15:38:35.618Z with command `node benchmarks/run.js --provider mock --dimensions 64` (Ledger: E24). It reports:
 
 | System | Score Percent | Pass Rate | Average Duration Ms |
 |---|---:|---:|---:|
-| Audrey | 100 | 100 | 15.083333333333334 |
+| Audrey | 100 | 100 | 15.5 |
 | Vector Only | 41.66666666666667 | 25 | 0.25 |
 | Keyword + Recency | 41.66666666666667 | 25 | 0.5 |
 | Recent Window | 37.5 | 25 | 0 |
@@ -924,7 +924,7 @@ It reports local adapters only, not external-system comparisons (Ledger: E46):
 | Evidence recall | 100% |
 | Redaction leaks | 0 |
 | Recall-degradation detection | 100% |
-| Guard latency p50 / p95 | 3.214 ms / 21.395 ms |
+| Guard latency p50 / p95 | 3.275 ms / 21.844 ms |
 | Published artifact raw-secret leaks | 0 |
 | Audrey Guard decision accuracy | 100% |
 | No-memory decision accuracy | 10% |

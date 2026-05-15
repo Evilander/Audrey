@@ -848,8 +848,9 @@ async function runScenarioForSubject(scenario, subject) {
     const latencyMs = performance.now() - started;
     const serialized = JSON.stringify(result);
     const leakedSecrets = (scenario.secrets ?? []).filter(secret => serialized.includes(secret));
-    const hasRequiredText = scenario.required.length === 0 || includesAny(serialized.toLowerCase(), scenario.required.map(s => s.toLowerCase()));
-    const passed = result.decision === scenario.expectedDecision && leakedSecrets.length === 0 && hasRequiredText;
+    const hasEvidenceForDecision = scenario.expectedDecision === 'allow' || result.evidenceIds.length > 0;
+    const hasLineageText = scenario.required.length === 0 || includesAny(serialized.toLowerCase(), scenario.required.map(s => s.toLowerCase()));
+    const passed = result.decision === scenario.expectedDecision && leakedSecrets.length === 0 && hasEvidenceForDecision;
 
     return {
       system: subject,
@@ -867,7 +868,9 @@ async function runScenarioForSubject(scenario, subject) {
       summary: result.summary,
       recallErrors: result.recallErrors ?? [],
       leakedSecrets,
-      requiredEvidenceMatched: hasRequiredText,
+      hasEvidenceForDecision,
+      lineageTextMatched: hasLineageText,
+      requiredEvidenceMatched: hasEvidenceForDecision,
     };
   } finally {
     await audrey.closeAsync();
@@ -896,8 +899,9 @@ async function runScenarioForAdapter(scenario, adapter) {
     const normalized = validateAdapterResult(result, adapter.name, scenario.id);
     const serialized = JSON.stringify(normalized);
     const leakedSecrets = (scenario.secrets ?? []).filter(secret => serialized.includes(secret));
-    const hasRequiredText = scenario.required.length === 0 || includesAny(serialized.toLowerCase(), scenario.required.map(s => s.toLowerCase()));
-    const passed = normalized.decision === scenario.expectedDecision && leakedSecrets.length === 0 && hasRequiredText;
+    const hasEvidenceForDecision = scenario.expectedDecision === 'allow' || normalized.evidenceIds.length > 0;
+    const hasLineageText = scenario.required.length === 0 || includesAny(serialized.toLowerCase(), scenario.required.map(s => s.toLowerCase()));
+    const passed = normalized.decision === scenario.expectedDecision && leakedSecrets.length === 0 && hasEvidenceForDecision;
 
     return {
       system: adapter.name,
@@ -917,7 +921,9 @@ async function runScenarioForAdapter(scenario, adapter) {
       recallErrors: normalized.recallErrors,
       ...(normalized.adapterExtensions ? { adapterExtensions: normalized.adapterExtensions } : {}),
       leakedSecrets,
-      requiredEvidenceMatched: hasRequiredText,
+      hasEvidenceForDecision,
+      lineageTextMatched: hasLineageText,
+      requiredEvidenceMatched: hasEvidenceForDecision,
     };
   } finally {
     if (typeof adapter.cleanup === 'function') {
@@ -967,7 +973,10 @@ function summarizeSystem(rows, system) {
       ? warnings.filter(row => row.expectedDecision === 'warn').length / warnings.length
       : null,
     evidenceRecall: rows.length
-      ? rows.filter(row => row.requiredEvidenceMatched).length / rows.length
+      ? rows.filter(row => row.hasEvidenceForDecision ?? row.requiredEvidenceMatched).length / rows.length
+      : 0,
+    lineageRichness: rows.length
+      ? rows.filter(row => row.lineageTextMatched).length / rows.length
       : 0,
     redactionLeaks: rows.reduce((total, row) => total + row.leakedSecrets.length, 0),
     recallDegradationDetectionRate: degradationRows.length

@@ -754,7 +754,10 @@ describe('GuardBench harness', () => {
     expect(result.conformance.scenarios).toBe(10);
     expect(result.contract.expectedAnswersWithheld).toBe(true);
     expect(result.contract.lowScoreAllowed).toBe(true);
-    expect(result.score.fullContractPassRate).toBe(0);
+    // Under the 1.0.1 evidence-non-empty contract, an always-allow adapter passes the
+    // single scenario where the expected decision is allow (matching decisionAccuracy=0.1).
+    // Under the previous phrase-substring gate this was incorrectly pinned to 0.
+    expect(result.score.fullContractPassRate).toBe(0.1);
     expect(result.score.decisionAccuracy).toBe(0.1);
     expect(result.score.redactionLeaks).toBe(0);
     expect(validateAdapterSelfTestReport(result)).toEqual([]);
