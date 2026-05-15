@@ -275,7 +275,10 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       return c.json({ ok: true, ...result });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: message }, 400);
+      const code = err instanceof Error && 'code' in err && typeof (err as { code: unknown }).code === 'string'
+        ? (err as { code: string }).code
+        : undefined;
+      return c.json(code ? { error: message, code } : { error: message }, 400);
     }
   });
 

@@ -94,7 +94,7 @@ and writes a timestamped backup before changing a non-empty file. The generated
 and `PostToolUseFailure` hooks record redacted tool traces. Verify the active
 hook set inside Claude Code with `/hooks`.
 
-All local MCP paths default to local embeddings and one shared SQLite-backed memory directory. Use `AUDREY_DATA_DIR` to isolate projects, tenants, or host identities.
+All local MCP paths default to local embeddings and one shared SQLite-backed memory directory. **Set a distinct `AUDREY_DATA_DIR` per tenant, agent identity, or concurrent host.** SQLite uses WAL mode without an advisory lock, so two processes sharing a directory will contend on writes. Isolation is a hard requirement for multi-agent setups, not a recommendation.
 
 Installer-generated host config does not include provider API keys by default. Prefer setting `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, or `GEMINI_API_KEY` in the host runtime environment; use `npx audrey install --include-secrets` only if you explicitly accept argv/config exposure.
 
@@ -295,11 +295,20 @@ instructions, and noisy stores. It writes
 output shapes are validated by JSON schemas under `benchmarks/schemas/`.
 
 Latest local result in this checkout: 10/10 scenarios passed, 100% prevention
-rate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks in
-the raw-secret sweep, and 3.214ms / 21.395ms
-p50/p95 guard latency under the mock-provider methodology. Local baseline
-decision accuracy was: no-memory 10%, recent-window 60%, vector-only 40%, and
-FTS-only 10%; none passed the full GuardBench decision-plus-evidence contract.
+rate (5 of 10 scenarios expect a `block`), 0% false-block rate, 0 raw secret
+leaks, 0 published artifact leaks in the raw-secret sweep, and 3.214ms /
+21.395ms p50/p95 guard latency. **Methodology caveats, on purpose**: all
+numbers are produced against the in-process mock 64-dim embedding provider
+documented in the run's `provenance` block — they characterize Audrey's
+controller and SQLite path, not real-provider end-to-end latency or
+production false-positive rates. Local baseline decision accuracy was:
+no-memory 10%, recent-window 60%, vector-only 40%, and FTS-only 10%; none of
+the local baselines passed the GuardBench decision-plus-evidence contract,
+which since v1.0.1 requires the correct decision plus at least one returned
+evidence id for `block`/`warn` scenarios (no longer Audrey-specific lineage
+phrasing — see `CHANGELOG.md#101---2026-05-15`). External-system numbers for
+Mem0 and Zep are explicitly out of scope for this paper; live credentialed
+runs land in a v2 paper after raw evidence bundles publish.
 
 ```bash
 npm run bench:guard
@@ -517,8 +526,17 @@ The Node sidecar defaults to `127.0.0.1:7437`. The Docker image intentionally bi
 
 ## Development
 
+Developer setup runs from source, not from the published tarball, so `npm run build` is required before any CLI subcommand resolves:
+
 ```bash
 npm ci
+npm run build
+npm test
+```
+
+Once built, the `Quick Start` commands work against the local `dist/` output. The full release gate runs everything CI runs:
+
+```bash
 npm run release:gate
 python -m unittest discover -s python/tests -v
 npm run python:release:check

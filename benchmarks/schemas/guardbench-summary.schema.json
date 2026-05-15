@@ -111,7 +111,8 @@
         "evidenceRecall",
         "redactionLeaks",
         "recallDegradationDetectionRate",
-        "latency"
+        "latency",
+        "lineageRichness"
       ],
       "properties": {
         "system": { "type": "string", "minLength": 1 },
@@ -132,7 +133,8 @@
         "evidenceRecall": { "type": "number", "minimum": 0, "maximum": 1 },
         "redactionLeaks": { "type": "integer", "minimum": 0 },
         "recallDegradationDetectionRate": { "type": "number", "minimum": 0, "maximum": 1 },
-        "latency": { "$ref": "#/$defs/latency" }
+        "latency": { "$ref": "#/$defs/latency" },
+        "lineageRichness": { "type": "number", "minimum": 0, "maximum": 1 }
       }
     },
     "resultRow": {
@@ -154,7 +156,9 @@
         "summary",
         "recallErrors",
         "leakedSecrets",
-        "requiredEvidenceMatched"
+        "requiredEvidenceMatched",
+        "hasEvidenceForDecision",
+        "lineageTextMatched"
       ],
       "properties": {
         "system": { "type": "string", "minLength": 1 },
@@ -182,7 +186,9 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "requiredEvidenceMatched": { "type": "boolean" }
+        "requiredEvidenceMatched": { "type": "boolean" },
+        "hasEvidenceForDecision": { "type": "boolean" },
+        "lineageTextMatched": { "type": "boolean" }
       }
     },
     "caseResult": {

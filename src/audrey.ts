@@ -82,6 +82,26 @@ import { dirname, join, resolve as pathResolve, relative, isAbsolute as pathIsAb
 import { ProfileRecorder, type ProfileDiagnostics } from './profile.js';
 import { performance } from 'node:perf_hooks';
 
+export type ValidateErrorCode =
+  | 'PREFLIGHT_NOT_FOUND'
+  | 'PREFLIGHT_WRONG_TYPE'
+  | 'LINEAGE_REJECTED'
+  | 'ACTION_KEY_MISMATCH';
+
+/**
+ * Thrown by `Audrey.validate()` when a structural lineage check fails. Carries a
+ * stable `code` so HTTP and MCP callers can branch on the failure type without
+ * pattern-matching on the message string.
+ */
+export class ValidateLineageError extends Error {
+  readonly code: ValidateErrorCode;
+  constructor(code: ValidateErrorCode, message: string) {
+    super(message);
+    this.name = 'ValidateLineageError';
+    this.code = code;
+  }
+}
+
 interface ConfigRow {
   value: string;
 }
@@ -974,10 +994,16 @@ export class Audrey extends EventEmitter {
         "SELECT event_type, metadata FROM memory_events WHERE id = ?"
       ).get(input.preflightEventId) as { event_type: string; metadata: string | null } | undefined;
       if (!preflightEvent) {
-        throw new Error(`preflight_event_id ${input.preflightEventId} was not found`);
+        throw new ValidateLineageError(
+          'PREFLIGHT_NOT_FOUND',
+          `preflight_event_id ${input.preflightEventId} was not found`,
+        );
       }
       if (preflightEvent.event_type !== 'PreToolUse') {
-        throw new Error(`preflight_event_id ${input.preflightEventId} is not a PreToolUse event`);
+        throw new ValidateLineageError(
+          'PREFLIGHT_WRONG_TYPE',
+          `preflight_event_id ${input.preflightEventId} is not a PreToolUse event`,
+        );
       }
       if (preflightEvent.metadata) {
         try {
@@ -990,13 +1016,19 @@ export class Audrey extends EventEmitter {
         ? preflightMetadata.preflight_evidence_ids.filter((id): id is string => typeof id === 'string')
         : [];
       if (preflightEvidenceIds.length > 0 && !preflightEvidenceIds.includes(input.id)) {
-        throw new Error(`memory id ${input.id} was not evidence for preflight_event_id ${input.preflightEventId}`);
+        throw new ValidateLineageError(
+          'LINEAGE_REJECTED',
+          `memory id ${input.id} was not evidence for preflight_event_id ${input.preflightEventId}`,
+        );
       }
       const preflightActionKey = typeof preflightMetadata?.audrey_guard_action_key === 'string'
         ? preflightMetadata.audrey_guard_action_key
         : undefined;
       if (input.actionKey && preflightActionKey && input.actionKey !== preflightActionKey) {
-        throw new Error('action_key does not match the preflight event action key');
+        throw new ValidateLineageError(
+          'ACTION_KEY_MISMATCH',
+          'action_key does not match the preflight event action key',
+        );
       }
       if (!input.actionKey && preflightActionKey) {
         input = { ...input, actionKey: preflightActionKey };
