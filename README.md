@@ -4,8 +4,11 @@
   <p><strong>The local-first memory firewall for AI agents.</strong></p>
 
   <p>
-    Give Codex, Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, JetBrains, Ollama-backed agents,
-    and custom agent services one durable memory layer they can check before they touch tools.
+    A SQLite-backed continuity layer that runs before your agent touches tools.
+    It checks what already failed, what rules apply, and what evidence
+    contradicts the proposed action — then returns <code>allow</code>,
+    <code>warn</code>, or <code>block</code>. The model proposes. Audrey decides.
+    The tool only fires if memory says it should.
   </p>
 
   <p>
@@ -15,23 +18,26 @@
   </p>
 </div>
 
-## Why Audrey Exists
+## What Audrey Is
 
-Agents forget the exact mistakes they made yesterday. They repeat broken commands, lose project-specific rules, miss contradictions, and treat every new session like a cold start.
+Most "AI memory" products are retrieval with a friendly name. They find relevant context, hand it to the model, and hope the model uses it. When the agent ignores the memory and repeats yesterday's mistake, retrieval has nothing to say about that.
 
-Audrey Guard is the headline loop: record what happened, remember what mattered, check before action, return `allow`, `warn`, or `block` with evidence, then validate whether the memory helped.
+Audrey starts at a different question. Not "what should I remember?" — but "what should I refuse before the agent acts?"
 
-Audrey turns those hard-won lessons into a local memory runtime:
+When a tool call is proposed, Audrey looks at what has already happened in this codebase, with this tool, under this configuration. Was this exact command run yesterday and did it fail? Is there a procedure that should run first? Did the user override this workflow in a previous session? Is the recall path degraded? Each signal is real, redacted-safe, and tied to a specific evidence id. The verdict comes back with receipts the host can audit later.
 
-- `audrey guard --tool Bash "npm run deploy"` runs memory-before-action from the terminal.
-- `memory_recall` finds durable context by semantic similarity.
-- `memory_preflight` checks prior failures, risks, rules, and relevant procedures before an action.
-- `memory_reflexes` converts remembered evidence into trigger-response guidance agents can follow.
-- `memory_validate` closes the loop after the action: `helpful`, `used`, or `wrong` outcomes feed salience and can bind back to the exact preflight event, evidence ids, and Guard action fingerprint.
-- `memory_dream` consolidates episodes into principles and applies decay.
-- `audrey impact` and `audrey doctor` tell a human or CI system whether the runtime is doing real work and is actually ready.
+It is not a hosted vector database, a notes app, or a Claude-only plugin. It is a local memory runtime that sits under any agent loop that speaks MCP, HTTP, or imports the SDK. Works with Codex, Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, JetBrains, Ollama-backed agents, and custom services.
 
-It is not a hosted vector database, a notes app, or a Claude-only plugin. Audrey is a SQLite-backed continuity layer that can sit under any local or sidecar agent loop.
+The headline loop:
+
+```
+observe → redact → remember → retrieve → capsule → preflight →
+   reflex → allow/warn/block → validate
+```
+
+`audrey guard --tool Bash "npm run deploy"` runs that loop from the terminal. `memory_recall` finds durable context by semantic similarity. `memory_preflight` checks prior failures, risks, rules, and procedures before an action. `memory_reflexes` converts remembered evidence into trigger-response guidance. `memory_validate` closes the loop: outcomes flow back as `helpful` / `used` / `wrong` and bind to the exact preflight event and evidence ids. `memory_dream` consolidates episodes into principles and applies decay. `audrey impact` and `audrey doctor` tell a human or CI system whether the runtime is actually doing real work.
+
+If your agent failed at something yesterday and is about to do it again, Audrey is the thing that stops it.
 
 <div align="center">
   <img src="docs/assets/audrey-feature-grid.jpg" alt="Audrey feature marks: memory continuity, archive signal, recall loop, layered evidence, local node, and remembering before acting" width="760">
@@ -296,7 +302,7 @@ output shapes are validated by JSON schemas under `benchmarks/schemas/`.
 
 Latest local result in this checkout: 10/10 scenarios passed, 100% prevention
 rate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks in
-the raw-secret sweep, and 3.275ms / 21.844ms
+the raw-secret sweep, and 3.173ms / 28.155ms
 p50/p95 guard latency under the mock-provider methodology.
 
 **Methodology caveats, on purpose.** All numbers above are produced against
