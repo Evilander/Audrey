@@ -295,19 +295,23 @@ instructions, and noisy stores. It writes
 output shapes are validated by JSON schemas under `benchmarks/schemas/`.
 
 Latest local result in this checkout: 10/10 scenarios passed, 100% prevention
-rate (5 of 10 scenarios expect a `block`), 0% false-block rate, 0 raw secret
-leaks, 0 published artifact leaks in the raw-secret sweep, and 3.214ms /
-21.395ms p50/p95 guard latency. **Methodology caveats, on purpose**: all
-numbers are produced against the in-process mock 64-dim embedding provider
-documented in the run's `provenance` block — they characterize Audrey's
-controller and SQLite path, not real-provider end-to-end latency or
-production false-positive rates. Local baseline decision accuracy was:
-no-memory 10%, recent-window 60%, vector-only 40%, and FTS-only 10%; none of
-the local baselines passed the GuardBench decision-plus-evidence contract,
-which since v1.0.1 requires the correct decision plus at least one returned
-evidence id for `block`/`warn` scenarios (no longer Audrey-specific lineage
-phrasing — see `CHANGELOG.md#101---2026-05-15`). External-system numbers for
-Mem0 and Zep are explicitly out of scope for this paper; live credentialed
+rate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks in
+the raw-secret sweep, and 3.275ms / 21.844ms
+p50/p95 guard latency under the mock-provider methodology.
+
+**Methodology caveats, on purpose.** All numbers above are produced against
+the in-process mock 64-dim embedding provider documented in the run's
+`provenance` block. They characterize Audrey's controller and SQLite path,
+not real-provider end-to-end latency or production false-positive rates. The
+100% prevention rate is over the 5 GuardBench scenarios that expect a
+`block` decision (the suite is 10 scenarios total, mixed across allow / warn
+/ block). Local baseline decision accuracy was: no-memory 10%, recent-window
+60%, vector-only 40%, and FTS-only 10%; none of the local baselines passed
+the GuardBench decision-plus-evidence contract, which since v1.0.1 requires
+the correct decision plus at least one returned evidence id for `block` /
+`warn` scenarios (no longer Audrey-specific lineage phrasing — see
+`CHANGELOG.md#101---2026-05-15`). External-system numbers for Mem0 and Zep
+are explicitly out of scope for this Stage-A artifact; live credentialed
 runs land in a v2 paper after raw evidence bundles publish.
 
 ```bash
