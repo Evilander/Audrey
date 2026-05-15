@@ -111,8 +111,7 @@
         "evidenceRecall",
         "redactionLeaks",
         "recallDegradationDetectionRate",
-        "latency",
-        "lineageRichness"
+        "latency"
       ],
       "properties": {
         "system": { "type": "string", "minLength": 1 },
@@ -156,9 +155,7 @@
         "summary",
         "recallErrors",
         "leakedSecrets",
-        "requiredEvidenceMatched",
-        "hasEvidenceForDecision",
-        "lineageTextMatched"
+        "requiredEvidenceMatched"
       ],
       "properties": {
         "system": { "type": "string", "minLength": 1 },
