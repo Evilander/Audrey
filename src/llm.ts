@@ -26,7 +26,7 @@ export class MockLLMProvider implements LLMProvider {
   modelVersion: string;
 
   constructor({ responses = {} }: Partial<LLMConfig> = {}) {
-    this.responses = (responses ?? {}) as Record<string, unknown>;
+    this.responses = (responses ?? {});
     this.modelName = 'mock-llm';
     this.modelVersion = '1.0.0';
   }
@@ -87,7 +87,7 @@ export class AnthropicLLMProvider implements LLMProvider {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
-          'x-api-key': this.apiKey!,
+          'x-api-key': this.apiKey,
           'anthropic-version': '2023-06-01',
           'content-type': 'application/json',
         },
@@ -186,6 +186,6 @@ export function createLLMProvider(config: LLMConfig): LLMProvider {
     case 'openai':
       return new OpenAILLMProvider(config);
     default:
-      throw new Error(`Unknown LLM provider: ${(config as LLMConfig).provider}. Valid: mock, anthropic, openai`);
+      throw new Error(`Unknown LLM provider: ${(config as { provider: string }).provider}. Valid: mock, anthropic, openai`);
   }
 }

@@ -65,7 +65,7 @@ async function demo() {
     // (e.g. OpenAI text-embedding-3-small), a threshold of 0.80+ works well.
     // We drop it here so the demo pipeline runs end-to-end.
     similarityThreshold: -0.3,
-    extractPrinciple: (episodes) => ({
+    extractPrinciple: () => ({
       content: `Stripe enforces ~100 req/s rate limit across all endpoints. Exceeding this causes 429 errors that can stall payment queues and cause missed webhooks. Implement request throttling.`,
       type: 'semantic',
     }),

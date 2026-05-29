@@ -15,7 +15,7 @@ import Database from 'better-sqlite3';
 import {
   insertEvent,
   type EventOutcome,
-  type EventType,
+  type EventTypeLike,
   type MemoryEvent,
   type RedactionState,
 } from './events.js';
@@ -24,7 +24,7 @@ import { redact, redactJson, summarizeRedactions, truncateRedactedText, type Red
 const MAX_ERROR_SUMMARY_CHARS = 2000;
 
 export interface ObserveToolInput {
-  event: EventType | string;
+  event: EventTypeLike;
   tool: string;
   source?: string;
   sessionId?: string;
@@ -159,7 +159,7 @@ export function observeTool(db: Database.Database, input: ObserveToolInput): Obs
     redactionState = 'unreviewed';
   }
 
-  const finalMetadata = redactedMetadata && Object.keys(redactedMetadata as Record<string, unknown>).length > 0
+  const finalMetadata = redactedMetadata && Object.keys(redactedMetadata).length > 0
     ? {
         ...(redactedMetadata as Record<string, unknown>),
         ...(allHits.length > 0 ? { redactions: summarizeRedactions(allHits) } : {}),

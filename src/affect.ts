@@ -69,7 +69,7 @@ export async function detectResonance(
   for (const match of matches) {
     if (match.similarity < threshold) continue;
     let priorAffect: Partial<Affect>;
-    try { priorAffect = JSON.parse(match.affect || '{}'); } catch { continue; }
+    try { priorAffect = JSON.parse(match.affect || '{}') as Partial<Affect>; } catch { continue; }
     if (priorAffect.valence === undefined) continue;
 
     const emotionalSimilarity = affectSimilarity(affect, priorAffect);

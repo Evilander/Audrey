@@ -27,6 +27,7 @@ async function embedInChunks(
       const cause = err instanceof Error ? err.message : String(err);
       throw new Error(
         `reembedAll: embedBatch failed for ${label} (rows ${i}-${i + slice.length - 1}): ${cause}`,
+        { cause: err },
       );
     }
   }

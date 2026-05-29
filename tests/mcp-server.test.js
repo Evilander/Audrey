@@ -4,7 +4,6 @@ import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { Audrey } from '../dist/src/index.js';
-import { readStoredDimensions } from '../dist/src/db.js';
 import {
   buildAudreyConfig,
   buildInstallArgs,

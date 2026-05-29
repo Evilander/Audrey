@@ -278,7 +278,7 @@ async function executeGuardStep(brain, step, refs) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (step.errorIncludes && !message.includes(step.errorIncludes)) {
-        throw new Error(`Guard hardening expected "${step.errorIncludes}" but got "${message}"`);
+        throw new Error(`Guard hardening expected "${step.errorIncludes}" but got "${message}"`, { cause: err });
       }
       const label = step.label ?? 'after_error_rejected';
       return [{

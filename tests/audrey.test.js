@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Audrey } from '../dist/src/audrey.js';
-import { MockEmbeddingProvider } from '../dist/src/embedding.js';
-import { MockLLMProvider } from '../dist/src/llm.js';
 import * as AudreySDK from '../dist/src/index.js';
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -829,7 +827,7 @@ describe('confidence config', () => {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run('sem-hl', 'Half-life test', 'active', 1, 2, 0, tenDaysAgo);
 
-    const result = audrey.decay({ dormantThreshold: 0.5 });
+    audrey.decay({ dormantThreshold: 0.5 });
     const row = audrey.db.prepare('SELECT state FROM semantics WHERE id = ?').get('sem-hl');
     expect(row.state).toBe('dormant');
   });
@@ -880,7 +878,7 @@ describe('Audrey batch and streaming', () => {
     await brain.encode({ content: 'Memory A', source: 'direct-observation' });
     await brain.encode({ content: 'Memory B', source: 'tool-result' });
     let count = 0;
-    for await (const memory of brain.recallStream('memory', { limit: 10 })) {
+    for await (const _memory of brain.recallStream('memory', { limit: 10 })) {
       count++;
       if (count >= 1) break;
     }

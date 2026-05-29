@@ -115,7 +115,7 @@ export function buildAudreyConfig(): AudreyConfig {
   const config: AudreyConfig = { dataDir, agent, embedding };
   if (llm) {
     // LLMConfig requires provider as literal union; resolveLLMProvider guarantees this
-    config.llm = llm as AudreyConfig['llm'];
+    config.llm = llm;
   }
 
   return config;

@@ -157,13 +157,13 @@ describe('applyDecay', () => {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(id, 'Test half-life fact', 'active', 1, 2, 0, daysAgo(10));
 
-    const defaultResult = applyDecay(db, { dormantThreshold: 0.5 });
+    applyDecay(db, { dormantThreshold: 0.5 });
     const afterDefault = db.prepare('SELECT state FROM semantics WHERE id = ?').get(id);
     expect(afterDefault.state).toBe('active');
 
     db.prepare("UPDATE semantics SET state = 'active' WHERE id = ?").run(id);
 
-    const customResult = applyDecay(db, {
+    applyDecay(db, {
       dormantThreshold: 0.5,
       halfLives: { semantic: 1, procedural: 90 },
     });

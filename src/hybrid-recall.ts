@@ -103,7 +103,7 @@ function loadFtsOnlyEpisode(db: Database.Database, id: string, includePrivate: b
     id: row.id,
     content: row.content,
     type: 'episodic',
-    confidence: row.source_reliability ?? sourceReliability(row.source as never),
+    confidence: row.source_reliability ?? sourceReliability(row.source),
     score: 0,
     source: row.source,
     agent: row.agent ?? 'default',

@@ -344,7 +344,7 @@ export function verifyArxivCompileReport(options = {}) {
   const allowPending = options.allowPending !== false;
   const failures = [];
   const blockers = [];
-  let report = null;
+  let report;
 
   try {
     report = JSON.parse(readFileSync(reportPath, 'utf-8'));

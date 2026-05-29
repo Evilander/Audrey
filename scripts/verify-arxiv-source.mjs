@@ -76,7 +76,7 @@ export function verifyArxivSourcePackage(options = {}) {
   const schemaPath = fromRoot(options.schema ?? DEFAULT_SCHEMA);
   const manifestPath = join(dir, 'arxiv-manifest.json');
   const failures = [];
-  let manifest = null;
+  let manifest;
 
   try {
     manifest = readJson(manifestPath);
