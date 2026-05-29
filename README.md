@@ -52,7 +52,7 @@ npx audrey guard --tool Bash "npm run deploy"
 Expected first-run shape:
 
 ```text
-Audrey Doctor v1.0.0
+Audrey Doctor v1.0.2
 Store health: not initialized
 Verdict: ready
 ```
@@ -535,10 +535,12 @@ Developer setup runs from source, not from the published tarball, so `npm run bu
 ```bash
 npm ci
 npm run build
+npm run lint     # ESLint (type-checked typescript-eslint); CI requires it clean
+npm run format   # Prettier; use `npm run format:check` to verify without writing
 npm test
 ```
 
-Once built, the `Quick Start` commands work against the local `dist/` output. The full release gate runs everything CI runs:
+Once built, the `Quick Start` commands work against the local `dist/` output. Code style and types are enforced: `npm run lint` and `npm run format:check` run in CI (Ubuntu + Windows) and in every release gate, so the baseline cannot regress. The full release gate runs everything CI runs:
 
 ```bash
 npm run release:gate
