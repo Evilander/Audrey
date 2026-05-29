@@ -15,16 +15,22 @@ import Database from 'better-sqlite3';
 import {
   insertEvent,
   type EventOutcome,
-  type EventType,
+  type EventTypeLike,
   type MemoryEvent,
   type RedactionState,
 } from './events.js';
-import { redact, redactJson, summarizeRedactions, truncateRedactedText, type RedactionHit } from './redact.js';
+import {
+  redact,
+  redactJson,
+  summarizeRedactions,
+  truncateRedactedText,
+  type RedactionHit,
+} from './redact.js';
 
 const MAX_ERROR_SUMMARY_CHARS = 2000;
 
 export interface ObserveToolInput {
-  event: EventType | string;
+  event: EventTypeLike;
   tool: string;
   source?: string;
   sessionId?: string;
@@ -84,10 +90,16 @@ function truncateText(text: string, maxChars: number, redactions: RedactionHit[]
   return truncateRedactedText(text, maxChars, redactions);
 }
 
-function safeErrorSummary(input: string | undefined): { text: string | null; hits: RedactionHit[] } {
+function safeErrorSummary(input: string | undefined): {
+  text: string | null;
+  hits: RedactionHit[];
+} {
   if (!input) return { text: null, hits: [] };
   const result = redact(input);
-  return { text: truncateText(result.text, MAX_ERROR_SUMMARY_CHARS, result.redactions), hits: result.redactions };
+  return {
+    text: truncateText(result.text, MAX_ERROR_SUMMARY_CHARS, result.redactions),
+    hits: result.redactions,
+  };
 }
 
 /**
@@ -98,7 +110,10 @@ export function summarizeOutput(output: unknown, maxChars: number = 240): string
   return summarizeOutputWithRedactions(output, maxChars).text;
 }
 
-function summarizeOutputWithRedactions(output: unknown, maxChars: number = 240): { text: string | null; hits: RedactionHit[] } {
+function summarizeOutputWithRedactions(
+  output: unknown,
+  maxChars: number = 240,
+): { text: string | null; hits: RedactionHit[] } {
   if (output == null) return { text: null, hits: [] };
   const text = typeof output === 'string' ? output : safeStringify(output);
   if (!text) return { text: null, hits: [] };
@@ -124,7 +139,10 @@ function mergeHits(...sets: RedactionHit[][]): RedactionHit[] {
       counts.set(hit.class, (counts.get(hit.class) ?? 0) + hit.count);
     }
   }
-  return [...counts.entries()].map(([cls, count]) => ({ class: cls as RedactionHit['class'], count }));
+  return [...counts.entries()].map(([cls, count]) => ({
+    class: cls as RedactionHit['class'],
+    count,
+  }));
 }
 
 export function observeTool(db: Database.Database, input: ObserveToolInput): ObserveToolResult {
@@ -159,12 +177,15 @@ export function observeTool(db: Database.Database, input: ObserveToolInput): Obs
     redactionState = 'unreviewed';
   }
 
-  const finalMetadata = redactedMetadata && Object.keys(redactedMetadata as Record<string, unknown>).length > 0
-    ? {
-        ...(redactedMetadata as Record<string, unknown>),
-        ...(allHits.length > 0 ? { redactions: summarizeRedactions(allHits) } : {}),
-      }
-    : (allHits.length > 0 ? { redactions: summarizeRedactions(allHits) } : null);
+  const finalMetadata =
+    redactedMetadata && Object.keys(redactedMetadata).length > 0
+      ? {
+          ...(redactedMetadata as Record<string, unknown>),
+          ...(allHits.length > 0 ? { redactions: summarizeRedactions(allHits) } : {}),
+        }
+      : allHits.length > 0
+        ? { redactions: summarizeRedactions(allHits) }
+        : null;
 
   const event = insertEvent(db, {
     sessionId: input.sessionId ?? null,

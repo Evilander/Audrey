@@ -51,9 +51,7 @@ function memoryText(memory) {
 }
 
 function evidenceIds(memories) {
-  return memories
-    .map(memory => memory?.id ?? memory?.memory_id)
-    .filter(Boolean);
+  return memories.map(memory => memory?.id ?? memory?.memory_id).filter(Boolean);
 }
 
 function decisionFromMemories(memories, action, unsupportedFault = null) {
@@ -62,7 +60,9 @@ function decisionFromMemories(memories, action, unsupportedFault = null) {
       decision: 'warn',
       riskScore: 0.55,
       evidenceIds: evidenceIds(memories),
-      recommendedActions: ['External adapter cannot inject storage faults into Mem0 Platform; verify memory health separately.'],
+      recommendedActions: [
+        'External adapter cannot inject storage faults into Mem0 Platform; verify memory health separately.',
+      ],
       summary: `Mem0 adapter cannot emulate fault injection: ${unsupportedFault}.`,
     };
   }
@@ -129,7 +129,9 @@ class Mem0PlatformClient {
 
     if (!response.ok && response.status !== 204) {
       const body = await response.text();
-      throw new Error(`Mem0 ${options.method ?? 'GET'} ${path} failed ${response.status}: ${body.slice(0, 500)}`);
+      throw new Error(
+        `Mem0 ${options.method ?? 'GET'} ${path} failed ${response.status}: ${body.slice(0, 500)}`,
+      );
     }
 
     if (response.status === 204) return null;
@@ -175,7 +177,7 @@ class Mem0PlatformClient {
         filters: { user_id: userId },
       }),
     });
-    return Array.isArray(response) ? response : response?.results ?? [];
+    return Array.isArray(response) ? response : (response?.results ?? []);
   }
 
   async deleteUser(userId) {
@@ -191,9 +193,10 @@ function memoryMessagesFromScenario(scenario) {
     messages.push({ role: 'user', content: memory.content });
   }
   for (const event of scenario.seed.seededToolEvents ?? []) {
-    const seededSecret = event.errorSummaryPattern && scenario.privateSeed?.seededSecrets?.[0]
-      ? `${'x'.repeat(1990)} ${scenario.privateSeed.seededSecrets[0]}`
-      : '';
+    const seededSecret =
+      event.errorSummaryPattern && scenario.privateSeed?.seededSecrets?.[0]
+        ? `${'x'.repeat(1990)} ${scenario.privateSeed.seededSecrets[0]}`
+        : '';
     messages.push({
       role: 'user',
       content: [
@@ -204,7 +207,9 @@ function memoryMessagesFromScenario(scenario) {
         event.errorSummaryPattern ? `Error pattern: ${event.errorSummaryPattern}` : '',
         seededSecret ? `Error: ${seededSecret}` : '',
         event.output ? `Output: ${event.output}` : '',
-      ].filter(Boolean).join('\n'),
+      ]
+        .filter(Boolean)
+        .join('\n'),
     });
   }
   if (scenario.seed.seededNoise?.count) {
@@ -234,14 +239,16 @@ async function addInBatches(client, { userId, scenario, messages }) {
 
 function userIdForScenario(scenario) {
   const prefix = process.env.MEM0_GUARDBENCH_USER_PREFIX ?? 'audrey-guardbench';
-  const runId = process.env.MEM0_GUARDBENCH_RUN_ID ?? `${Date.now()}-${randomBytes(8).toString('hex')}`;
+  const runId =
+    process.env.MEM0_GUARDBENCH_RUN_ID ?? `${Date.now()}-${randomBytes(8).toString('hex')}`;
   return `${prefix}-${runId}-${scenario.id}`.toLowerCase();
 }
 
 export function createGuardBenchAdapter(options = {}) {
   return {
     name: 'Mem0 Platform',
-    description: 'Mem0 Platform REST adapter using V3 add, V2 search, event polling, and entity cleanup.',
+    description:
+      'Mem0 Platform REST adapter using V3 add, V2 search, event polling, and entity cleanup.',
     async setup({ scenario }) {
       const client = new Mem0PlatformClient(options);
       const userId = userIdForScenario(scenario);

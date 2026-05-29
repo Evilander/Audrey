@@ -327,7 +327,9 @@ export interface EmbeddingConfig {
   device?: string;
   batchSize?: number;
   timeout?: number;
-  pipelineFactory?: ((task: string, model: string, options?: Record<string, unknown>) => Promise<unknown>) | null;
+  pipelineFactory?:
+    | ((task: string, model: string, options?: Record<string, unknown>) => Promise<unknown>)
+    | null;
 }
 
 export interface LLMConfig {
@@ -435,9 +437,9 @@ export interface EpisodeRow {
   agent: string;
   source_reliability: number;
   salience: number;
-  context: string;       // JSON string
-  affect: string;        // JSON string
-  tags: string | null;   // JSON string or null
+  context: string; // JSON string
+  affect: string; // JSON string
+  tags: string | null; // JSON string or null
   causal_trigger: string | null;
   causal_consequence: string | null;
   created_at: string;
@@ -445,8 +447,8 @@ export interface EpisodeRow {
   embedding_version: string | null;
   supersedes: string | null;
   superseded_by: string | null;
-  consolidated: number;  // 0 | 1
-  private: number;       // 0 | 1
+  consolidated: number; // 0 | 1
+  private: number; // 0 | 1
 }
 
 export interface SemanticRow {
@@ -455,7 +457,7 @@ export interface SemanticRow {
   agent: string;
   embedding: Buffer | null;
   state: MemoryState;
-  conditions: string | null;           // JSON string
+  conditions: string | null; // JSON string
   evidence_episode_ids: string | null; // JSON string
   evidence_count: number;
   supporting_count: number;
@@ -480,7 +482,7 @@ export interface ProceduralRow {
   agent: string;
   embedding: Buffer | null;
   state: MemoryState;
-  trigger_conditions: string | null;   // JSON string
+  trigger_conditions: string | null; // JSON string
   evidence_episode_ids: string | null; // JSON string
   success_count: number;
   failure_count: number;
@@ -521,8 +523,8 @@ export interface ContradictionRow {
 export interface ConsolidationRunRow {
   id: string;
   checkpoint_cursor: string | null;
-  input_episode_ids: string;   // JSON string
-  output_memory_ids: string;   // JSON string
+  input_episode_ids: string; // JSON string
+  output_memory_ids: string; // JSON string
   confidence_deltas: string | null; // JSON string
   consolidation_model: string | null;
   consolidation_prompt_hash: string | null;

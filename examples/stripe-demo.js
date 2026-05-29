@@ -21,11 +21,15 @@ async function demo() {
   });
 
   brain.on('consolidation', ({ principlesExtracted, clustersFound }) => {
-    console.log(`  [CONSOLIDATE] Found ${clustersFound} clusters, extracted ${principlesExtracted} principles`);
+    console.log(
+      `  [CONSOLIDATE] Found ${clustersFound} clusters, extracted ${principlesExtracted} principles`,
+    );
   });
 
   brain.on('reinforcement', ({ episodeId, similarity }) => {
-    console.log(`  [REINFORCE] Episode ${episodeId.slice(0, 8)}... reinforced existing knowledge (sim: ${similarity?.toFixed(2) || 'N/A'})`);
+    console.log(
+      `  [REINFORCE] Episode ${episodeId.slice(0, 8)}... reinforced existing knowledge (sim: ${similarity?.toFixed(2) || 'N/A'})`,
+    );
   });
 
   // --- Scenario: Agent encounters Stripe rate limits ---
@@ -41,7 +45,8 @@ async function demo() {
 
   console.log('\n--- Episode 2: Second hit from different code path ---');
   await brain.encode({
-    content: 'Stripe webhook verification endpoint returned 429 Too Many Requests during high traffic',
+    content:
+      'Stripe webhook verification endpoint returned 429 Too Many Requests during high traffic',
     source: 'tool-result',
     salience: 0.7,
     causal: { trigger: 'webhook-flood', consequence: 'missed-webhook-events' },
@@ -65,7 +70,7 @@ async function demo() {
     // (e.g. OpenAI text-embedding-3-small), a threshold of 0.80+ works well.
     // We drop it here so the demo pipeline runs end-to-end.
     similarityThreshold: -0.3,
-    extractPrinciple: (episodes) => ({
+    extractPrinciple: () => ({
       content: `Stripe enforces ~100 req/s rate limit across all endpoints. Exceeding this causes 429 errors that can stall payment queues and cause missed webhooks. Implement request throttling.`,
       type: 'semantic',
     }),
@@ -80,7 +85,9 @@ async function demo() {
 
   console.log(`\nRecalled ${memories.length} memories:`);
   for (const mem of memories) {
-    console.log(`  [${mem.type.toUpperCase()}] (conf: ${mem.confidence.toFixed(2)}, score: ${mem.score.toFixed(3)}) ${mem.content.slice(0, 80)}${mem.content.length > 80 ? '...' : ''}`);
+    console.log(
+      `  [${mem.type.toUpperCase()}] (conf: ${mem.confidence.toFixed(2)}, score: ${mem.score.toFixed(3)}) ${mem.content.slice(0, 80)}${mem.content.length > 80 ? '...' : ''}`,
+    );
   }
 
   // --- Introspection ---

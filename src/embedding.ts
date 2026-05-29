@@ -19,8 +19,8 @@ export class MockEmbeddingProvider implements EmbeddingProvider {
     for (let i = 0; i < this.dimensions; i++) {
       vector[i] = (hash[i % hash.length]! / 255) * 2 - 1;
     }
-    const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v! * v!, 0));
-    return vector.map(v => v! / magnitude);
+    const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0));
+    return vector.map(v => v / magnitude);
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
@@ -45,7 +45,13 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   modelName: string;
   modelVersion: string;
 
-  constructor({ apiKey, model = 'text-embedding-3-small', dimensions = 1536, timeout = 30000, batchSize = 256 }: Partial<EmbeddingConfig> = {}) {
+  constructor({
+    apiKey,
+    model = 'text-embedding-3-small',
+    dimensions = 1536,
+    timeout = 30000,
+    batchSize = 256,
+  }: Partial<EmbeddingConfig> = {}) {
     this.apiKey = apiKey || process.env.OPENAI_API_KEY;
     this.model = model ?? 'text-embedding-3-small';
     this.dimensions = dimensions ?? 1536;
@@ -63,14 +69,15 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
       const response = await fetch('https://api.openai.com/v1/embeddings', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ input: text, model: this.model, dimensions: this.dimensions }),
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`OpenAI embedding failed: ${await describeHttpError(response)}`);
-      const data = await response.json() as { data?: { embedding: number[] }[] };
+      if (!response.ok)
+        throw new Error(`OpenAI embedding failed: ${await describeHttpError(response)}`);
+      const data = (await response.json()) as { data?: { embedding: number[] }[] };
       const first = data.data?.[0]?.embedding;
       if (!first) throw new Error('OpenAI embedding response contained no embeddings');
       return first;
@@ -92,19 +99,22 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
         const response = await fetch('https://api.openai.com/v1/embeddings', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
+            Authorization: `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ input: chunk, model: this.model, dimensions: this.dimensions }),
           signal: controller.signal,
         });
-        if (!response.ok) throw new Error(`OpenAI embedding failed: ${await describeHttpError(response)}`);
-        const data = await response.json() as { data?: { embedding?: number[] }[] };
+        if (!response.ok)
+          throw new Error(`OpenAI embedding failed: ${await describeHttpError(response)}`);
+        const data = (await response.json()) as { data?: { embedding?: number[] }[] };
         if (!Array.isArray(data.data) || data.data.length === 0) {
           throw new Error('OpenAI embedBatch response contained no embeddings');
         }
         if (data.data.length !== chunk.length) {
-          throw new Error(`OpenAI embedBatch returned ${data.data.length} embeddings for ${chunk.length} inputs at offset ${offset}`);
+          throw new Error(
+            `OpenAI embedBatch returned ${data.data.length} embeddings for ${chunk.length} inputs at offset ${offset}`,
+          );
         }
         for (let i = 0; i < data.data.length; i++) {
           const emb = data.data[i]?.embedding;
@@ -130,6 +140,16 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
+// Minimal structural type for the transformers.js feature-extraction pipeline.
+// The full type from @huggingface/transformers is heavy and version-coupled; we
+// only ever call the pipeline and read `.data` (single input) or `.tolist()`
+// (batched) off the returned tensor. The cast at the assignment site is the one
+// trust boundary with the untyped library import.
+type FeatureExtractionPipeline = (
+  input: string | string[],
+  options: { pooling: 'mean'; normalize: boolean },
+) => Promise<{ data: Float32Array; tolist(): number[][] }>;
+
 export class LocalEmbeddingProvider implements EmbeddingProvider {
   model: string;
   dimensions: number;
@@ -137,12 +157,19 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
   modelVersion: string;
   device: string;
   batchSize: number;
-  pipelineFactory: ((task: string, model: string, options?: Record<string, unknown>) => Promise<unknown>) | null;
-  _pipeline: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  pipelineFactory:
+    | ((task: string, model: string, options?: Record<string, unknown>) => Promise<unknown>)
+    | null;
+  _pipeline: FeatureExtractionPipeline | null;
   _readyPromise: Promise<void> | null;
   _actualDevice: string | null;
 
-  constructor({ model = 'Xenova/all-MiniLM-L6-v2', device = 'gpu', batchSize = 64, pipelineFactory = null }: Partial<EmbeddingConfig> = {}) {
+  constructor({
+    model = 'Xenova/all-MiniLM-L6-v2',
+    device = 'gpu',
+    batchSize = 64,
+    pipelineFactory = null,
+  }: Partial<EmbeddingConfig> = {}) {
     this.model = model ?? 'Xenova/all-MiniLM-L6-v2';
     this.dimensions = 384;
     this.modelName = this.model;
@@ -171,16 +198,18 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
         const verbose = process.env.AUDREY_ONNX_VERBOSE === '1';
         const sessionOptions = verbose ? undefined : { logSeverityLevel: 3 };
         try {
-          this._pipeline = await pipeline('feature-extraction', this.model, {
-            dtype: 'fp32', device: this.device as 'gpu' | 'cpu',
+          this._pipeline = (await pipeline('feature-extraction', this.model, {
+            dtype: 'fp32',
+            device: this.device,
             ...(sessionOptions ? { session_options: sessionOptions } : {}),
-          } as Parameters<typeof pipeline>[2]);
+          })) as FeatureExtractionPipeline;
           this._actualDevice = this.device;
         } catch {
-          this._pipeline = await pipeline('feature-extraction', this.model, {
-            dtype: 'fp32', device: 'cpu',
+          this._pipeline = (await pipeline('feature-extraction', this.model, {
+            dtype: 'fp32',
+            device: 'cpu',
             ...(sessionOptions ? { session_options: sessionOptions } : {}),
-          } as Parameters<typeof pipeline>[2]);
+          })) as FeatureExtractionPipeline;
           this._actualDevice = 'cpu';
         }
       })();
@@ -190,8 +219,8 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
 
   async embed(text: string): Promise<number[]> {
     await this.ready();
-    const output = await this._pipeline(text, { pooling: 'mean', normalize: true });
-    return Array.from(output.data as Float32Array);
+    const output = await this._pipeline!(text, { pooling: 'mean', normalize: true });
+    return Array.from(output.data);
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
@@ -200,8 +229,8 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
     const results: number[][] = [];
     for (let i = 0; i < texts.length; i += this.batchSize) {
       const chunk = texts.slice(i, i + this.batchSize);
-      const output = await this._pipeline(chunk, { pooling: 'mean', normalize: true });
-      results.push(...(output.tolist() as number[][]));
+      const output = await this._pipeline!(chunk, { pooling: 'mean', normalize: true });
+      results.push(...output.tolist());
     }
     return results;
   }
@@ -223,7 +252,11 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
   modelName: string;
   modelVersion: string;
 
-  constructor({ apiKey, model = 'gemini-embedding-001', timeout = 30000 }: Partial<EmbeddingConfig> = {}) {
+  constructor({
+    apiKey,
+    model = 'gemini-embedding-001',
+    timeout = 30000,
+  }: Partial<EmbeddingConfig> = {}) {
     this.apiKey = apiKey || process.env.GOOGLE_API_KEY;
     this.model = model ?? 'gemini-embedding-001';
     this.dimensions = 3072;
@@ -244,10 +277,11 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
           body: JSON.stringify({ model: `models/${this.model}`, content: { parts: [{ text }] } }),
           signal: controller.signal,
-        }
+        },
       );
-      if (!response.ok) throw new Error(`Gemini embedding failed: ${await describeHttpError(response)}`);
-      const data = await response.json() as { embedding: { values: number[] } };
+      if (!response.ok)
+        throw new Error(`Gemini embedding failed: ${await describeHttpError(response)}`);
+      const data = (await response.json()) as { embedding: { values: number[] } };
       return data.embedding.values;
     } finally {
       clearTimeout(timer);
@@ -275,10 +309,11 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
               })),
             }),
             signal: controller.signal,
-          }
+          },
         );
-        if (!response.ok) throw new Error(`Gemini batch embedding failed: ${await describeHttpError(response)}`);
-        const data = await response.json() as { embeddings: { values: number[] }[] };
+        if (!response.ok)
+          throw new Error(`Gemini batch embedding failed: ${await describeHttpError(response)}`);
+        const data = (await response.json()) as { embeddings: { values: number[] }[] };
         results.push(...data.embeddings.map(e => e.values));
       } finally {
         clearTimeout(timer);
@@ -307,6 +342,8 @@ export function createEmbeddingProvider(config: EmbeddingConfig): EmbeddingProvi
     case 'gemini':
       return new GeminiEmbeddingProvider(config);
     default:
-      throw new Error(`Unknown embedding provider: ${(config as EmbeddingConfig).provider}. Valid: mock, openai, local, gemini`);
+      throw new Error(
+        `Unknown embedding provider: ${(config as { provider: string }).provider}. Valid: mock, openai, local, gemini`,
+      );
   }
 }

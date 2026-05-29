@@ -18,13 +18,19 @@ export type EventType =
   | 'SubagentStop'
   | 'Observation';
 
+// A known EventType, or any other string for forward-compatibility. The
+// `string & {}` keeps the EventType literals visible to autocomplete instead of
+// collapsing the whole union down to `string` (callers such as `validate` and
+// `promote` record extension event types like `Validate` and `Promotion`).
+export type EventTypeLike = EventType | (string & {});
+
 export type EventOutcome = 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown';
 export type RedactionState = 'unreviewed' | 'redacted' | 'clean' | 'quarantined';
 
 export interface MemoryEvent {
   id: string;
   session_id: string | null;
-  event_type: EventType | string;
+  event_type: EventTypeLike;
   source: string;
   actor_agent: string | null;
   tool_name: string | null;
@@ -42,7 +48,7 @@ export interface MemoryEvent {
 export interface EventInsert {
   id?: string;
   sessionId?: string | null;
-  eventType: EventType | string;
+  eventType: EventTypeLike;
   source: string;
   actorAgent?: string | null;
   toolName?: string | null;
@@ -75,12 +81,14 @@ export function insertEvent(db: Database.Database, input: EventInsert): MemoryEv
   const id = input.id ?? generateId();
   const createdAt = input.createdAt ?? new Date().toISOString();
   const redactionState = input.redactionState ?? 'unreviewed';
-  const fileFingerprints = input.fileFingerprints && input.fileFingerprints.length > 0
-    ? JSON.stringify(input.fileFingerprints)
-    : null;
+  const fileFingerprints =
+    input.fileFingerprints && input.fileFingerprints.length > 0
+      ? JSON.stringify(input.fileFingerprints)
+      : null;
   const metadata = toJson(input.metadata ?? null);
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO memory_events (
       id, session_id, event_type, source, actor_agent, tool_name,
       input_hash, output_hash, outcome, error_summary, cwd,
@@ -90,7 +98,8 @@ export function insertEvent(db: Database.Database, input: EventInsert): MemoryEv
       @inputHash, @outputHash, @outcome, @errorSummary, @cwd,
       @fileFingerprints, @redactionState, @metadata, @createdAt
     )
-  `).run({
+  `,
+  ).run({
     id,
     sessionId: input.sessionId ?? null,
     eventType: input.eventType,
@@ -155,22 +164,39 @@ export function listEvents(db: Database.Database, query: EventQuery = {}): Memor
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = Math.max(1, Math.min(query.limit ?? 100, 1000));
 
-  return db.prepare(
-    `SELECT * FROM memory_events ${where} ORDER BY created_at DESC LIMIT ${limit}`
-  ).all(params) as MemoryEvent[];
+  return db
+    .prepare(`SELECT * FROM memory_events ${where} ORDER BY created_at DESC LIMIT ${limit}`)
+    .all(params) as MemoryEvent[];
 }
 
 export function countEvents(db: Database.Database, query: EventQuery = {}): number {
   const conditions: string[] = [];
   const params: Record<string, unknown> = {};
-  if (query.sessionId) { conditions.push('session_id = @sessionId'); params.sessionId = query.sessionId; }
-  if (query.toolName) { conditions.push('tool_name = @toolName'); params.toolName = query.toolName; }
-  if (query.eventType) { conditions.push('event_type = @eventType'); params.eventType = query.eventType; }
-  if (query.outcome) { conditions.push('outcome = @outcome'); params.outcome = query.outcome; }
-  if (query.since) { conditions.push('created_at >= @since'); params.since = query.since; }
+  if (query.sessionId) {
+    conditions.push('session_id = @sessionId');
+    params.sessionId = query.sessionId;
+  }
+  if (query.toolName) {
+    conditions.push('tool_name = @toolName');
+    params.toolName = query.toolName;
+  }
+  if (query.eventType) {
+    conditions.push('event_type = @eventType');
+    params.eventType = query.eventType;
+  }
+  if (query.outcome) {
+    conditions.push('outcome = @outcome');
+    params.outcome = query.outcome;
+  }
+  if (query.since) {
+    conditions.push('created_at >= @since');
+    params.since = query.since;
+  }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const row = db.prepare(`SELECT COUNT(*) AS c FROM memory_events ${where}`).get(params) as { c: number };
+  const row = db.prepare(`SELECT COUNT(*) AS c FROM memory_events ${where}`).get(params) as {
+    c: number;
+  };
   return row.c;
 }
 
@@ -192,7 +218,9 @@ export function recentFailures(
   const since = options.since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const limit = Math.max(1, Math.min(options.limit ?? 20, 200));
 
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT tool_name,
            COUNT(*) AS failure_count,
            MAX(created_at) AS last_failed_at,
@@ -210,7 +238,9 @@ export function recentFailures(
     GROUP BY tool_name
     ORDER BY last_failed_at DESC
     LIMIT ${limit}
-  `).all({ since }) as FailurePattern[];
+  `,
+    )
+    .all({ since }) as FailurePattern[];
 }
 
 export function deleteEventsBefore(db: Database.Database, cutoffIso: string): number {

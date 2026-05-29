@@ -45,12 +45,12 @@ describe('suggestConsolidationParams', () => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     insert.run('m1', 'r1', 3, 0.85, 10, 1, 2, now);
-    insert.run('m2', 'r2', 2, 0.70, 10, 3, 5, now);
-    insert.run('m3', 'r3', 2, 0.70, 15, 4, 6, now);
+    insert.run('m2', 'r2', 2, 0.7, 10, 3, 5, now);
+    insert.run('m3', 'r3', 2, 0.7, 15, 4, 6, now);
 
     const params = audrey.suggestConsolidationParams();
     expect(params.confidence).not.toBe('no_data');
     expect(params.minClusterSize).toBe(2);
-    expect(params.similarityThreshold).toBeCloseTo(0.70, 1);
+    expect(params.similarityThreshold).toBeCloseTo(0.7, 1);
   });
 });

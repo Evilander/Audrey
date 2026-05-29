@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   MockLLMProvider,
   AnthropicLLMProvider,
@@ -51,9 +51,9 @@ describe('AnthropicLLMProvider', () => {
   it('throws clearly when no API key is configured', async () => {
     const llm = new AnthropicLLMProvider();
     llm.apiKey = '';
-    await expect(
-      llm.complete([{ role: 'user', content: 'test' }]),
-    ).rejects.toThrow('Anthropic LLM requires ANTHROPIC_API_KEY');
+    await expect(llm.complete([{ role: 'user', content: 'test' }])).rejects.toThrow(
+      'Anthropic LLM requires ANTHROPIC_API_KEY',
+    );
   });
 
   it('calls the Anthropic Messages API', async () => {
@@ -95,38 +95,38 @@ describe('AnthropicLLMProvider', () => {
     });
 
     const llm = new AnthropicLLMProvider({ apiKey: 'bad-key' });
-    await expect(
-      llm.complete([{ role: 'user', content: 'test' }]),
-    ).rejects.toThrow('Anthropic API error: 401');
+    await expect(llm.complete([{ role: 'user', content: 'test' }])).rejects.toThrow(
+      'Anthropic API error: 401',
+    );
   });
 
   it('throws descriptive error on malformed JSON response', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({
-        content: [{ type: 'text', text: 'not valid json {{{' }],
-      }),
+      json: () =>
+        Promise.resolve({
+          content: [{ type: 'text', text: 'not valid json {{{' }],
+        }),
     });
 
     const llm = new AnthropicLLMProvider({ apiKey: 'test-key' });
-    await expect(
-      llm.json([{ role: 'user', content: 'test' }]),
-    ).rejects.toThrow(/Failed to parse LLM response as JSON/);
+    await expect(llm.json([{ role: 'user', content: 'test' }])).rejects.toThrow(
+      /Failed to parse LLM response as JSON/,
+    );
   });
 
   it('aborts fetch after timeout', async () => {
-    global.fetch = vi.fn().mockImplementation((_url, opts) =>
-      new Promise((resolve, reject) => {
-        const onAbort = () => reject(new DOMException('The operation was aborted', 'AbortError'));
-        if (opts?.signal?.aborted) return onAbort();
-        opts?.signal?.addEventListener('abort', onAbort);
-      }),
+    global.fetch = vi.fn().mockImplementation(
+      (_url, opts) =>
+        new Promise((resolve, reject) => {
+          const onAbort = () => reject(new DOMException('The operation was aborted', 'AbortError'));
+          if (opts?.signal?.aborted) return onAbort();
+          opts?.signal?.addEventListener('abort', onAbort);
+        }),
     );
 
     const llm = new AnthropicLLMProvider({ apiKey: 'test-key', timeout: 50 });
-    await expect(
-      llm.complete([{ role: 'user', content: 'test' }]),
-    ).rejects.toThrow();
+    await expect(llm.complete([{ role: 'user', content: 'test' }])).rejects.toThrow();
   });
 });
 
@@ -134,9 +134,9 @@ describe('OpenAILLMProvider', () => {
   it('throws clearly when no API key is configured', async () => {
     const llm = new OpenAILLMProvider();
     llm.apiKey = '';
-    await expect(
-      llm.complete([{ role: 'user', content: 'test' }]),
-    ).rejects.toThrow('OpenAI LLM requires OPENAI_API_KEY');
+    await expect(llm.complete([{ role: 'user', content: 'test' }])).rejects.toThrow(
+      'OpenAI LLM requires OPENAI_API_KEY',
+    );
   });
 
   it('calls the OpenAI Chat Completions API', async () => {
@@ -172,38 +172,38 @@ describe('OpenAILLMProvider', () => {
     });
 
     const llm = new OpenAILLMProvider({ apiKey: 'key' });
-    await expect(
-      llm.complete([{ role: 'user', content: 'test' }]),
-    ).rejects.toThrow('OpenAI API error: 429');
+    await expect(llm.complete([{ role: 'user', content: 'test' }])).rejects.toThrow(
+      'OpenAI API error: 429',
+    );
   });
 
   it('throws descriptive error on malformed JSON response', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({
-        choices: [{ message: { content: 'totally not json' } }],
-      }),
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: 'totally not json' } }],
+        }),
     });
 
     const llm = new OpenAILLMProvider({ apiKey: 'test-key' });
-    await expect(
-      llm.json([{ role: 'user', content: 'test' }]),
-    ).rejects.toThrow(/Failed to parse LLM response as JSON/);
+    await expect(llm.json([{ role: 'user', content: 'test' }])).rejects.toThrow(
+      /Failed to parse LLM response as JSON/,
+    );
   });
 
   it('aborts fetch after timeout', async () => {
-    global.fetch = vi.fn().mockImplementation((_url, opts) =>
-      new Promise((resolve, reject) => {
-        const onAbort = () => reject(new DOMException('The operation was aborted', 'AbortError'));
-        if (opts?.signal?.aborted) return onAbort();
-        opts?.signal?.addEventListener('abort', onAbort);
-      }),
+    global.fetch = vi.fn().mockImplementation(
+      (_url, opts) =>
+        new Promise((resolve, reject) => {
+          const onAbort = () => reject(new DOMException('The operation was aborted', 'AbortError'));
+          if (opts?.signal?.aborted) return onAbort();
+          opts?.signal?.addEventListener('abort', onAbort);
+        }),
     );
 
     const llm = new OpenAILLMProvider({ apiKey: 'test-key', timeout: 50 });
-    await expect(
-      llm.complete([{ role: 'user', content: 'test' }]),
-    ).rejects.toThrow();
+    await expect(llm.complete([{ role: 'user', content: 'test' }])).rejects.toThrow();
   });
 });
 

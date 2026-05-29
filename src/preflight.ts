@@ -90,8 +90,8 @@ function matchesToolOrAction(
   const actionText = action.toLowerCase();
 
   return Boolean(
-    (tool && (failed === tool || failed.includes(tool) || tool.includes(failed)))
-    || actionText.includes(failed)
+    (tool && (failed === tool || failed.includes(tool) || tool.includes(failed))) ||
+    actionText.includes(failed),
   );
 }
 
@@ -128,10 +128,7 @@ function addWarning(
   warnings.push(warning);
 }
 
-function warningFromTaggedRecall(
-  result: RecallResult,
-  fallbackAction: string,
-): PreflightWarning {
+function warningFromTaggedRecall(result: RecallResult, fallbackAction: string): PreflightWarning {
   return {
     type: 'must_follow',
     severity: 'high',
@@ -215,7 +212,8 @@ export async function buildPreflight(
       severity: 'high',
       message: 'Audrey memory index is unhealthy; recall may be incomplete or stale.',
       reason: 'memoryStatus().healthy is false.',
-      recommended_action: 'Run npx audrey status and npx audrey reembed before depending on memory.',
+      recommended_action:
+        'Run npx audrey status and npx audrey reembed before depending on memory.',
     });
   } else if (status?.reembed_recommended) {
     addWarning(warnings, seen, {
@@ -234,7 +232,8 @@ export async function buildPreflight(
       message: `Audrey recall degraded while building preflight: ${error.type} ${error.stage} failed.`,
       reason: shorten(error.message, 220),
       evidence_id: `recall:${error.type}:${error.stage}`,
-      recommended_action: 'Run npx audrey status and repair the degraded recall path before relying on Guard.',
+      recommended_action:
+        'Run npx audrey status and repair the degraded recall path before relying on Guard.',
     });
   }
 
@@ -249,10 +248,11 @@ export async function buildPreflight(
       });
       const trustedResults = taggedMustFollow.filter(isTrustedControlMemory);
       for (const result of trustedResults.slice(0, 5)) {
-        addWarning(warnings, seen, warningFromTaggedRecall(
-          result,
-          'Apply this must-follow rule before acting.',
-        ));
+        addWarning(
+          warnings,
+          seen,
+          warningFromTaggedRecall(result, 'Apply this must-follow rule before acting.'),
+        );
       }
     } catch {
       // The primary capsule path already reports recall degradation. Avoid
@@ -282,12 +282,11 @@ export async function buildPreflight(
   }
 
   for (const entry of capsule.sections.must_follow) {
-    addWarning(warnings, seen, warningFromEntry(
-      'must_follow',
-      'high',
-      entry,
-      'Apply this must-follow rule before acting.',
-    ));
+    addWarning(
+      warnings,
+      seen,
+      warningFromEntry('must_follow', 'high', entry, 'Apply this must-follow rule before acting.'),
+    );
   }
 
   for (const entry of capsule.sections.risks) {
@@ -295,82 +294,96 @@ export async function buildPreflight(
       const failedTool = toolFromFailureEntry(entry);
       if (!matchesToolOrAction(action, options.tool, failedTool)) continue;
     }
-    addWarning(warnings, seen, warningFromEntry(
-      entry.memory_type === 'tool_failure' ? 'recent_failure' : 'risk',
-      entry.memory_type === 'tool_failure' ? 'medium' : 'high',
-      entry,
-      'Mitigate this remembered risk before proceeding.',
-    ));
+    addWarning(
+      warnings,
+      seen,
+      warningFromEntry(
+        entry.memory_type === 'tool_failure' ? 'recent_failure' : 'risk',
+        entry.memory_type === 'tool_failure' ? 'medium' : 'high',
+        entry,
+        'Mitigate this remembered risk before proceeding.',
+      ),
+    );
   }
 
   for (const entry of capsule.sections.procedures) {
-    addWarning(warnings, seen, warningFromEntry(
-      'procedure',
-      'info',
-      entry,
-      'Use this remembered procedure as guidance.',
-    ));
+    addWarning(
+      warnings,
+      seen,
+      warningFromEntry('procedure', 'info', entry, 'Use this remembered procedure as guidance.'),
+    );
   }
 
   for (const entry of capsule.sections.contradictions) {
-    addWarning(warnings, seen, warningFromEntry(
-      'contradiction',
-      'high',
-      entry,
-      'Resolve or scope this contradiction before acting.',
-    ));
+    addWarning(
+      warnings,
+      seen,
+      warningFromEntry(
+        'contradiction',
+        'high',
+        entry,
+        'Resolve or scope this contradiction before acting.',
+      ),
+    );
   }
 
   for (const entry of capsule.sections.uncertain_or_disputed) {
-    addWarning(warnings, seen, warningFromEntry(
-      'uncertain',
-      'medium',
-      entry,
-      'Treat this as uncertain context and verify before relying on it.',
-    ));
+    addWarning(
+      warnings,
+      seen,
+      warningFromEntry(
+        'uncertain',
+        'medium',
+        entry,
+        'Treat this as uncertain context and verify before relying on it.',
+      ),
+    );
   }
 
   warnings.sort((a, b) => SEVERITY_SCORE[b.severity] - SEVERITY_SCORE[a.severity]);
-  const riskScore = warnings.reduce((score, warning) => Math.max(score, SEVERITY_SCORE[warning.severity]), 0);
+  const riskScore = warnings.reduce(
+    (score, warning) => Math.max(score, SEVERITY_SCORE[warning.severity]),
+    0,
+  );
   const hasHigh = warnings.some(w => w.severity === 'high');
   const hasMedium = warnings.some(w => w.severity === 'medium');
-  const decision: PreflightDecision = options.strict && hasHigh
-    ? 'block'
-    : hasHigh || hasMedium
-      ? 'caution'
-      : 'go';
+  const decision: PreflightDecision =
+    options.strict && hasHigh ? 'block' : hasHigh || hasMedium ? 'caution' : 'go';
   const verdict = decision === 'go' ? 'clear' : decision === 'block' ? 'blocked' : 'caution';
 
   const recommendedActions = [...new Set(warnings.map(recommendationFromWarning))];
   if (decision === 'block') {
-    recommendedActions.unshift('Do not proceed until the high-severity memory warning is addressed.');
+    recommendedActions.unshift(
+      'Do not proceed until the high-severity memory warning is addressed.',
+    );
   }
-  const evidenceIds = [...new Set(
-    warnings.map(w => w.evidence_id).filter((id): id is string => Boolean(id)),
-  )];
+  const evidenceIds = [
+    ...new Set(warnings.map(w => w.evidence_id).filter((id): id is string => Boolean(id))),
+  ];
 
-  const preflightEvent = options.recordEvent && options.tool
-    ? audrey.observeTool({
-        event: 'PreToolUse',
-        tool: options.tool,
-        sessionId: options.sessionId,
-        input: { action: action.trim(), tool: options.tool },
-        outcome: 'unknown',
-        cwd: options.cwd,
-        files: options.files,
-        metadata: {
-          preflight_decision: decision,
-          preflight_warning_count: warnings.length,
-          preflight_evidence_ids: evidenceIds,
-          audrey_guard_action_key: guardActionKey({
-            tool: options.tool,
-            action: action.trim(),
-            cwd: options.cwd,
-            files: options.files,
-          }),
-        },
-      }).event
-    : undefined;
+  const preflightEvent =
+    options.recordEvent && options.tool
+      ? audrey.observeTool({
+          event: 'PreToolUse',
+          tool: options.tool,
+          sessionId: options.sessionId,
+          input: { action: action.trim(), tool: options.tool },
+          outcome: 'unknown',
+          cwd: options.cwd,
+          files: options.files,
+          metadata: {
+            preflight_decision: decision,
+            preflight_warning_count: warnings.length,
+            preflight_evidence_ids: evidenceIds,
+            audrey_guard_action_key: guardActionKey({
+              tool: options.tool,
+              action: action.trim(),
+              cwd: options.cwd,
+              files: options.files,
+            }),
+          },
+        }).event
+      : undefined;
 
   return {
     action: action.trim(),

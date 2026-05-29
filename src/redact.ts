@@ -101,7 +101,8 @@ const RULES: RedactionRule[] = [
   },
   {
     class: 'private_key_block',
-    pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----/g,
+    pattern:
+      /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----/g,
     replacement: () => '[REDACTED:private_key_block]',
   },
   {
@@ -154,7 +155,8 @@ const RULES: RedactionRule[] = [
   },
   {
     class: 'session_cookie',
-    pattern: /\b(?:session|sid|sessionid|connect\.sid|JSESSIONID|PHPSESSID|laravel_session)=([A-Za-z0-9%._-]{8,})/gi,
+    pattern:
+      /\b(?:session|sid|sessionid|connect\.sid|JSESSIONID|PHPSESSID|laravel_session)=([A-Za-z0-9%._-]{8,})/gi,
     replacement: (match: string) => {
       const eq = match.indexOf('=');
       const name = eq > 0 ? match.slice(0, eq + 1) : match;
@@ -165,9 +167,12 @@ const RULES: RedactionRule[] = [
     // Keep this after named credential formats so a caller writing
     // `api_key: <token>` gets a key-assignment redaction, not a generic one.
     class: 'password_assignment',
-    pattern: /(?:\b|_)(?:password|passwd|pwd|secret|api[_-]?key|auth[_-]?token|bearer[_-]?token)\s*[:=]\s*["']?([^\s"'&]{4,})["']?/gi,
+    pattern:
+      /(?:\b|_)(?:password|passwd|pwd|secret|api[_-]?key|auth[_-]?token|bearer[_-]?token)\s*[:=]\s*["']?([^\s"'&]{4,})["']?/gi,
     replacement: (match: string) => {
-      const split = match.match(/^((?:\b|_)(?:password|passwd|pwd|secret|api[_-]?key|auth[_-]?token|bearer[_-]?token)\s*[:=]\s*["']?)/i);
+      const split = match.match(
+        /^((?:\b|_)(?:password|passwd|pwd|secret|api[_-]?key|auth[_-]?token|bearer[_-]?token)\s*[:=]\s*["']?)/i,
+      );
       const prefix = split ? split[1] : '';
       return `${prefix}[REDACTED:password_assignment]`;
     },
@@ -175,9 +180,8 @@ const RULES: RedactionRule[] = [
   {
     class: 'high_entropy_secret',
     pattern: /(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/=_-]{32,}(?![A-Za-z0-9+/=_-])/g,
-    replacement: (match: string) => (
-      looksLikeHighEntropySecret(match) ? tokenPlaceholder('high_entropy_secret', match) : match
-    ),
+    replacement: (match: string) =>
+      looksLikeHighEntropySecret(match) ? tokenPlaceholder('high_entropy_secret', match) : match,
   },
 ];
 
@@ -262,13 +266,18 @@ export function redact(input: string): RedactionResult {
   };
 }
 
-const SENSITIVE_KEY_PATTERN = /(^|_|-)(password|passwd|pwd|secret|api[_-]?key|auth[_-]?token|bearer[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|jwt|aws[_-]?secret|token)$/i;
+const SENSITIVE_KEY_PATTERN =
+  /(^|_|-)(password|passwd|pwd|secret|api[_-]?key|auth[_-]?token|bearer[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|jwt|aws[_-]?secret|token)$/i;
 
 function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY_PATTERN.test(key);
 }
 
-export function redactJson(value: unknown): { value: unknown; redactions: RedactionHit[]; state: 'clean' | 'redacted' } {
+export function redactJson(value: unknown): {
+  value: unknown;
+  redactions: RedactionHit[];
+  state: 'clean' | 'redacted';
+} {
   const counts = new Map<RedactionClass, number>();
 
   function addHits(hits: RedactionHit[]): void {
@@ -312,7 +321,10 @@ export function redactJson(value: unknown): { value: unknown; redactions: Redact
   }
 
   const redactedValue = walk(value);
-  const redactions: RedactionHit[] = [...counts.entries()].map(([cls, count]) => ({ class: cls, count }));
+  const redactions: RedactionHit[] = [...counts.entries()].map(([cls, count]) => ({
+    class: cls,
+    count,
+  }));
   return {
     value: redactedValue,
     redactions,
@@ -345,11 +357,13 @@ export function truncateRedactedText(
   const suffix = '...[truncated]';
   const initialBudget = Math.max(0, maxChars - suffix.length);
   let prefix = text.slice(0, initialBudget).trimEnd();
-  const missingMarkers = [...new Set(
-    redactions
-      .map(hit => markerForHit(text, hit))
-      .filter(marker => text.includes(marker) && !prefix.includes(marker)),
-  )];
+  const missingMarkers = [
+    ...new Set(
+      redactions
+        .map(hit => markerForHit(text, hit))
+        .filter(marker => text.includes(marker) && !prefix.includes(marker)),
+    ),
+  ];
 
   if (missingMarkers.length > 0) {
     const markerSuffix = ` ${missingMarkers.join(' ')}`;

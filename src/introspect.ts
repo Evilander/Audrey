@@ -25,7 +25,9 @@ interface CountRow {
 }
 
 export function introspect(db: Database.Database): IntrospectResult {
-  const counts = db.prepare(`
+  const counts = db
+    .prepare(
+      `
     SELECT
       (SELECT COUNT(*) FROM episodes) as episodic,
       (SELECT COUNT(*) FROM semantics WHERE state != 'rolled_back') as semantic,
@@ -33,22 +35,34 @@ export function introspect(db: Database.Database): IntrospectResult {
       (SELECT COUNT(*) FROM causal_links) as causal_links,
       (SELECT COUNT(*) FROM semantics WHERE state = 'dormant')
         + (SELECT COUNT(*) FROM procedures WHERE state = 'dormant') as dormant
-  `).get() as CountsRow;
+  `,
+    )
+    .get() as CountsRow;
 
-  const contradictions = db.prepare(`
+  const contradictions = db
+    .prepare(
+      `
     SELECT
       SUM(CASE WHEN state = 'open' THEN 1 ELSE 0 END) as open,
       SUM(CASE WHEN state = 'resolved' THEN 1 ELSE 0 END) as resolved,
       SUM(CASE WHEN state = 'context_dependent' THEN 1 ELSE 0 END) as context_dependent,
       SUM(CASE WHEN state = 'reopened' THEN 1 ELSE 0 END) as reopened
     FROM contradictions
-  `).get() as ContradictionCountsRow | undefined;
+  `,
+    )
+    .get() as ContradictionCountsRow | undefined;
 
-  const lastRun = db.prepare(`
+  const lastRun = db
+    .prepare(
+      `
     SELECT completed_at FROM consolidation_runs
     WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 1
-  `).get() as CompletedAtRow | undefined;
-  const totalRuns = (db.prepare('SELECT COUNT(*) as count FROM consolidation_runs').get() as CountRow).count;
+  `,
+    )
+    .get() as CompletedAtRow | undefined;
+  const totalRuns = (
+    db.prepare('SELECT COUNT(*) as count FROM consolidation_runs').get() as CountRow
+  ).count;
 
   return {
     episodic: counts.episodic,

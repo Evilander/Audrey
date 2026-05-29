@@ -1,7 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
-import { computeGuardBenchArtifactHashes, validateGuardBenchArtifacts } from './validate-guardbench-artifacts.mjs';
+import {
+  computeGuardBenchArtifactHashes,
+  validateGuardBenchArtifacts,
+} from './validate-guardbench-artifacts.mjs';
 import { publicArtifactValue, publicPath } from './public-paths.mjs';
 
 const CARD_FILE = 'guardbench-conformance-card.json';
@@ -18,7 +21,9 @@ function sha256File(path) {
 function findExternalSubject(summary, requestedAdapter) {
   const externalSubjects = (summary.manifest?.subjects ?? []).filter(subject => subject.external);
   if (requestedAdapter) {
-    const requested = externalSubjects.find(subject => subject.name === requestedAdapter || subject.id === requestedAdapter);
+    const requested = externalSubjects.find(
+      subject => subject.name === requestedAdapter || subject.id === requestedAdapter,
+    );
     if (requested) return requested;
   }
   return externalSubjects.length === 1 ? externalSubjects[0] : null;
@@ -57,7 +62,11 @@ export function buildGuardBenchConformanceCard(options = {}) {
     manifestVersion: summary.manifest?.manifestVersion ?? null,
     suiteId: summary.manifest?.suiteId ?? null,
     subject: {
-      name: systemSummary?.system ?? metadata?.adapterConformance?.adapter ?? metadata?.adapter ?? 'unknown',
+      name:
+        systemSummary?.system ??
+        metadata?.adapterConformance?.adapter ??
+        metadata?.adapter ??
+        'unknown',
       requestedAdapter: metadata?.adapterConformance?.requestedAdapter ?? metadata?.adapter ?? null,
       external: Boolean(externalSubject?.external ?? metadata),
     },

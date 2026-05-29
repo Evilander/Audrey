@@ -32,8 +32,10 @@ export function parsePublicationVerifierArgs(argv = process.argv.slice(2)) {
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
     if (token === '--adapter' && argv[i + 1]) args.adapter = argv[++i];
-    else if ((token === '--artifacts-dir' || token === '--dir') && argv[i + 1]) args.artifactsDir = argv[++i];
-    else if ((token === '--bundle-dir' || token === '--bundle') && argv[i + 1]) args.bundleDir = argv[++i];
+    else if ((token === '--artifacts-dir' || token === '--dir') && argv[i + 1])
+      args.artifactsDir = argv[++i];
+    else if ((token === '--bundle-dir' || token === '--bundle') && argv[i + 1])
+      args.bundleDir = argv[++i];
     else if (token === '--external-dry-run' && argv[i + 1]) args.externalDryRun = argv[++i];
     else if (token === '--external-evidence' && argv[i + 1]) args.externalEvidence = argv[++i];
     else if (token === '--leaderboard' && argv[i + 1]) args.leaderboard = argv[++i];
@@ -207,14 +209,24 @@ export function validatePublicationVerificationReport(report, options = {}) {
 
 export async function verifyGuardBenchPublicationArtifacts(options = {}) {
   const registry = await validateAdapterRegistry();
-  const adapterModule = await validateAdapterModuleFile({ adapter: options.adapter ?? DEFAULT_ADAPTER });
-  const selfTest = validateAdapterSelfTestFile({
-    report: join(resolve(options.artifactsDir ?? DEFAULT_ARTIFACTS_DIR), 'adapter-self-test', 'guardbench-adapter-self-test.json'),
+  const adapterModule = await validateAdapterModuleFile({
+    adapter: options.adapter ?? DEFAULT_ADAPTER,
   });
-  const artifacts = validateGuardBenchArtifacts({ dir: options.artifactsDir ?? DEFAULT_ARTIFACTS_DIR });
+  const selfTest = validateAdapterSelfTestFile({
+    report: join(
+      resolve(options.artifactsDir ?? DEFAULT_ARTIFACTS_DIR),
+      'adapter-self-test',
+      'guardbench-adapter-self-test.json',
+    ),
+  });
+  const artifacts = validateGuardBenchArtifacts({
+    dir: options.artifactsDir ?? DEFAULT_ARTIFACTS_DIR,
+  });
   const bundle = verifyGuardBenchSubmissionBundle({ dir: options.bundleDir ?? DEFAULT_BUNDLE_DIR });
   const externalDryRun = checkExternalDryRun(options.externalDryRun ?? DEFAULT_EXTERNAL_DRY_RUN);
-  const externalEvidence = checkExternalEvidence(options.externalEvidence ?? DEFAULT_EXTERNAL_EVIDENCE);
+  const externalEvidence = checkExternalEvidence(
+    options.externalEvidence ?? DEFAULT_EXTERNAL_EVIDENCE,
+  );
   const leaderboard = checkLeaderboard(options.leaderboard ?? DEFAULT_LEADERBOARD);
   const localPaths = checkLocalPathLeaks(options);
   const checks = {
@@ -229,7 +241,8 @@ export async function verifyGuardBenchPublicationArtifacts(options = {}) {
     localPaths,
   };
   const failures = Object.entries(checks).flatMap(([name, report]) =>
-    (report.failures ?? []).map(failure => `${name}: ${failure}`));
+    (report.failures ?? []).map(failure => `${name}: ${failure}`),
+  );
 
   const report = {
     schemaVersion: '1.0.0',
@@ -241,13 +254,19 @@ export async function verifyGuardBenchPublicationArtifacts(options = {}) {
   };
   const reportLocalPathLeaks = findLocalPathLeaks({ checks });
   if (reportLocalPathLeaks.length > 0) {
-    failures.push(...reportLocalPathLeaks.map(leak => `publication report contains local absolute path: ${leak}`));
+    failures.push(
+      ...reportLocalPathLeaks.map(
+        leak => `publication report contains local absolute path: ${leak}`,
+      ),
+    );
     report.ok = false;
     report.failures = failures;
   }
   const schemaFailures = validatePublicationVerificationReport(report);
   if (schemaFailures.length > 0) {
-    throw new Error(`GuardBench publication verification schema validation failed: ${schemaFailures.join('; ')}`);
+    throw new Error(
+      `GuardBench publication verification schema validation failed: ${schemaFailures.join('; ')}`,
+    );
   }
   return report;
 }
@@ -267,9 +286,13 @@ async function main() {
     console.log(`Registry adapters: ${report.checks.registry.adapters.length}`);
     console.log(`Submission bundle files: ${report.checks.bundle.files.length}`);
     console.log(`External dry-run adapters: ${report.checks.externalDryRun.adapters}`);
-    console.log(`External live evidence: ${report.checks.externalEvidence.verified} verified, ${report.checks.externalEvidence.pending} pending`);
+    console.log(
+      `External live evidence: ${report.checks.externalEvidence.verified} verified, ${report.checks.externalEvidence.pending} pending`,
+    );
     console.log(`Leaderboard rows: ${report.checks.leaderboard.rows}`);
-    console.log(`Local path sweep: ${report.checks.localPaths.filesChecked.length} files plus bundle`);
+    console.log(
+      `Local path sweep: ${report.checks.localPaths.filesChecked.length} files plus bundle`,
+    );
   } else {
     console.error('GuardBench publication artifact verification failed:');
     for (const failure of report.failures) console.error(`- ${failure}`);

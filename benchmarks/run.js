@@ -68,7 +68,9 @@ function normalizeSuiteSelection(value = 'all') {
 
   const invalid = selected.filter(token => !ALL_SUITE_IDS.includes(token));
   if (invalid.length > 0) {
-    throw new Error(`Unknown benchmark suite(s): ${invalid.join(', ')}. Valid: all, ${ALL_SUITE_IDS.join(', ')}`);
+    throw new Error(
+      `Unknown benchmark suite(s): ${invalid.join(', ')}. Valid: all, ${ALL_SUITE_IDS.join(', ')}`,
+    );
   }
   return [...new Set(selected)];
 }
@@ -94,12 +96,19 @@ function evaluateCase(benchmarkCase, results) {
   const expected = (benchmarkCase.expectAny || []).map(normalize);
   const required = (benchmarkCase.expectAll || []).map(normalize);
   const forbidden = (benchmarkCase.forbid || []).map(normalize);
-  const firstMatchIndex = expected.length === 0
-    ? -1
-    : normalizedContents.findIndex(content => expected.some(expectation => content.includes(expectation)));
-  const firstForbiddenIndex = normalizedContents.findIndex(content => forbidden.some(blocked => content.includes(blocked)));
+  const firstMatchIndex =
+    expected.length === 0
+      ? -1
+      : normalizedContents.findIndex(content =>
+          expected.some(expectation => content.includes(expectation)),
+        );
+  const firstForbiddenIndex = normalizedContents.findIndex(content =>
+    forbidden.some(blocked => content.includes(blocked)),
+  );
   const matched = firstMatchIndex !== -1;
-  const requiredMatches = required.filter(expectation => normalizedContents.some(content => content.includes(expectation)));
+  const requiredMatches = required.filter(expectation =>
+    normalizedContents.some(content => content.includes(expectation)),
+  );
   const matchedRequired = required.length > 0 && requiredMatches.length === required.length;
   const leakedForbidden = firstForbiddenIndex !== -1;
 
@@ -108,16 +117,21 @@ function evaluateCase(benchmarkCase, results) {
     return {
       passed: score === 1,
       score,
-      summary: leakedForbidden ? 'leaked restricted content' : results.length === 0 ? 'correct abstention' : 'no leak, but retrieved tangential context',
+      summary: leakedForbidden
+        ? 'leaked restricted content'
+        : results.length === 0
+          ? 'correct abstention'
+          : 'no leak, but retrieved tangential context',
     };
   }
 
   if (required.length > 0) {
-    const score = matchedRequired && !leakedForbidden
-      ? 1
-      : leakedForbidden
-        ? 0
-        : Math.min(0.5, requiredMatches.length / required.length);
+    const score =
+      matchedRequired && !leakedForbidden
+        ? 1
+        : leakedForbidden
+          ? 0
+          : Math.min(0.5, requiredMatches.length / required.length);
     const missing = required.filter(expectation => !requiredMatches.includes(expectation));
     return {
       passed: score === 1,
@@ -154,7 +168,9 @@ async function seedRetrievalCase(brain, benchmarkCase) {
   const ids = [];
   for (let index = 0; index < benchmarkCase.memory.length; index++) {
     const memory = benchmarkCase.memory[index];
-    const supersedes = Number.isInteger(memory.supersedesIndex) ? ids[memory.supersedesIndex] : undefined;
+    const supersedes = Number.isInteger(memory.supersedesIndex)
+      ? ids[memory.supersedesIndex]
+      : undefined;
     const id = await brain.encode({
       content: memory.content,
       source: memory.source,
@@ -264,7 +280,9 @@ async function executeGuardStep(brain, step, refs) {
   if (step.type === 'expectGuardAfterError') {
     const receiptId = step.receiptRef ? refs.get(step.receiptRef) : step.receiptId;
     if (!receiptId) {
-      throw new Error(`Missing guard benchmark receipt reference: ${step.receiptRef || step.receiptId}`);
+      throw new Error(
+        `Missing guard benchmark receipt reference: ${step.receiptRef || step.receiptId}`,
+      );
     }
 
     try {
@@ -278,15 +296,19 @@ async function executeGuardStep(brain, step, refs) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (step.errorIncludes && !message.includes(step.errorIncludes)) {
-        throw new Error(`Guard hardening expected "${step.errorIncludes}" but got "${message}"`);
+        throw new Error(`Guard hardening expected "${step.errorIncludes}" but got "${message}"`, {
+          cause: err,
+        });
       }
       const label = step.label ?? 'after_error_rejected';
-      return [{
-        id: `${receiptId}:${label}`,
-        content: `guard_hardened:${label} error:${message}`,
-        type: 'guard_hardening',
-        score: 1,
-      }];
+      return [
+        {
+          id: `${receiptId}:${label}`,
+          content: `guard_hardened:${label} error:${message}`,
+          type: 'guard_hardening',
+          score: 1,
+        },
+      ];
     }
 
     throw new Error(`Guard hardening expected an error for receipt ${receiptId}`);
@@ -299,18 +321,20 @@ async function seedGuardCase(brain, benchmarkCase) {
   const refs = new Map();
   const diagnostics = [];
   for (const step of benchmarkCase.steps || []) {
-    diagnostics.push(...await executeGuardStep(brain, step, refs));
+    diagnostics.push(...(await executeGuardStep(brain, step, refs)));
   }
   return diagnostics;
 }
 
 function guardDecisionRows(decision) {
-  const rows = [{
-    id: decision.receipt_id,
-    content: `decision:${decision.decision} verdict:${decision.verdict} risk:${decision.risk_score} ${decision.summary}`,
-    type: 'guard_decision',
-    score: 1,
-  }];
+  const rows = [
+    {
+      id: decision.receipt_id,
+      content: `decision:${decision.decision} verdict:${decision.verdict} risk:${decision.risk_score} ${decision.summary}`,
+      type: 'guard_decision',
+      score: 1,
+    },
+  ];
 
   for (const [index, warning] of decision.warnings.entries()) {
     rows.push({
@@ -380,12 +404,15 @@ async function runAudreyCase(benchmarkCase, providerConfig) {
 
 async function runBaselineCase(system, benchmarkCase, providerConfig) {
   if (benchmarkCase.kind === 'guard') {
-    return [{
-      id: `${system.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-guard-baseline`,
-      content: 'decision:go verdict:clear summary:retrieval-only baseline has no before-action guard controller',
-      type: 'guard_decision',
-      score: 0,
-    }];
+    return [
+      {
+        id: `${system.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-guard-baseline`,
+        content:
+          'decision:go verdict:clear summary:retrieval-only baseline has no before-action guard controller',
+        type: 'guard_decision',
+        score: 0,
+      },
+    ];
   }
 
   return runBaselineScenario(system, benchmarkCase, providerConfig, 5);
@@ -394,9 +421,18 @@ async function runBaselineCase(system, benchmarkCase, providerConfig) {
 async function runSystemsForCase(benchmarkCase, providerConfig) {
   const systems = [
     { system: 'Audrey', run: () => runAudreyCase(benchmarkCase, providerConfig) },
-    { system: 'Vector Only', run: () => runBaselineCase('Vector Only', benchmarkCase, providerConfig) },
-    { system: 'Keyword + Recency', run: () => runBaselineCase('Keyword + Recency', benchmarkCase, providerConfig) },
-    { system: 'Recent Window', run: () => runBaselineCase('Recent Window', benchmarkCase, providerConfig) },
+    {
+      system: 'Vector Only',
+      run: () => runBaselineCase('Vector Only', benchmarkCase, providerConfig),
+    },
+    {
+      system: 'Keyword + Recency',
+      run: () => runBaselineCase('Keyword + Recency', benchmarkCase, providerConfig),
+    },
+    {
+      system: 'Recent Window',
+      run: () => runBaselineCase('Recent Window', benchmarkCase, providerConfig),
+    },
   ];
 
   const results = [];
@@ -504,13 +540,13 @@ export function assertBenchmarkGuardrails(summary, options = {}) {
 
   if (audrey.scorePercent < settings.minAudreyScore) {
     failures.push(
-      `Audrey score ${audrey.scorePercent.toFixed(1)}% fell below ${settings.minAudreyScore.toFixed(1)}%.`
+      `Audrey score ${audrey.scorePercent.toFixed(1)}% fell below ${settings.minAudreyScore.toFixed(1)}%.`,
     );
   }
 
   if (audrey.passRate < settings.minAudreyPassRate) {
     failures.push(
-      `Audrey pass rate ${audrey.passRate.toFixed(1)}% fell below ${settings.minAudreyPassRate.toFixed(1)}%.`
+      `Audrey pass rate ${audrey.passRate.toFixed(1)}% fell below ${settings.minAudreyPassRate.toFixed(1)}%.`,
     );
   }
 
@@ -518,8 +554,8 @@ export function assertBenchmarkGuardrails(summary, options = {}) {
     const margin = audrey.scorePercent - strongestBaseline.scorePercent;
     if (margin < settings.minMarginOverBaseline) {
       failures.push(
-        `Audrey beat ${strongestBaseline.system} by ${margin.toFixed(1)} points, below the required `
-        + `${settings.minMarginOverBaseline.toFixed(1)}-point margin.`
+        `Audrey beat ${strongestBaseline.system} by ${margin.toFixed(1)} points, below the required ` +
+          `${settings.minMarginOverBaseline.toFixed(1)}-point margin.`,
       );
     }
   }
@@ -531,7 +567,9 @@ export function assertBenchmarkGuardrails(summary, options = {}) {
   return {
     audrey,
     strongestBaseline,
-    marginOverBaseline: strongestBaseline ? audrey.scorePercent - strongestBaseline.scorePercent : null,
+    marginOverBaseline: strongestBaseline
+      ? audrey.scorePercent - strongestBaseline.scorePercent
+      : null,
     thresholds: settings,
   };
 }
@@ -563,7 +601,9 @@ export async function runBenchmarkSuite(options = {}) {
     }
   }
 
-  const comparableCaseResults = caseResults.filter(caseResult => caseResult.comparable_to_baselines);
+  const comparableCaseResults = caseResults.filter(
+    caseResult => caseResult.comparable_to_baselines,
+  );
   const overallCaseResults = comparableCaseResults.length > 0 ? comparableCaseResults : caseResults;
   const overallScope = comparableCaseResults.length > 0 ? 'comparable_suites' : 'selected_suites';
   const overallSuiteIds = [...new Set(overallCaseResults.map(caseResult => caseResult.suite))];
@@ -579,10 +619,14 @@ export async function runBenchmarkSuite(options = {}) {
       suites: suiteIds,
     },
     methodology: {
-      localBenchmark: 'Local regression suite inspired by LongMemEval-style retrieval, operation-level lifecycle, and agent guard-loop benchmarks',
-      retrievalBenchmark: 'Information extraction, updates, reasoning, procedural learning, privacy, abstention, and conflict handling',
-      operationsBenchmark: 'Update, overwrite, delete, merge, and abstention behavior after lifecycle operations',
-      guardBenchmark: 'Memory-before-action controller behavior: receipts, learned tool-failure cautions, strict blocking reflexes, and guard-after hardening',
+      localBenchmark:
+        'Local regression suite inspired by LongMemEval-style retrieval, operation-level lifecycle, and agent guard-loop benchmarks',
+      retrievalBenchmark:
+        'Information extraction, updates, reasoning, procedural learning, privacy, abstention, and conflict handling',
+      operationsBenchmark:
+        'Update, overwrite, delete, merge, and abstention behavior after lifecycle operations',
+      guardBenchmark:
+        'Memory-before-action controller behavior: receipts, learned tool-failure cautions, strict blocking reflexes, and guard-after hardening',
       externalLeaderboard: 'Published LoCoMo scores from official papers and project blogs',
     },
     local: {
@@ -615,10 +659,10 @@ export async function runBenchmarkCli({ argv = process.argv.slice(2), out = cons
   });
   const gate = args.check
     ? assertBenchmarkGuardrails(summary, {
-      minAudreyScore: args.minAudreyScore,
-      minAudreyPassRate: args.minAudreyPassRate,
-      minMarginOverBaseline: args.minMarginOverBaseline,
-    })
+        minAudreyScore: args.minAudreyScore,
+        minAudreyPassRate: args.minAudreyPassRate,
+        minMarginOverBaseline: args.minMarginOverBaseline,
+      })
     : null;
 
   if (args.jsonOnly) {
@@ -629,15 +673,22 @@ export async function runBenchmarkCli({ argv = process.argv.slice(2), out = cons
   const lines = [];
   lines.push('Audrey benchmark complete.');
   lines.push('');
-  lines.push(`Suites: ${summary.config.suites.map(suiteId => SUITE_LABELS.get(suiteId) || suiteId).join(', ')}`);
-  lines.push(`Scope: ${summary.local.overall_scope} (${summary.local.overall_suite_ids.join(', ')})`);
-  const comparableCaseCount = summary.local.cases
-    .filter(testCase => summary.local.overall_suite_ids.includes(testCase.suite)).length;
-  lines.push(`Cases: ${summary.local.cases.length} total; ${comparableCaseCount} in combined local chart`);
+  lines.push(
+    `Suites: ${summary.config.suites.map(suiteId => SUITE_LABELS.get(suiteId) || suiteId).join(', ')}`,
+  );
+  lines.push(
+    `Scope: ${summary.local.overall_scope} (${summary.local.overall_suite_ids.join(', ')})`,
+  );
+  const comparableCaseCount = summary.local.cases.filter(testCase =>
+    summary.local.overall_suite_ids.includes(testCase.suite),
+  ).length;
+  lines.push(
+    `Cases: ${summary.local.cases.length} total; ${comparableCaseCount} in combined local chart`,
+  );
   for (const row of summary.local.overall) {
     lines.push(
-      `${row.system}: ${row.scorePercent.toFixed(1)}% score, ${row.passRate.toFixed(1)}% pass rate, `
-      + `${row.avgDurationMs.toFixed(1)} ms avg/case`
+      `${row.system}: ${row.scorePercent.toFixed(1)}% score, ${row.passRate.toFixed(1)}% pass rate, ` +
+        `${row.avgDurationMs.toFixed(1)} ms avg/case`,
     );
   }
   lines.push('');
@@ -667,7 +718,9 @@ export async function runBenchmarkCli({ argv = process.argv.slice(2), out = cons
       ? `${gate.strongestBaseline.system} by ${gate.marginOverBaseline.toFixed(1)} points`
       : 'all local baselines';
     lines.push('');
-    lines.push(`Regression gate passed: Audrey stayed above ${gate.thresholds.minAudreyScore.toFixed(1)}% and ahead of ${baselineLabel}.`);
+    lines.push(
+      `Regression gate passed: Audrey stayed above ${gate.thresholds.minAudreyScore.toFixed(1)}% and ahead of ${baselineLabel}.`,
+    );
   }
 
   out(lines.join('\n'));

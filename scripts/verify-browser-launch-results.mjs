@@ -102,9 +102,11 @@ function matchesTrustedGitHubRepoUrl(value) {
   try {
     const url = new URL(value);
     const pathname = url.pathname.toLowerCase();
-    return url.protocol === TRUSTED_GITHUB_REPO.protocol
-      && url.hostname === TRUSTED_GITHUB_REPO.hostname
-      && (pathname === TRUSTED_GITHUB_REPO_PATH || pathname.startsWith(`${TRUSTED_GITHUB_REPO_PATH}/`));
+    return (
+      url.protocol === TRUSTED_GITHUB_REPO.protocol &&
+      url.hostname === TRUSTED_GITHUB_REPO.hostname &&
+      (pathname === TRUSTED_GITHUB_REPO_PATH || pathname.startsWith(`${TRUSTED_GITHUB_REPO_PATH}/`))
+    );
   } catch {
     return false;
   }
@@ -136,7 +138,9 @@ function validateResultTarget(result, planTarget) {
   }
 
   if (result.platform !== planTarget.platform) {
-    failures.push(`${result.id}: platform ${result.platform} does not match launch plan ${planTarget.platform}`);
+    failures.push(
+      `${result.id}: platform ${result.platform} does not match launch plan ${planTarget.platform}`,
+    );
   }
   if (!isAllowedPlatformUrl(result.platform, result.publicUrl)) {
     failures.push(`${result.id}: publicUrl host is not allowed for ${result.platform}`);
@@ -144,14 +148,18 @@ function validateResultTarget(result, planTarget) {
   if (!isHttpsUrl(result.artifactUrl)) {
     failures.push(`${result.id}: artifactUrl must be null or https`);
   }
-  if (text.includes(SEEDED_SECRET)) failures.push(`${result.id}: contains raw seeded GuardBench secret`);
+  if (text.includes(SEEDED_SECRET))
+    failures.push(`${result.id}: contains raw seeded GuardBench secret`);
   if (containsLocalPath(text)) failures.push(`${result.id}: contains local absolute path`);
 
   if (result.status === 'pending') {
     if (!result.blocker) failures.push(`${result.id}: pending result must record a blocker`);
-    if (result.publicUrl !== null) failures.push(`${result.id}: pending result must not record a publicUrl`);
-    if (result.submittedAt !== null) failures.push(`${result.id}: pending result must not record submittedAt`);
-    if (result.operatorVerified) failures.push(`${result.id}: pending result must not be operator verified`);
+    if (result.publicUrl !== null)
+      failures.push(`${result.id}: pending result must not record a publicUrl`);
+    if (result.submittedAt !== null)
+      failures.push(`${result.id}: pending result must not record submittedAt`);
+    if (result.operatorVerified)
+      failures.push(`${result.id}: pending result must not be operator verified`);
     blockers.push(`${result.id}: ${result.blocker ?? 'pending launch target'}`);
   }
 
@@ -160,8 +168,10 @@ function validateResultTarget(result, planTarget) {
     if (planTarget.status === 'blocked-until-artifact-url' && !result.artifactUrl) {
       failures.push(`${result.id}: submitted artifact-url target must record artifactUrl`);
     }
-    if (!result.submittedAt) failures.push(`${result.id}: submitted result must record submittedAt`);
-    if (!result.operatorVerified) failures.push(`${result.id}: submitted result must be operator verified`);
+    if (!result.submittedAt)
+      failures.push(`${result.id}: submitted result must record submittedAt`);
+    if (!result.operatorVerified)
+      failures.push(`${result.id}: submitted result must be operator verified`);
     if (planTarget.manualRuleCheckRequired && !result.manualRuleCheckCompleted) {
       failures.push(`${result.id}: submitted result must record manual rule check completion`);
     }
@@ -192,7 +202,9 @@ export async function verifyBrowserLaunchResults(options = {}) {
   const planReport = await verifyBrowserLaunchPlan({ plan: planPath });
   const planTargets = new Map((plan.targets ?? []).map(target => [target.id, target]));
   const failures = [
-    ...validateSchema(results, schema, 'audrey-browser-launch-results').map(failure => `browser launch results schema: ${failure}`),
+    ...validateSchema(results, schema, 'audrey-browser-launch-results').map(
+      failure => `browser launch results schema: ${failure}`,
+    ),
   ];
   const blockers = [];
   const seen = new Set();
@@ -225,7 +237,9 @@ export async function verifyBrowserLaunchResults(options = {}) {
     });
   }
 
-  const planOrder = [...(plan.targets ?? [])].sort((a, b) => a.order - b.order).map(target => target.id);
+  const planOrder = [...(plan.targets ?? [])]
+    .sort((a, b) => a.order - b.order)
+    .map(target => target.id);
   const resultOrder = [...(results.targets ?? [])].map(target => target.id);
   if (resultOrder.join('|') !== planOrder.join('|')) {
     failures.push(`browser launch results order must be ${planOrder.join(', ')}`);
@@ -234,7 +248,9 @@ export async function verifyBrowserLaunchResults(options = {}) {
     if (!seen.has(id)) failures.push(`Missing browser launch result: ${id}`);
   }
 
-  const notSubmitted = targetReports.filter(target => target.status !== 'submitted').map(target => target.id);
+  const notSubmitted = targetReports
+    .filter(target => target.status !== 'submitted')
+    .map(target => target.id);
   const ready = failures.length === 0 && notSubmitted.length === 0;
   if (options.strict === true && notSubmitted.length > 0) {
     failures.push(`strict launch readiness requires submitted targets: ${notSubmitted.join(', ')}`);
@@ -268,7 +284,9 @@ async function main() {
   } else if (report.ok) {
     const submitted = report.targets.filter(target => target.status === 'submitted').length;
     const pending = report.targets.length - submitted;
-    console.log(`Browser launch results verification passed: ${submitted} submitted, ${pending} pending`);
+    console.log(
+      `Browser launch results verification passed: ${submitted} submitted, ${pending} pending`,
+    );
   } else {
     console.error('Browser launch results verification failed:');
     for (const failure of report.failures) console.error(`- ${failure}`);

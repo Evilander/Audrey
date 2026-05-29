@@ -25,7 +25,7 @@ function canonicalize(value: unknown, seen: WeakSet<object> = new WeakSet()): un
       throw new TypeError('generateDeterministicId: circular reference detected');
     }
     seen.add(value);
-    return value.map((v) => canonicalize(v, seen));
+    return value.map(v => canonicalize(v, seen));
   }
   if (typeof value === 'object') {
     if (seen.has(value)) {

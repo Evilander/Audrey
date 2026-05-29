@@ -42,7 +42,8 @@ function parseArgs(argv = process.argv.slice(2)) {
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
-    if ((token === '--target-version' || token === '--version') && argv[i + 1]) args.targetVersion = argv[++i];
+    if ((token === '--target-version' || token === '--version') && argv[i + 1])
+      args.targetVersion = argv[++i];
     else if (token === '--allow-pending') args.allowPending = true;
     else if (token === '--skip-pypi-registry') args.checkPypiRegistry = false;
     else if (token === '--json') args.json = true;
@@ -181,7 +182,10 @@ export function remoteBranchFreshnessStatus({ branch, upstream, upstreamSha }, r
   const remoteRef = `refs/heads/${branch}`;
   let result = run(['ls-remote', 'origin', remoteRef]);
   const fallbackEvidence = [];
-  if (result.status !== 0 && /schannel|AcquireCredentialsHandle|SEC_E_NO_CREDENTIALS/i.test(commandSummary(result))) {
+  if (
+    result.status !== 0 &&
+    /schannel|AcquireCredentialsHandle|SEC_E_NO_CREDENTIALS/i.test(commandSummary(result))
+  ) {
     const fallback = run(['-c', 'http.sslBackend=openssl', 'ls-remote', 'origin', remoteRef]);
     if (fallback.status === 0) {
       result = fallback;
@@ -191,11 +195,16 @@ export function remoteBranchFreshnessStatus({ branch, upstream, upstreamSha }, r
   if (result.status !== 0) {
     return {
       evidence: ['remoteHead=unverified', ...fallbackEvidence],
-      blockers: [`Verify live remote origin/${branch} before final release (${commandSummary(result)})`],
+      blockers: [
+        `Verify live remote origin/${branch} before final release (${commandSummary(result)})`,
+      ],
     };
   }
 
-  const remoteLine = result.stdout.trim().split(/\r?\n/).find(line => line.endsWith(remoteRef));
+  const remoteLine = result.stdout
+    .trim()
+    .split(/\r?\n/)
+    .find(line => line.endsWith(remoteRef));
   const remoteSha = remoteLine?.split(/\s+/)[0];
   if (!remoteSha) {
     return {
@@ -207,7 +216,9 @@ export function remoteBranchFreshnessStatus({ branch, upstream, upstreamSha }, r
   const evidence = [...fallbackEvidence, `remoteHead=origin/${branch}:${shortSha(remoteSha)}`];
   const blockers = [];
   if (upstream && upstreamSha && upstreamSha !== remoteSha) {
-    blockers.push(`Fetch/reconcile origin/${branch}: local ${upstream} is ${shortSha(upstreamSha)} but live remote is ${shortSha(remoteSha)}`);
+    blockers.push(
+      `Fetch/reconcile origin/${branch}: local ${upstream} is ${shortSha(upstreamSha)} but live remote is ${shortSha(remoteSha)}`,
+    );
   }
 
   return { evidence, blockers };
@@ -218,8 +229,19 @@ function remoteReleaseRefs(branch, targetVersion, run = runGit) {
   const tagRef = `refs/tags/v${targetVersion}`;
   let result = run(['ls-remote', 'origin', branchRef, tagRef, `${tagRef}^{}`]);
   const evidence = [];
-  if (result.status !== 0 && /schannel|AcquireCredentialsHandle|SEC_E_NO_CREDENTIALS/i.test(commandSummary(result))) {
-    const fallback = run(['-c', 'http.sslBackend=openssl', 'ls-remote', 'origin', branchRef, tagRef, `${tagRef}^{}`]);
+  if (
+    result.status !== 0 &&
+    /schannel|AcquireCredentialsHandle|SEC_E_NO_CREDENTIALS/i.test(commandSummary(result))
+  ) {
+    const fallback = run([
+      '-c',
+      'http.sslBackend=openssl',
+      'ls-remote',
+      'origin',
+      branchRef,
+      tagRef,
+      `${tagRef}^{}`,
+    ]);
     if (fallback.status === 0) {
       result = fallback;
       evidence.push('releaseRemoteTlsFallback=openssl');
@@ -253,7 +275,10 @@ function currentWorkingReleaseTree() {
   };
 
   try {
-    for (const args of [['read-tree', 'HEAD'], ['add', '--all']]) {
+    for (const args of [
+      ['read-tree', 'HEAD'],
+      ['add', '--all'],
+    ]) {
       const result = runGit(args, { env, timeout: 120000 });
       if (result.status !== 0) return { ok: false, error: commandSummary(result) };
     }
@@ -292,7 +317,9 @@ function releaseSourceHandoffStatus(targetVersion, branch) {
   } else {
     evidence.push(`currentReleaseTree=${shortSha(currentTree.tree)}`);
     if (report.tree && currentTree.tree !== report.tree) {
-      blockers.push(`Regenerate release artifacts: current release tree ${currentTree.tree} differs from source handoff tree ${report.tree}`);
+      blockers.push(
+        `Regenerate release artifacts: current release tree ${currentTree.tree} differs from source handoff tree ${report.tree}`,
+      );
     }
   }
 
@@ -304,10 +331,14 @@ function releaseSourceHandoffStatus(targetVersion, branch) {
     evidence.push('sourceBundleVerify=passed');
     const refs = parseBundleRefs(bundleVerify.stdout, targetVersion);
     if (refs.branch !== report.commit) {
-      blockers.push(`Release source bundle master is ${refs.branch ?? 'missing'}, expected ${report.commit}`);
+      blockers.push(
+        `Release source bundle master is ${refs.branch ?? 'missing'}, expected ${report.commit}`,
+      );
     }
     if (refs.tag !== report.tag) {
-      blockers.push(`Release source bundle tag is ${refs.tag ?? 'missing'}, expected ${report.tag}`);
+      blockers.push(
+        `Release source bundle tag is ${refs.tag ?? 'missing'}, expected ${report.tag}`,
+      );
     }
   }
 
@@ -320,13 +351,19 @@ function releaseSourceHandoffStatus(targetVersion, branch) {
   evidence.push(`releaseRemoteMaster=${shortSha(remoteMaster)}`);
   evidence.push(`releaseRemoteTag=${shortSha(remoteTagObject)}`);
   if (report.commit && remoteMaster !== report.commit) {
-    blockers.push(`Publish source bundle commit ${report.commit} to origin/${branch} (remote is ${remoteMaster ?? 'missing'})`);
+    blockers.push(
+      `Publish source bundle commit ${report.commit} to origin/${branch} (remote is ${remoteMaster ?? 'missing'})`,
+    );
   }
   if (report.tag && remoteTagObject !== report.tag) {
-    blockers.push(`Publish source bundle tag object ${report.tag} to refs/tags/v${targetVersion} (remote is ${remoteTagObject ?? 'missing'})`);
+    blockers.push(
+      `Publish source bundle tag object ${report.tag} to refs/tags/v${targetVersion} (remote is ${remoteTagObject ?? 'missing'})`,
+    );
   }
   if (remoteTagCommit && report.commit && remoteTagCommit !== report.commit) {
-    blockers.push(`Remote v${targetVersion} dereferences to ${remoteTagCommit}, not release commit ${report.commit}`);
+    blockers.push(
+      `Remote v${targetVersion} dereferences to ${remoteTagCommit}, not release commit ${report.commit}`,
+    );
   }
 
   const stalePrefixes = [
@@ -364,18 +401,19 @@ function versionChecks(targetVersion) {
   const evidence = values.map(([name, value]) => `${name}=${value ?? 'missing'}`);
 
   if (values.some(([, value]) => !value)) {
-    return failed('version-surfaces', 'Version surfaces are present', evidence, ['One or more version surfaces are missing']);
+    return failed('version-surfaces', 'Version surfaces are present', evidence, [
+      'One or more version surfaces are missing',
+    ]);
   }
   if (uniqueVersions.size !== 1) {
-    return failed('version-surfaces', 'Version surfaces are aligned', evidence, ['package.json, package-lock.json, and Python version are not aligned']);
+    return failed('version-surfaces', 'Version surfaces are aligned', evidence, [
+      'package.json, package-lock.json, and Python version are not aligned',
+    ]);
   }
   if (!uniqueVersions.has(targetVersion)) {
-    return pending(
-      'target-version',
-      `Target release version is ${targetVersion}`,
-      evidence,
-      [`Local version is ${versions.packageJson}; bump all release surfaces to ${targetVersion} only when 1.0 publish is being cut`],
-    );
+    return pending('target-version', `Target release version is ${targetVersion}`, evidence, [
+      `Local version is ${versions.packageJson}; bump all release surfaces to ${targetVersion} only when 1.0 publish is being cut`,
+    ]);
   }
   return ok('target-version', `Target release version is ${targetVersion}`, evidence);
 }
@@ -383,7 +421,8 @@ function versionChecks(targetVersion) {
 function sourceControlCheck(targetVersion) {
   const status = runGit(['status', '--short', '--branch', '--untracked-files=all']);
   if (status.status !== 0) {
-    const detail = status.stderr.trim() || status.stdout.trim() || `git status exited ${status.status}`;
+    const detail =
+      status.stderr.trim() || status.stdout.trim() || `git status exited ${status.status}`;
     return failed('source-control', 'Source control is ready for release', [], [detail]);
   }
 
@@ -397,10 +436,16 @@ function sourceControlCheck(targetVersion) {
   const originPush = gitOutput(['remote', 'get-url', '--push', 'origin']);
   const tagName = `v${targetVersion}`;
   const tagExists = Boolean(gitOutput(['tag', '--list', tagName]));
-  const tagsAtHead = (gitOutput(['tag', '--points-at', 'HEAD']) ?? '').split(/\r?\n/).filter(Boolean);
+  const tagsAtHead = (gitOutput(['tag', '--points-at', 'HEAD']) ?? '')
+    .split(/\r?\n/)
+    .filter(Boolean);
   const metadataWritable = gitMetadataWritableCheck();
-  const remoteFreshness = originPush ? remoteBranchFreshnessStatus({ branch, upstream, upstreamSha }) : { evidence: [], blockers: [] };
-  const sourceHandoff = originPush ? releaseSourceHandoffStatus(targetVersion, branch) : { usable: false, evidence: [], blockers: [] };
+  const remoteFreshness = originPush
+    ? remoteBranchFreshnessStatus({ branch, upstream, upstreamSha })
+    : { evidence: [], blockers: [] };
+  const sourceHandoff = originPush
+    ? releaseSourceHandoffStatus(targetVersion, branch)
+    : { usable: false, evidence: [], blockers: [] };
   const evidence = [
     `branch=${branch}`,
     `head=${head}`,
@@ -419,7 +464,8 @@ function sourceControlCheck(targetVersion) {
     blockers.push(...sourceHandoff.blockers);
     evidence.push('sourceControlLane=external-source-bundle');
   } else {
-    if (!metadataWritable.writable && metadataWritable.blocker) blockers.push(metadataWritable.blocker);
+    if (!metadataWritable.writable && metadataWritable.blocker)
+      blockers.push(metadataWritable.blocker);
     blockers.push(...remoteFreshness.blockers, ...sourceHandoff.blockers);
     if (!upstream) blockers.push('Configure an upstream branch before final release');
     if (upstream) {
@@ -428,18 +474,26 @@ function sourceControlCheck(targetVersion) {
         const [ahead, behind] = counts.split(/\s+/).map(Number);
         evidence.push(`ahead=${ahead}`, `behind=${behind}`);
         if (ahead > 0) blockers.push(`Push ${ahead} release commit(s) to ${upstream}`);
-        if (behind > 0) blockers.push(`Pull or reconcile ${behind} upstream commit(s) before final release`);
+        if (behind > 0)
+          blockers.push(`Pull or reconcile ${behind} upstream commit(s) before final release`);
       }
     }
-    if (changedLines.length > 0) blockers.push(`Commit or stash ${changedLines.length} working-tree change(s) before final release`);
+    if (changedLines.length > 0)
+      blockers.push(
+        `Commit or stash ${changedLines.length} working-tree change(s) before final release`,
+      );
     if (!tagExists) blockers.push(`Create release tag ${tagName} on the final release commit`);
-    if (tagExists && !tagsAtHead.includes(tagName)) blockers.push(`Move or recreate ${tagName} so it points at the final release commit`);
+    if (tagExists && !tagsAtHead.includes(tagName))
+      blockers.push(`Move or recreate ${tagName} so it points at the final release commit`);
   }
 
   if (blockers.length > 0) {
     return pending('source-control', 'Source control is ready for release', evidence, blockers);
   }
-  return ok('source-control', 'Source control is ready for release', [...evidence, `${tagName} points at HEAD`]);
+  return ok('source-control', 'Source control is ready for release', [
+    ...evidence,
+    `${tagName} points at HEAD`,
+  ]);
 }
 
 function escapeRegex(value) {
@@ -456,7 +510,8 @@ export function targetChangelogStatus(changelog, targetVersion) {
   const section = nextSection === -1 ? rest : rest.slice(0, nextSection);
   const placeholderMarkers = [];
   if (/\bTODO\b/i.test(section)) placeholderMarkers.push('TODO marker');
-  if (/Release Cut Checklist/i.test(section)) placeholderMarkers.push('release-cut checklist scaffold');
+  if (/Release Cut Checklist/i.test(section))
+    placeholderMarkers.push('release-cut checklist scaffold');
 
   return { found: true, placeholderMarkers };
 }
@@ -465,14 +520,18 @@ function changelogCheck(targetVersion) {
   const changelog = readText('CHANGELOG.md');
   const status = targetChangelogStatus(changelog, targetVersion);
   if (status.found && status.placeholderMarkers.length === 0) {
-    return ok('changelog-target', `CHANGELOG has a final ${targetVersion} section`, ['CHANGELOG.md']);
+    return ok('changelog-target', `CHANGELOG has a final ${targetVersion} section`, [
+      'CHANGELOG.md',
+    ]);
   }
   if (status.found) {
     return failed(
       'changelog-target',
       `CHANGELOG has a final ${targetVersion} section`,
       ['CHANGELOG.md'],
-      [`Replace placeholder ${targetVersion} changelog scaffold before strict readiness: ${status.placeholderMarkers.join(', ')}`],
+      [
+        `Replace placeholder ${targetVersion} changelog scaffold before strict readiness: ${status.placeholderMarkers.join(', ')}`,
+      ],
     );
   }
   return pending(
@@ -487,15 +546,31 @@ function pythonDistCheck(targetVersion) {
   const wheel = `python/dist/audrey_memory-${targetVersion}-py3-none-any.whl`;
   const sdist = `python/dist/audrey_memory-${targetVersion}.tar.gz`;
   if (existsSync(fromRoot(wheel)) && existsSync(fromRoot(sdist))) {
-    const verification = spawnSync('python', ['scripts/verify-python-package.py', '--version', targetVersion, '--json'], {
-      cwd: ROOT,
-      encoding: 'utf-8',
-    });
+    const verification = spawnSync(
+      'python',
+      ['scripts/verify-python-package.py', '--version', targetVersion, '--json'],
+      {
+        cwd: ROOT,
+        encoding: 'utf-8',
+      },
+    );
     if (verification.status !== 0) {
-      const detail = verification.stderr.trim() || verification.stdout.trim() || `python verifier exited ${verification.status}`;
-      return failed('python-dist', `Python ${targetVersion} artifacts verify`, [wheel, sdist], [detail]);
+      const detail =
+        verification.stderr.trim() ||
+        verification.stdout.trim() ||
+        `python verifier exited ${verification.status}`;
+      return failed(
+        'python-dist',
+        `Python ${targetVersion} artifacts verify`,
+        [wheel, sdist],
+        [detail],
+      );
     }
-    return ok('python-dist', `Python ${targetVersion} artifacts verify`, [wheel, sdist, 'python package verifier passed']);
+    return ok('python-dist', `Python ${targetVersion} artifacts verify`, [
+      wheel,
+      sdist,
+      'python package verifier passed',
+    ]);
   }
   return pending(
     'python-dist',
@@ -507,18 +582,30 @@ function pythonDistCheck(targetVersion) {
 
 async function pypiRegistryVersionStatus(packageName, targetVersion, fetchImpl = fetch) {
   try {
-    const response = await fetchImpl(`${PYPI_JSON_BASE}/${encodeURIComponent(packageName)}/${encodeURIComponent(targetVersion)}/json`, {
-      headers: { accept: 'application/json' },
-    });
+    const response = await fetchImpl(
+      `${PYPI_JSON_BASE}/${encodeURIComponent(packageName)}/${encodeURIComponent(targetVersion)}/json`,
+      {
+        headers: { accept: 'application/json' },
+      },
+    );
     if (response.ok) return { ok: true, published: true, status: response.status };
     if (response.status === 404) return { ok: true, published: false, status: response.status };
-    return { ok: false, published: false, status: response.status, error: `PyPI returned HTTP ${response.status}` };
+    return {
+      ok: false,
+      published: false,
+      status: response.status,
+      error: `PyPI returned HTTP ${response.status}`,
+    };
   } catch (error) {
     return { ok: false, published: false, status: 'network-error', error: error.message };
   }
 }
 
-export async function pypiPackageTargetStatus({ packageName, version }, targetVersion, options = {}) {
+export async function pypiPackageTargetStatus(
+  { packageName, version },
+  targetVersion,
+  options = {},
+) {
   const env = options.env ?? process.env;
   const evidence = [`python package=${packageName}`, `python version=${version ?? 'missing'}`];
 
@@ -544,7 +631,9 @@ export async function pypiPackageTargetStatus({ packageName, version }, targetVe
         'pypi-package-target',
         `PyPI package is ready to publish as ${targetVersion}`,
         evidence,
-        [`Verify PyPI registry availability before publishing (${registry.error ?? `status=${registry.status}`})`],
+        [
+          `Verify PyPI registry availability before publishing (${registry.error ?? `status=${registry.status}`})`,
+        ],
       );
     }
 
@@ -556,21 +645,24 @@ export async function pypiPackageTargetStatus({ packageName, version }, targetVe
       'pypi-package-target',
       `PyPI package is ready to publish as ${targetVersion}`,
       evidence,
-      [`Provide runtime PyPI publish credentials (${PYPI_CREDENTIAL_ENVS.join(', ')}) or trusted-publisher evidence before publishing`],
+      [
+        `Provide runtime PyPI publish credentials (${PYPI_CREDENTIAL_ENVS.join(', ')}) or trusted-publisher evidence before publishing`,
+      ],
     );
   }
 
-  return ok('pypi-package-target', `PyPI package is ready to publish as ${targetVersion}`, [...evidence, `credentialEnv=${credentialEnv}`]);
+  return ok('pypi-package-target', `PyPI package is ready to publish as ${targetVersion}`, [
+    ...evidence,
+    `credentialEnv=${credentialEnv}`,
+  ]);
 }
 
 async function pypiPublishCheck(targetVersion, options = {}) {
   const pyproject = readText('python/pyproject.toml');
   const packageName = pyproject.match(/^name\s*=\s*"([^"]+)"/m)?.[1] ?? 'unknown';
-  return pypiPackageTargetStatus(
-    { packageName, version: pythonVersion() },
-    targetVersion,
-    { checkRegistry: options.checkPypiRegistry === true },
-  );
+  return pypiPackageTargetStatus({ packageName, version: pythonVersion() }, targetVersion, {
+    checkRegistry: options.checkPypiRegistry === true,
+  });
 }
 
 async function paperChecks() {
@@ -591,14 +683,19 @@ async function paperChecks() {
   ];
 
   if (failures.length > 0) {
-    return failed('paper-artifacts', 'Paper artifacts verify locally', [
-      'paper:claims',
-      'paper:publication-pack',
-      'paper:arxiv:verify',
-      'paper:launch-plan',
-      'paper:launch-results',
-      'paper:bundle:verify',
-    ], failures);
+    return failed(
+      'paper-artifacts',
+      'Paper artifacts verify locally',
+      [
+        'paper:claims',
+        'paper:publication-pack',
+        'paper:arxiv:verify',
+        'paper:launch-plan',
+        'paper:launch-results',
+        'paper:bundle:verify',
+      ],
+      failures,
+    );
   }
   return ok('paper-artifacts', 'Paper artifacts verify locally', [
     `${claimReport.claims.length} claim(s)`,
@@ -613,17 +710,28 @@ async function paperChecks() {
 async function browserPublicationCheck() {
   const report = await verifyBrowserLaunchResults();
   if (!report.ok) {
-    return failed('browser-publication', 'Browser publication results are valid', [report.results], report.failures);
+    return failed(
+      'browser-publication',
+      'Browser publication results are valid',
+      [report.results],
+      report.failures,
+    );
   }
   if (!report.ready) {
     return pending(
       'browser-publication',
       'Paper/browser launch targets are submitted',
-      [`${report.targets.filter(target => target.status === 'submitted').length}/${report.targets.length} submitted`],
+      [
+        `${report.targets.filter(target => target.status === 'submitted').length}/${report.targets.length} submitted`,
+      ],
       report.blockers,
     );
   }
-  return ok('browser-publication', 'Paper/browser launch targets are submitted', report.targets.map(target => `${target.id}: ${target.publicUrl}`));
+  return ok(
+    'browser-publication',
+    'Paper/browser launch targets are submitted',
+    report.targets.map(target => `${target.id}: ${target.publicUrl}`),
+  );
 }
 
 function arxivCompileCheck() {
@@ -645,7 +753,12 @@ function arxivCompileCheck() {
 async function externalEvidenceCheck() {
   const report = await verifyExternalGuardBenchEvidence({ allowPending: true, write: false });
   if (!report.ok) {
-    return failed('external-evidence', 'External GuardBench evidence verifies', [report.outRoot], report.failures);
+    return failed(
+      'external-evidence',
+      'External GuardBench evidence verifies',
+      [report.outRoot],
+      report.failures,
+    );
   }
   const pendingRows = report.adapters.filter(adapter => adapter.status !== 'verified');
   if (pendingRows.length > 0) {
@@ -653,10 +766,17 @@ async function externalEvidenceCheck() {
       'external-evidence',
       'External Mem0/Zep GuardBench evidence is live-verified',
       report.adapters.map(adapter => `${adapter.id}: ${adapter.status}/${adapter.evidenceKind}`),
-      pendingRows.map(adapter => `${adapter.id}: ${adapter.missingEnv?.length ? `missing ${adapter.missingEnv.join(', ')}` : adapter.evidenceKind}`),
+      pendingRows.map(
+        adapter =>
+          `${adapter.id}: ${adapter.missingEnv?.length ? `missing ${adapter.missingEnv.join(', ')}` : adapter.evidenceKind}`,
+      ),
     );
   }
-  return ok('external-evidence', 'External Mem0/Zep GuardBench evidence is live-verified', report.adapters.map(adapter => `${adapter.id}: verified`));
+  return ok(
+    'external-evidence',
+    'External Mem0/Zep GuardBench evidence is live-verified',
+    report.adapters.map(adapter => `${adapter.id}: verified`),
+  );
 }
 
 function npmVersionMissing(result) {
@@ -670,7 +790,9 @@ export function npmPackageTargetStatus(pkg, targetVersion, run = runNpm) {
       'npm-package-target',
       `npm package is ready to publish as ${targetVersion}`,
       [`package.json version=${pkg.version}`],
-      [`Cut the npm package only after version is bumped to ${targetVersion} and npm OTP/auth is available`],
+      [
+        `Cut the npm package only after version is bumped to ${targetVersion} and npm OTP/auth is available`,
+      ],
     );
   }
 
@@ -685,9 +807,14 @@ export function npmPackageTargetStatus(pkg, targetVersion, run = runNpm) {
         `registry=${packageSpec}`,
       ]);
     }
-    return failed('npm-package-target', `npm package registry state is coherent for ${targetVersion}`, evidence, [
-      `npm registry returned unexpected version for ${packageSpec}: ${registryVersion || 'empty'}`,
-    ]);
+    return failed(
+      'npm-package-target',
+      `npm package registry state is coherent for ${targetVersion}`,
+      evidence,
+      [
+        `npm registry returned unexpected version for ${packageSpec}: ${registryVersion || 'empty'}`,
+      ],
+    );
   }
 
   if (!npmVersionMissing(registryStatus)) {
@@ -706,7 +833,9 @@ export function npmPackageTargetStatus(pkg, targetVersion, run = runNpm) {
       'npm-package-target',
       `npm package is ready to publish as ${targetVersion}`,
       evidence,
-      [`Authenticate npm CLI for ${NPM_REGISTRY} before publishing (${commandSummary(authStatus)})`],
+      [
+        `Authenticate npm CLI for ${NPM_REGISTRY} before publishing (${commandSummary(authStatus)})`,
+      ],
     );
   }
 
@@ -737,7 +866,8 @@ export async function verifyReleaseReadiness(options = {}) {
   const failures = checks.flatMap(row => row.failures.map(failure => `${row.id}: ${failure}`));
   const blockers = checks.flatMap(row => row.blockers.map(blocker => `${row.id}: ${blocker}`));
   const ready = failures.length === 0 && blockers.length === 0;
-  const okStatus = failures.length === 0 && (options.allowPending === true || blockers.length === 0);
+  const okStatus =
+    failures.length === 0 && (options.allowPending === true || blockers.length === 0);
 
   return {
     schemaVersion: '1.0.0',
@@ -766,7 +896,9 @@ async function main() {
   } else if (report.ready) {
     console.log(`Audrey ${report.targetVersion} release readiness passed.`);
   } else if (report.ok) {
-    console.log(`Audrey ${report.targetVersion} release readiness has ${report.blockers.length} pending blocker(s).`);
+    console.log(
+      `Audrey ${report.targetVersion} release readiness has ${report.blockers.length} pending blocker(s).`,
+    );
     for (const blocker of report.blockers) console.log(`- ${blocker}`);
   } else {
     console.error(`Audrey ${report.targetVersion} release readiness failed.`);
@@ -777,7 +909,10 @@ async function main() {
   if (!report.ok) process.exit(1);
 }
 
-if (process.argv[1] && resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase()) {
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase()
+) {
   main().catch(error => {
     console.error(error.stack ?? error.message);
     process.exit(1);

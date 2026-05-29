@@ -1,40 +1,40 @@
-import { describe, it, expect } from "vitest";
-import { resolveEmbeddingProvider } from "../mcp-server/config.js";
+import { describe, it, expect } from 'vitest';
+import { resolveEmbeddingProvider } from '../mcp-server/config.js';
 
-describe("resolveEmbeddingProvider", () => {
-  it("returns local when no keys present", () => {
+describe('resolveEmbeddingProvider', () => {
+  it('returns local when no keys present', () => {
     const result = resolveEmbeddingProvider({});
-    expect(result.provider).toBe("local");
+    expect(result.provider).toBe('local');
     expect(result.dimensions).toBe(384);
   });
 
-  it("does not auto-select cloud embeddings from ambient GOOGLE_API_KEY", () => {
-    const result = resolveEmbeddingProvider({ GOOGLE_API_KEY: "test-key" });
-    expect(result.provider).toBe("local");
+  it('does not auto-select cloud embeddings from ambient GOOGLE_API_KEY', () => {
+    const result = resolveEmbeddingProvider({ GOOGLE_API_KEY: 'test-key' });
+    expect(result.provider).toBe('local');
     expect(result.dimensions).toBe(384);
   });
 
-  it("never auto-selects openai even if OPENAI_API_KEY present", () => {
-    const result = resolveEmbeddingProvider({ OPENAI_API_KEY: "test-key" });
-    expect(result.provider).not.toBe("openai");
+  it('never auto-selects openai even if OPENAI_API_KEY present', () => {
+    const result = resolveEmbeddingProvider({ OPENAI_API_KEY: 'test-key' });
+    expect(result.provider).not.toBe('openai');
   });
 
-  it("returns openai when explicitly configured", () => {
-    const result = resolveEmbeddingProvider({ OPENAI_API_KEY: "test-key" }, "openai");
-    expect(result.provider).toBe("openai");
+  it('returns openai when explicitly configured', () => {
+    const result = resolveEmbeddingProvider({ OPENAI_API_KEY: 'test-key' }, 'openai');
+    expect(result.provider).toBe('openai');
     expect(result.dimensions).toBe(1536);
   });
 
-  it("returns gemini when explicitly configured", () => {
-    const result = resolveEmbeddingProvider({ GOOGLE_API_KEY: "test-key" }, "gemini");
-    expect(result.provider).toBe("gemini");
-    expect(result.apiKey).toBe("test-key");
+  it('returns gemini when explicitly configured', () => {
+    const result = resolveEmbeddingProvider({ GOOGLE_API_KEY: 'test-key' }, 'gemini');
+    expect(result.provider).toBe('gemini');
+    expect(result.apiKey).toBe('test-key');
     expect(result.dimensions).toBe(3072);
   });
 
-  it("returns local when explicitly configured", () => {
-    const result = resolveEmbeddingProvider({}, "local");
-    expect(result.provider).toBe("local");
+  it('returns local when explicitly configured', () => {
+    const result = resolveEmbeddingProvider({}, 'local');
+    expect(result.provider).toBe('local');
     expect(result.dimensions).toBe(384);
   });
 });

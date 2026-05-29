@@ -1,8 +1,16 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
-import { createEmbeddingProvider, MockEmbeddingProvider, OpenAIEmbeddingProvider, LocalEmbeddingProvider, GeminiEmbeddingProvider } from '../dist/src/embedding.js';
+import {
+  createEmbeddingProvider,
+  MockEmbeddingProvider,
+  OpenAIEmbeddingProvider,
+  LocalEmbeddingProvider,
+  GeminiEmbeddingProvider,
+} from '../dist/src/embedding.js';
 
 const RUN_LOCAL_EMBEDDING_INTEGRATION = process.env.AUDREY_RUN_LOCAL_EMBEDDING_TESTS === '1';
-const describeLocalEmbeddingIntegration = RUN_LOCAL_EMBEDDING_INTEGRATION ? describe : describe.skip;
+const describeLocalEmbeddingIntegration = RUN_LOCAL_EMBEDDING_INTEGRATION
+  ? describe
+  : describe.skip;
 
 function createFakeLocalPipelineFactory({ failDevices = [] } = {}) {
   const failed = new Set(failDevices);
@@ -117,12 +125,13 @@ describe('OpenAIEmbeddingProvider timeout', () => {
   });
 
   it('aborts fetch after timeout', async () => {
-    global.fetch = vi.fn().mockImplementation((_url, opts) =>
-      new Promise((resolve, reject) => {
-        const onAbort = () => reject(new DOMException('The operation was aborted', 'AbortError'));
-        if (opts?.signal?.aborted) return onAbort();
-        opts?.signal?.addEventListener('abort', onAbort);
-      }),
+    global.fetch = vi.fn().mockImplementation(
+      (_url, opts) =>
+        new Promise((resolve, reject) => {
+          const onAbort = () => reject(new DOMException('The operation was aborted', 'AbortError'));
+          if (opts?.signal?.aborted) return onAbort();
+          opts?.signal?.addEventListener('abort', onAbort);
+        }),
     );
 
     const emb = new OpenAIEmbeddingProvider({ apiKey: 'test-key', timeout: 50 });
@@ -172,12 +181,24 @@ describe('OpenAIEmbeddingProvider.embedBatch', () => {
     });
 
     try {
-      const provider = new OpenAIEmbeddingProvider({ apiKey: 'test-key', dimensions: 2, batchSize: 2 });
+      const provider = new OpenAIEmbeddingProvider({
+        apiKey: 'test-key',
+        dimensions: 2,
+        batchSize: 2,
+      });
       const results = await provider.embedBatch(['a', 'bb', 'ccc', 'dddd', 'eeeee']);
 
-      expect(results).toEqual([[1, 0], [2, 1], [3, 0], [4, 1], [5, 0]]);
+      expect(results).toEqual([
+        [1, 0],
+        [2, 1],
+        [3, 0],
+        [4, 1],
+        [5, 0],
+      ]);
       expect(global.fetch).toHaveBeenCalledTimes(3);
-      const requestSizes = global.fetch.mock.calls.map(call => JSON.parse(call[1].body).input.length);
+      const requestSizes = global.fetch.mock.calls.map(
+        call => JSON.parse(call[1].body).input.length,
+      );
       expect(requestSizes).toEqual([2, 2, 1]);
     } finally {
       global.fetch = originalFetch;
@@ -218,7 +239,9 @@ describe('OpenAIEmbeddingProvider.embedBatch', () => {
 
     try {
       const provider = new OpenAIEmbeddingProvider({ apiKey: 'test-key', dimensions: 3 });
-      await expect(provider.embedBatch(['hello', 'world'])).rejects.toThrow('OpenAI embedBatch returned 1 embeddings for 2 inputs at offset 0');
+      await expect(provider.embedBatch(['hello', 'world'])).rejects.toThrow(
+        'OpenAI embedBatch returned 1 embeddings for 2 inputs at offset 0',
+      );
     } finally {
       global.fetch = originalFetch;
     }
@@ -349,7 +372,10 @@ describe('GeminiEmbeddingProvider', () => {
 
   describe('embedBatch', () => {
     it('calls batchEmbedContents endpoint', async () => {
-      const mockValues = [[0.1, 0.2], [0.3, 0.4]];
+      const mockValues = [
+        [0.1, 0.2],
+        [0.3, 0.4],
+      ];
       const originalFetch = global.fetch;
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,

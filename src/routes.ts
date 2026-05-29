@@ -4,7 +4,15 @@ import { timingSafeEqual } from 'node:crypto';
 import type { Audrey } from './audrey.js';
 import type { EventOutcome } from './events.js';
 import type { PreflightOptions } from './preflight.js';
-import type { RecallOptions, MemoryType, PublicRetrievalMode, RecallResults } from './types.js';
+import type {
+  Affect,
+  ConsolidationOptions,
+  HalfLives,
+  MemoryType,
+  RecallOptions,
+  RecallResults,
+  SourceType,
+} from './types.js';
 import { VERSION } from '../mcp-server/config.js';
 
 // Allowlist of recall option keys safe to accept from untrusted HTTP callers.
@@ -12,9 +20,22 @@ import { VERSION } from '../mcp-server/config.js';
 // `includePrivate:true` or swap `confidenceConfig` weights — both bypass
 // privacy/integrity controls. Whitelist only, never blacklist.
 const SAFE_RECALL_KEYS = new Set([
-  'minConfidence', 'min_confidence', 'types', 'limit',
-  'includeProvenance', 'include_provenance', 'includeDormant', 'include_dormant',
-  'tags', 'sources', 'after', 'before', 'context', 'mood', 'retrieval', 'scope',
+  'minConfidence',
+  'min_confidence',
+  'types',
+  'limit',
+  'includeProvenance',
+  'include_provenance',
+  'includeDormant',
+  'include_dormant',
+  'tags',
+  'sources',
+  'after',
+  'before',
+  'context',
+  'mood',
+  'retrieval',
+  'scope',
 ]);
 
 function recallResponse(results: RecallResults): {
@@ -32,7 +53,7 @@ function recallResponse(results: RecallResults): {
 function sanitizeRecallOptions(raw: unknown): RecallOptions {
   if (!raw || typeof raw !== 'object') return {};
   const opts: RecallOptions = {};
-  for (const [key, value] of Object.entries(raw)) {
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!SAFE_RECALL_KEYS.has(key)) continue;
     if (key === 'minConfidence' || key === 'min_confidence') {
       if (typeof value === 'number') opts.minConfidence = value;
@@ -51,9 +72,9 @@ function sanitizeRecallOptions(raw: unknown): RecallOptions {
     } else if (key === 'context') {
       if (value && typeof value === 'object') opts.context = value as Record<string, string>;
     } else if (key === 'mood') {
-      if (value && typeof value === 'object') opts.mood = value as RecallOptions['mood'];
+      if (value && typeof value === 'object') opts.mood = value;
     } else if (key === 'retrieval') {
-      if (value === 'hybrid' || value === 'vector') opts.retrieval = value as PublicRetrievalMode;
+      if (value === 'hybrid' || value === 'vector') opts.retrieval = value;
     } else if (key === 'scope') {
       if (value === 'shared' || value === 'agent') opts.scope = value;
     }
@@ -72,7 +93,24 @@ function adminToolsEnabled(options: AppOptions): boolean {
   return value === '1' || value === 'true' || value === 'yes';
 }
 
+// The shape of a decoded JSON request body across the `/v1/*` POST routes.
+// Every field is optional because the wire payload is untrusted: this type
+// documents the contract and gives the handlers static field access, but it is
+// NOT validation. Values are validated where they matter — recall options are
+// allowlisted (`sanitizeRecallOptions`), `encode` rejects bad content, and the
+// SQLite CHECK constraints reject bad enums. Handlers that pass an optional
+// field into a required core parameter assert the wire contract at that single
+// call site and let the core validate the value.
 type RouteBody = {
+  // encode
+  content?: string;
+  source?: SourceType;
+  tags?: string[];
+  salience?: number;
+  context?: Record<string, string>;
+  affect?: Affect;
+  private?: boolean;
+  // shared action / preflight / guard
   action?: string;
   query?: string;
   tool?: string;
@@ -98,11 +136,25 @@ type RouteBody = {
   recordEvent?: boolean;
   include_preflight?: boolean;
   includePreflight?: boolean;
+  include_risks?: boolean;
+  includeRisks?: boolean;
+  include_contradictions?: boolean;
+  includeContradictions?: boolean;
+  recall?: unknown;
+  // validate
+  id?: string;
+  outcome?: string;
+  preflight_event_id?: string;
+  preflightEventId?: string;
+  action_key?: string;
+  actionKey?: string;
+  evidence_ids?: string[];
+  evidenceIds?: string[];
+  // guard/after
   receipt_id?: string;
   receiptId?: string;
   input?: unknown;
   output?: unknown;
-  outcome?: EventOutcome;
   error_summary?: string;
   errorSummary?: string;
   metadata?: Record<string, unknown>;
@@ -110,7 +162,24 @@ type RouteBody = {
   retainDetails?: boolean;
   evidence_feedback?: Record<string, 'used' | 'helpful' | 'wrong'>;
   evidenceFeedback?: Record<string, 'used' | 'helpful' | 'wrong'>;
+  // forget / import / resolve-truth
+  purge?: boolean;
+  minSimilarity?: number;
+  snapshot?: unknown;
+  contradiction_id?: string;
+  // reflect
+  turns?: { role: string; content: string }[];
 };
+
+// Maintenance endpoints accept their core option object directly, so they are
+// typed to that shape rather than the shared RouteBody.
+type DreamRequestBody = {
+  minClusterSize?: number;
+  similarityThreshold?: number;
+  dormantThreshold?: number;
+};
+type DecayRequestBody = { dormantThreshold?: number; halfLives?: Partial<HalfLives> };
+type GreetingRequestBody = { context?: string };
 
 function actionFromBody(body: RouteBody): unknown {
   return body.action ?? body.query;
@@ -126,9 +195,10 @@ function preflightOptionsFromBody(body: RouteBody): PreflightOptions {
     limit: body.limit,
     budgetChars: body.budget_chars ?? body.budgetChars,
     mode: body.mode,
-    recentFailureWindowHours: body.failure_window_hours
-      ?? body.recent_failure_window_hours
-      ?? body.recentFailureWindowHours,
+    recentFailureWindowHours:
+      body.failure_window_hours ??
+      body.recent_failure_window_hours ??
+      body.recentFailureWindowHours,
     recentChangeWindowHours: body.recent_change_window_hours ?? body.recentChangeWindowHours,
     includeCapsule: body.include_capsule ?? body.includeCapsule,
     includeStatus: body.include_status ?? body.includeStatus,
@@ -146,9 +216,13 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   const allowAdminTools = adminToolsEnabled(options);
 
   function adminDisabledResponse(c: Context) {
-    return c.json({
-      error: 'Admin memory routes are disabled. Set AUDREY_ENABLE_ADMIN_TOOLS=1 to enable export, import, and forget.',
-    }, 403);
+    return c.json(
+      {
+        error:
+          'Admin memory routes are disabled. Set AUDREY_ENABLE_ADMIN_TOOLS=1 to enable export, import, and forget.',
+      },
+      403,
+    );
   }
 
   // Health check - no auth required.
@@ -156,7 +230,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   //   status  / healthy - original TS-era field names (tests/http-api.test.js)
   //   ok      / version - Python SDK HealthResponse contract
   //                       (python/audrey_memory/types.py)
-  app.get('/health', (c) => {
+  app.get('/health', c => {
     try {
       const status = audrey.memoryStatus();
       return c.json({
@@ -166,12 +240,15 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         version: VERSION,
       });
     } catch {
-      return c.json({
-        status: 'error',
-        ok: false,
-        healthy: false,
-        version: VERSION,
-      }, 500);
+      return c.json(
+        {
+          status: 'error',
+          ok: false,
+          healthy: false,
+          version: VERSION,
+        },
+        500,
+      );
     }
   });
 
@@ -205,12 +282,12 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   }
 
   // POST /v1/encode
-  app.post('/v1/encode', async (c) => {
+  app.post('/v1/encode', async c => {
     try {
-      const body = await c.req.json();
+      const body = await c.req.json<RouteBody>();
       const id = await audrey.encode({
-        content: body.content,
-        source: body.source,
+        content: body.content as string,
+        source: body.source as SourceType,
         agent: requestAgent(c),
         tags: body.tags,
         salience: body.salience,
@@ -218,7 +295,12 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         affect: body.affect,
         private: body.private,
       });
-      return c.json({ id, content: body.content, source: body.source, private: body.private ?? false });
+      return c.json({
+        id,
+        content: body.content,
+        source: body.source,
+        private: body.private ?? false,
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, 400);
@@ -226,9 +308,9 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/recall
-  app.post('/v1/recall', async (c) => {
+  app.post('/v1/recall', async c => {
     try {
-      const body = await c.req.json();
+      const body = await c.req.json<RouteBody>();
       const { query, ...rest } = body;
       const options = sanitizeRecallOptions(rest);
       const agent = requestAgent(c);
@@ -236,7 +318,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         options.agent = agent;
         options.scope = options.scope ?? 'agent';
       }
-      const results = await audrey.recall(query, options);
+      const results = await audrey.recall(query as string, options);
       return c.json(recallResponse(results));
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -247,24 +329,27 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   // POST /v1/validate — closed-loop feedback. Agents tell Audrey how a
   // recalled memory played out (used | helpful | wrong) and Audrey nudges
   // salience + retrieval bookkeeping accordingly.
-  app.post('/v1/validate', async (c) => {
+  app.post('/v1/validate', async c => {
     try {
-      const body = await c.req.json();
+      const body = await c.req.json<RouteBody>();
       const id = typeof body.id === 'string' ? body.id : null;
       if (!id) return c.json({ error: 'id is required' }, 400);
-      const outcome = body.outcome === 'used' || body.outcome === 'helpful' || body.outcome === 'wrong'
-        ? body.outcome
-        : 'used';
-      const preflightEventId = typeof body.preflight_event_id === 'string'
-        ? body.preflight_event_id
-        : typeof body.preflightEventId === 'string'
-          ? body.preflightEventId
-          : undefined;
-      const actionKey = typeof body.action_key === 'string'
-        ? body.action_key
-        : typeof body.actionKey === 'string'
-          ? body.actionKey
-          : undefined;
+      const outcome =
+        body.outcome === 'used' || body.outcome === 'helpful' || body.outcome === 'wrong'
+          ? body.outcome
+          : 'used';
+      const preflightEventId =
+        typeof body.preflight_event_id === 'string'
+          ? body.preflight_event_id
+          : typeof body.preflightEventId === 'string'
+            ? body.preflightEventId
+            : undefined;
+      const actionKey =
+        typeof body.action_key === 'string'
+          ? body.action_key
+          : typeof body.actionKey === 'string'
+            ? body.actionKey
+            : undefined;
       const evidenceIds = Array.isArray(body.evidence_ids)
         ? body.evidence_ids.filter((value: unknown): value is string => typeof value === 'string')
         : Array.isArray(body.evidenceIds)
@@ -275,17 +360,18 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       return c.json({ ok: true, ...result });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      const code = err instanceof Error && 'code' in err && typeof (err as { code: unknown }).code === 'string'
-        ? (err as { code: string }).code
-        : undefined;
+      const code =
+        err instanceof Error && 'code' in err && typeof (err as { code: unknown }).code === 'string'
+          ? (err as { code: string }).code
+          : undefined;
       return c.json(code ? { error: message, code } : { error: message }, 400);
     }
   });
 
   // Legacy alias for the Python client's mark_used() — defaults outcome to "used".
-  app.post('/v1/mark-used', async (c) => {
+  app.post('/v1/mark-used', async c => {
     try {
-      const body = await c.req.json();
+      const body = await c.req.json<RouteBody>();
       const id = typeof body.id === 'string' ? body.id : null;
       if (!id) return c.json({ error: 'id is required' }, 400);
       const result = audrey.validate({ id, outcome: 'used' });
@@ -298,9 +384,9 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/capsule
-  app.post('/v1/capsule', async (c) => {
+  app.post('/v1/capsule', async c => {
     try {
-      const body = await c.req.json();
+      const body = await c.req.json<RouteBody>();
       if (typeof body.query !== 'string' || body.query.trim().length === 0) {
         return c.json({ error: 'query must be a non-empty string' }, 400);
       }
@@ -322,9 +408,9 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/preflight
-  app.post('/v1/preflight', async (c) => {
+  app.post('/v1/preflight', async c => {
     try {
-      const body = await c.req.json();
+      const body = await c.req.json<RouteBody>();
       const action = actionFromBody(body);
       if (typeof action !== 'string' || action.trim().length === 0) {
         return c.json({ error: 'action must be a non-empty string' }, 400);
@@ -339,9 +425,9 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/reflexes
-  app.post('/v1/reflexes', async (c) => {
+  app.post('/v1/reflexes', async c => {
     try {
-      const body = await c.req.json();
+      const body = await c.req.json<RouteBody>();
       const action = actionFromBody(body);
       if (typeof action !== 'string' || action.trim().length === 0) {
         return c.json({ error: 'action must be a non-empty string' }, 400);
@@ -359,9 +445,9 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/guard/before
-  app.post('/v1/guard/before', async (c) => {
+  app.post('/v1/guard/before', async c => {
     try {
-      const body = await c.req.json() as RouteBody;
+      const body = await c.req.json<RouteBody>();
       const action = actionFromBody(body);
       if (typeof action !== 'string' || action.trim().length === 0) {
         return c.json({ error: 'action must be a non-empty string' }, 400);
@@ -379,9 +465,9 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/guard/after
-  app.post('/v1/guard/after', async (c) => {
+  app.post('/v1/guard/after', async c => {
     try {
-      const body = await c.req.json() as RouteBody;
+      const body = await c.req.json<RouteBody>();
       const receiptId = body.receipt_id ?? body.receiptId;
       if (typeof receiptId !== 'string' || receiptId.trim().length === 0) {
         return c.json({ error: 'receiptId is required' }, 400);
@@ -393,7 +479,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         sessionId: body.session_id ?? body.sessionId,
         input: body.input,
         output: body.output,
-        outcome: body.outcome,
+        outcome: body.outcome as EventOutcome | undefined,
         errorSummary: body.error_summary ?? body.errorSummary,
         cwd: body.cwd,
         files: body.files,
@@ -412,9 +498,11 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/consolidate
-  app.post('/v1/consolidate', async (c) => {
+  app.post('/v1/consolidate', async c => {
     try {
-      const body = await c.req.json().catch(() => ({}));
+      const body = await c.req
+        .json<Partial<ConsolidationOptions>>()
+        .catch((): Partial<ConsolidationOptions> => ({}));
       const result = await audrey.consolidate(body);
       return c.json(result);
     } catch (err: unknown) {
@@ -424,9 +512,9 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/dream
-  app.post('/v1/dream', async (c) => {
+  app.post('/v1/dream', async c => {
     try {
-      const body = await c.req.json().catch(() => ({}));
+      const body = await c.req.json<DreamRequestBody>().catch((): DreamRequestBody => ({}));
       const result = await audrey.dream(body);
       return c.json(result);
     } catch (err: unknown) {
@@ -435,7 +523,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
-  app.get('/v1/introspect', (c) => {
+  app.get('/v1/introspect', c => {
     try {
       const result = audrey.introspect();
       return c.json(result);
@@ -448,7 +536,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   // GET /v1/impact — closed-loop visibility surface. Mirrors `audrey impact`
   // and Audrey.impact(). Bounds windowDays (1..365) and limit (1..100) so
   // unbounded inputs can't drag the report into a multi-second SQL scan.
-  app.get('/v1/impact', (c) => {
+  app.get('/v1/impact', c => {
     try {
       const windowRaw = c.req.query('windowDays') ?? c.req.query('window_days');
       const limitRaw = c.req.query('limit');
@@ -468,10 +556,10 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/resolve-truth
-  app.post('/v1/resolve-truth', async (c) => {
+  app.post('/v1/resolve-truth', async c => {
     try {
-      const body = await c.req.json();
-      const result = await audrey.resolveTruth(body.contradiction_id);
+      const body = await c.req.json<RouteBody>();
+      const result = await audrey.resolveTruth(body.contradiction_id as string);
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -479,7 +567,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
-  app.get('/v1/export', (c) => {
+  app.get('/v1/export', c => {
     if (!allowAdminTools) return adminDisabledResponse(c);
     try {
       const snapshot = audrey.export();
@@ -491,10 +579,10 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/import
-  app.post('/v1/import', async (c) => {
+  app.post('/v1/import', async c => {
     if (!allowAdminTools) return adminDisabledResponse(c);
     try {
-      const body = await c.req.json();
+      const body = await c.req.json<RouteBody>();
       await audrey.import(body.snapshot);
       return c.json({ imported: true });
     } catch (err: unknown) {
@@ -504,10 +592,10 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/forget
-  app.post('/v1/forget', async (c) => {
+  app.post('/v1/forget', async c => {
     if (!allowAdminTools) return adminDisabledResponse(c);
     try {
-      const body = await c.req.json();
+      const body = await c.req.json<RouteBody>();
       const hasId = 'id' in body && body.id;
       const hasQuery = 'query' in body && body.query;
 
@@ -519,10 +607,10 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       }
 
       if (hasId) {
-        const result = audrey.forget(body.id, { purge: body.purge });
+        const result = audrey.forget(body.id as string, { purge: body.purge });
         return c.json(result);
       } else {
-        const result = await audrey.forgetByQuery(body.query, {
+        const result = await audrey.forgetByQuery(body.query as string, {
           minSimilarity: body.minSimilarity,
           purge: body.purge,
         });
@@ -538,12 +626,12 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/decay
-  app.post('/v1/decay', async (c) => {
+  app.post('/v1/decay', async c => {
     try {
-      const body = await c.req.json().catch(() => ({}));
+      const body = await c.req.json<DecayRequestBody>().catch((): DecayRequestBody => ({}));
       const result = audrey.decay({
-        dormantThreshold: (body as Record<string, unknown>).dormantThreshold as number | undefined,
-        halfLives: (body as Record<string, unknown>).halfLives as Record<string, number> | undefined,
+        dormantThreshold: body.dormantThreshold,
+        halfLives: body.halfLives,
       });
       return c.json(result);
     } catch (err: unknown) {
@@ -552,7 +640,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
-  app.get('/v1/status', (c) => {
+  app.get('/v1/status', c => {
     try {
       const result = audrey.memoryStatus();
       return c.json(result);
@@ -563,10 +651,10 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/reflect
-  app.post('/v1/reflect', async (c) => {
+  app.post('/v1/reflect', async c => {
     try {
-      const body = await c.req.json();
-      const result = await audrey.reflect(body.turns);
+      const body = await c.req.json<RouteBody>();
+      const result = await audrey.reflect(body.turns as { role: string; content: string }[]);
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -575,10 +663,10 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/greeting
-  app.post('/v1/greeting', async (c) => {
+  app.post('/v1/greeting', async c => {
     try {
-      const body = await c.req.json().catch(() => ({}));
-      const result = await audrey.greeting({ context: (body as Record<string, unknown>).context as string | undefined });
+      const body = await c.req.json<GreetingRequestBody>().catch((): GreetingRequestBody => ({}));
+      const result = await audrey.greeting({ context: body.context });
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

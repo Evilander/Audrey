@@ -83,7 +83,11 @@ describe('export', () => {
   });
 
   it('export preserves private flag', async () => {
-    await audrey.encode({ content: 'private export test', source: 'direct-observation', private: true });
+    await audrey.encode({
+      content: 'private export test',
+      source: 'direct-observation',
+      private: true,
+    });
     const snapshot = audrey.export();
     const ep = snapshot.episodes.find(e => e.content === 'private export test');
     expect(ep).toBeDefined();

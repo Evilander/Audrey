@@ -72,7 +72,9 @@ describe('redact', () => {
 
   it('redacts password-like assignments', () => {
     const result = redact('password="hunter2!" api_key: "abcdef123456"');
-    expect(result.redactions.find(r => r.class === 'password_assignment')?.count).toBeGreaterThanOrEqual(1);
+    expect(
+      result.redactions.find(r => r.class === 'password_assignment')?.count,
+    ).toBeGreaterThanOrEqual(1);
     expect(result.text).not.toContain('hunter2!');
   });
 
@@ -111,7 +113,9 @@ describe('redact', () => {
   });
 
   it('redacts signed URL signatures without destroying the hostname', () => {
-    const result = redact('GET https://s3.amazonaws.com/bucket/key?X-Amz-Signature=abcdef12345 HTTP/1.1');
+    const result = redact(
+      'GET https://s3.amazonaws.com/bucket/key?X-Amz-Signature=abcdef12345 HTTP/1.1',
+    );
     expect(result.redactions.find(r => r.class === 'signed_url_signature')?.count).toBe(1);
     expect(result.text).toContain('s3.amazonaws.com/bucket/key');
     expect(result.text).not.toContain('abcdef12345');
@@ -147,9 +151,11 @@ describe('redact', () => {
 
   it('summarizeRedactions reports class:count pairs', () => {
     expect(summarizeRedactions([])).toBe('clean');
-    expect(summarizeRedactions([
-      { class: 'aws_access_key', count: 2 },
-      { class: 'us_ssn', count: 1 },
-    ])).toBe('aws_access_key:2,us_ssn:1');
+    expect(
+      summarizeRedactions([
+        { class: 'aws_access_key', count: 2 },
+        { class: 'us_ssn', count: 1 },
+      ]),
+    ).toBe('aws_access_key:2,us_ssn:1');
   });
 });

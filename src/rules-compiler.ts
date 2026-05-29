@@ -18,11 +18,28 @@ export interface RuleDoc {
   frontmatter: Record<string, unknown>;
 }
 
-const STOP_WORDS = new Set(['the', 'a', 'an', 'is', 'of', 'and', 'or', 'to', 'for', 'with', 'on', 'at', 'by', 'in', 'as']);
+const STOP_WORDS = new Set([
+  'the',
+  'a',
+  'an',
+  'is',
+  'of',
+  'and',
+  'or',
+  'to',
+  'for',
+  'with',
+  'on',
+  'at',
+  'by',
+  'in',
+  'as',
+]);
 
 function titleFor(candidate: PromotionCandidate): string {
   const memoryType = candidate.memory_type === 'procedural' ? 'procedural' : 'semantic';
-  const idSuffix = candidate.memory_id.replace(/[^a-zA-Z0-9]+/g, '-').slice(0, 24) || candidate.candidate_id;
+  const idSuffix =
+    candidate.memory_id.replace(/[^a-zA-Z0-9]+/g, '-').slice(0, 24) || candidate.candidate_id;
   return `Audrey ${memoryType} memory ${idSuffix}`;
 }
 
@@ -64,11 +81,18 @@ function renderFrontmatterLine(key: string, value: unknown, indent: number): str
       .join('\n');
     return `${pad}${key}:\n${nested}`;
   }
-  return `${pad}${key}: ${String(value)}`;
+  if (typeof value === 'bigint') {
+    return `${pad}${key}: ${value.toString()}`;
+  }
+  // Frontmatter values are always null, string, number, boolean, bigint, array,
+  // or object — all handled above. Anything else (symbol/function) is not
+  // expected here; serialize defensively rather than risk an '[object Object]'.
+  return `${pad}${key}: ${JSON.stringify(value)}`;
 }
 
 function quoteString(value: string): string {
-  const needsQuoting = /[:#\n\r\t"'`\\]/.test(value) || value.startsWith(' ') || value.endsWith(' ');
+  const needsQuoting =
+    /[:#\n\r\t"'`\\]/.test(value) || value.startsWith(' ') || value.endsWith(' ');
   if (!needsQuoting) return value;
   // Order matters: backslash first so we don't double-escape the substitutions
   // we add for control chars below.
@@ -89,7 +113,8 @@ function fenceFor(value: string): string {
 
 function inlineExcerpt(value: string, maxLength = 240): string {
   const normalized = value.replace(/\s+/g, ' ').trim();
-  const excerpt = normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+  const excerpt =
+    normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
   return excerpt.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/`/g, "'");
 }
 
@@ -119,9 +144,10 @@ export function renderClaudeRule(candidate: PromotionCandidate, promotedAt: stri
     (frontmatter.audrey as Record<string, unknown>).tags = candidate.tags;
   }
 
-  const evidenceLine = candidate.failure_prevented > 0
-    ? `This rule would have prevented ${candidate.failure_prevented} recent tool failure${candidate.failure_prevented === 1 ? '' : 's'}.`
-    : `Supported by ${candidate.evidence_count} observation${candidate.evidence_count === 1 ? '' : 's'}.`;
+  const evidenceLine =
+    candidate.failure_prevented > 0
+      ? `This rule would have prevented ${candidate.failure_prevented} recent tool failure${candidate.failure_prevented === 1 ? '' : 's'}.`
+      : `Supported by ${candidate.evidence_count} observation${candidate.evidence_count === 1 ? '' : 's'}.`;
 
   const bodyLines = [
     renderFrontmatter(frontmatter),

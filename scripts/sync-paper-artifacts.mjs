@@ -106,4 +106,8 @@ for (const [path, updater] of updates) {
   }
 }
 
-console.log(changed.length ? `Synced paper artifacts: ${changed.join(', ')}` : 'Paper artifacts already in sync.');
+console.log(
+  changed.length
+    ? `Synced paper artifacts: ${changed.join(', ')}`
+    : 'Paper artifacts already in sync.',
+);

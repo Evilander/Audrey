@@ -1,5 +1,19 @@
+# Force LF on checkout across all platforms so `prettier --check`
+# (endOfLine: lf) and the toolchain behave identically on Windows.
 *.js text eol=lf
+*.cjs text eol=lf
+*.mjs text eol=lf
+*.ts text eol=lf
 *.json text eol=lf
 *.md text eol=lf
 *.svg text eol=lf
 *.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary assets must never be line-ending normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary

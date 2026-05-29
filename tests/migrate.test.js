@@ -28,12 +28,14 @@ describe('reembedAll', () => {
   it('re-embeds episodes into vec table', async () => {
     const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 8 });
     const embedding8 = provider8.vectorToBuffer(await provider8.embed('test episode'));
-    db1.prepare(
-      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run('ep-1', 'test episode', embedding8, 'direct-observation', 0.9, new Date().toISOString());
-    db1.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
-    ).run('ep-1', embedding8, 'direct-observation', BigInt(0));
+    db1
+      .prepare(
+        'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .run('ep-1', 'test episode', embedding8, 'direct-observation', 0.9, new Date().toISOString());
+    db1
+      .prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)')
+      .run('ep-1', embedding8, 'direct-observation', BigInt(0));
     closeDatabase(db1);
 
     ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
@@ -48,12 +50,14 @@ describe('reembedAll', () => {
   it('re-embeds semantics into vec table', async () => {
     const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 8 });
     const embedding8 = provider8.vectorToBuffer(await provider8.embed('test semantic'));
-    db1.prepare(
-      'INSERT INTO semantics (id, content, embedding, state, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run('sem-1', 'test semantic', embedding8, 'active', new Date().toISOString());
-    db1.prepare(
-      'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)'
-    ).run('sem-1', embedding8, 'active');
+    db1
+      .prepare(
+        'INSERT INTO semantics (id, content, embedding, state, created_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run('sem-1', 'test semantic', embedding8, 'active', new Date().toISOString());
+    db1
+      .prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)')
+      .run('sem-1', embedding8, 'active');
     closeDatabase(db1);
 
     ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
@@ -68,12 +72,14 @@ describe('reembedAll', () => {
   it('re-embeds procedures into vec table', async () => {
     const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 8 });
     const embedding8 = provider8.vectorToBuffer(await provider8.embed('test procedure'));
-    db1.prepare(
-      'INSERT INTO procedures (id, content, embedding, state, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run('proc-1', 'test procedure', embedding8, 'active', new Date().toISOString());
-    db1.prepare(
-      'INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)'
-    ).run('proc-1', embedding8, 'active');
+    db1
+      .prepare(
+        'INSERT INTO procedures (id, content, embedding, state, created_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run('proc-1', 'test procedure', embedding8, 'active', new Date().toISOString());
+    db1
+      .prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)')
+      .run('proc-1', embedding8, 'active');
     closeDatabase(db1);
 
     ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
@@ -88,18 +94,22 @@ describe('reembedAll', () => {
   it('returns counts', async () => {
     const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 8 });
     const emb = provider8.vectorToBuffer(await provider8.embed('content'));
-    db1.prepare(
-      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run('ep-1', 'content', emb, 'direct-observation', 0.9, new Date().toISOString());
-    db1.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
-    ).run('ep-1', emb, 'direct-observation', BigInt(0));
-    db1.prepare(
-      'INSERT INTO semantics (id, content, embedding, state, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run('sem-1', 'content', emb, 'active', new Date().toISOString());
-    db1.prepare(
-      'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)'
-    ).run('sem-1', emb, 'active');
+    db1
+      .prepare(
+        'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .run('ep-1', 'content', emb, 'direct-observation', 0.9, new Date().toISOString());
+    db1
+      .prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)')
+      .run('ep-1', emb, 'direct-observation', BigInt(0));
+    db1
+      .prepare(
+        'INSERT INTO semantics (id, content, embedding, state, created_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run('sem-1', 'content', emb, 'active', new Date().toISOString());
+    db1
+      .prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)')
+      .run('sem-1', emb, 'active');
     closeDatabase(db1);
 
     ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
@@ -115,12 +125,14 @@ describe('reembedAll', () => {
   it('preserves consolidated episode state in vec_episodes during re-embed', async () => {
     const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 8 });
     const emb = provider8.vectorToBuffer(await provider8.embed('content'));
-    db1.prepare(
-      'INSERT INTO episodes (id, content, embedding, source, source_reliability, consolidated, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run('ep-1', 'content', emb, 'direct-observation', 0.9, 1, new Date().toISOString());
-    db1.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
-    ).run('ep-1', emb, 'direct-observation', BigInt(1));
+    db1
+      .prepare(
+        'INSERT INTO episodes (id, content, embedding, source, source_reliability, consolidated, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run('ep-1', 'content', emb, 'direct-observation', 0.9, 1, new Date().toISOString());
+    db1
+      .prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)')
+      .run('ep-1', emb, 'direct-observation', BigInt(1));
     closeDatabase(db1);
 
     ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
@@ -134,13 +146,17 @@ describe('reembedAll', () => {
     ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
     const emb = provider8.vectorToBuffer(await provider8.embed('ep one'));
     db.prepare(
-      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run('ep-1', 'ep one', emb, 'direct-observation', 0.9, new Date().toISOString());
     db.prepare(
-      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run('ep-2', 'ep two', emb, 'direct-observation', 0.9, new Date().toISOString());
-    db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run('ep-1', emb, 'direct-observation', BigInt(0));
-    db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run('ep-2', emb, 'direct-observation', BigInt(0));
+    db.prepare(
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
+    ).run('ep-1', emb, 'direct-observation', BigInt(0));
+    db.prepare(
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
+    ).run('ep-2', emb, 'direct-observation', BigInt(0));
 
     let callCount = 0;
     const failingProvider = {
@@ -153,7 +169,9 @@ describe('reembedAll', () => {
       async embedBatch(texts) {
         return Promise.all(texts.map(t => this.embed(t)));
       },
-      vectorToBuffer(v) { return Buffer.from(v.buffer); },
+      vectorToBuffer(v) {
+        return Buffer.from(v.buffer);
+      },
     };
 
     await expect(reembedAll(db, failingProvider)).rejects.toThrow('embedding service down');
@@ -181,24 +199,34 @@ describe('reembedAll', () => {
     ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
     const emb = provider8.vectorToBuffer(await provider8.embed('ep one'));
     db.prepare(
-      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run('ep-1', 'ep one', emb, 'direct-observation', 0.9, new Date().toISOString());
     db.prepare(
-      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run('ep-2', 'ep two', emb, 'direct-observation', 0.9, new Date().toISOString());
-    db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run('ep-1', emb, 'direct-observation', BigInt(0));
-    db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run('ep-2', emb, 'direct-observation', BigInt(0));
+    db.prepare(
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
+    ).run('ep-1', emb, 'direct-observation', BigInt(0));
+    db.prepare(
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
+    ).run('ep-2', emb, 'direct-observation', BigInt(0));
 
     let embedBatchCalled = false;
     const spyProvider = {
       dimensions: 16,
-      async embed(text) { return provider16.embed(text); },
+      async embed(text) {
+        return provider16.embed(text);
+      },
       async embedBatch(texts) {
         embedBatchCalled = true;
         return Promise.all(texts.map(t => this.embed(t)));
       },
-      vectorToBuffer(v) { return provider16.vectorToBuffer(v); },
-      bufferToVector(b) { return provider16.bufferToVector(b); },
+      vectorToBuffer(v) {
+        return provider16.vectorToBuffer(v);
+      },
+      bufferToVector(b) {
+        return provider16.bufferToVector(b);
+      },
     };
 
     await reembedAll(db, spyProvider, { dropAndRecreate: true });
@@ -210,7 +238,10 @@ describe('reembedAll', () => {
     const provider8 = new MockEmbeddingProvider({ dimensions: 8 });
     const { db: testDb } = createDatabase(tmpDir, { dimensions: 8 });
 
-    await encodeEpisode(testDb, provider8, { content: 'test memory', source: 'direct-observation' });
+    await encodeEpisode(testDb, provider8, {
+      content: 'test memory',
+      source: 'direct-observation',
+    });
 
     const provider16 = new MockEmbeddingProvider({ dimensions: 16 });
     const counts = await reembedAll(testDb, provider16, { dropAndRecreate: true });

@@ -18,5 +18,5 @@ export function contextModifier(
 ): number {
   if (!encodingContext || !retrievalContext) return 1.0;
   const ratio = contextMatchRatio(encodingContext, retrievalContext);
-  return 1.0 + (weight * ratio);
+  return 1.0 + weight * ratio;
 }

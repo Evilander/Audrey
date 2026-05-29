@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { assertBenchmarkGuardrails, runBenchmarkCli, runBenchmarkSuite } from '../benchmarks/run.js';
+import {
+  assertBenchmarkGuardrails,
+  runBenchmarkCli,
+  runBenchmarkSuite,
+} from '../benchmarks/run.js';
 import { resolveAudreyVersion } from '../benchmarks/perf-snapshot.js';
 
 const OUTPUT_DIR = './test-benchmark-output';
@@ -38,11 +42,19 @@ describe('benchmark suite', () => {
     expect(summary.local.overall[0].system).toBe('Audrey');
     expect(summary.local.overall_scope).toBe('comparable_suites');
     expect(summary.local.overall_suite_ids).toEqual(['retrieval', 'operations']);
-    expect(summary.local.suites.map(suite => suite.id)).toEqual(['retrieval', 'operations', 'guard']);
+    expect(summary.local.suites.map(suite => suite.id)).toEqual([
+      'retrieval',
+      'operations',
+      'guard',
+    ]);
     expect(summary.external.leaderboard[0].system).toBe('MIRIX');
     expect(summary.local.cases.some(testCase => testCase.id === 'procedural-learning')).toBe(true);
-    expect(summary.local.cases.some(testCase => testCase.id === 'operation-semantic-merge')).toBe(true);
-    expect(summary.local.cases.some(testCase => testCase.id === 'guard-recent-tool-failure')).toBe(true);
+    expect(summary.local.cases.some(testCase => testCase.id === 'operation-semantic-merge')).toBe(
+      true,
+    );
+    expect(summary.local.cases.some(testCase => testCase.id === 'guard-recent-tool-failure')).toBe(
+      true,
+    );
   });
 
   it('writes JSON, HTML, and SVG artifacts', async () => {
@@ -74,7 +86,11 @@ describe('benchmark suite', () => {
   });
 
   it('can run only the operations suite', async () => {
-    const summary = await runBenchmarkSuite({ provider: 'mock', dimensions: 64, suite: 'operations' });
+    const summary = await runBenchmarkSuite({
+      provider: 'mock',
+      dimensions: 64,
+      suite: 'operations',
+    });
 
     expect(summary.config.suites).toEqual(['operations']);
     expect(summary.local.suites).toHaveLength(1);
@@ -121,6 +137,8 @@ describe('benchmark suite', () => {
     const summary = await runBenchmarkSuite({ provider: 'mock', dimensions: 64 });
 
     expect(() => assertBenchmarkGuardrails(summary)).not.toThrow();
-    expect(() => assertBenchmarkGuardrails(summary, { minAudreyScore: 101 })).toThrow(/Benchmark regression gate failed/);
+    expect(() => assertBenchmarkGuardrails(summary, { minAudreyScore: 101 })).toThrow(
+      /Benchmark regression gate failed/,
+    );
   });
 });

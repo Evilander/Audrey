@@ -67,7 +67,9 @@ export function writeGuardBenchSubmissionBundle(options = {}) {
   writeGuardBenchConformanceCard({ dir: sourceDir });
   const sourceValidation = validateGuardBenchArtifacts({ dir: sourceDir, schemasDir });
   if (!sourceValidation.ok) {
-    throw new Error(`Cannot create GuardBench submission bundle from invalid artifacts: ${sourceValidation.failures.join('; ')}`);
+    throw new Error(
+      `Cannot create GuardBench submission bundle from invalid artifacts: ${sourceValidation.failures.join('; ')}`,
+    );
   }
 
   rmSync(outDir, { recursive: true, force: true });
@@ -89,11 +91,19 @@ export function writeGuardBenchSubmissionBundle(options = {}) {
     schemasDir: join(outDir, 'schemas'),
   });
   const validationReportPath = join(outDir, 'validation-report.json');
-  writeFileSync(validationReportPath, `${JSON.stringify({
-    generatedAt: new Date().toISOString(),
-    sourceValidation,
-    bundleValidation,
-  }, null, 2)}\n`, 'utf-8');
+  writeFileSync(
+    validationReportPath,
+    `${JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        sourceValidation,
+        bundleValidation,
+      },
+      null,
+      2,
+    )}\n`,
+    'utf-8',
+  );
   copied.push(validationReportPath);
 
   const card = readJson(join(outDir, 'guardbench-conformance-card.json'));
@@ -107,11 +117,15 @@ export function writeGuardBenchSubmissionBundle(options = {}) {
     score: card.score,
     conformance: card.conformance,
     validation: bundleValidation,
-    files: copied.map(path => fileRecord(path, outDir)).sort((a, b) => a.path.localeCompare(b.path)),
+    files: copied
+      .map(path => fileRecord(path, outDir))
+      .sort((a, b) => a.path.localeCompare(b.path)),
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
 
-  const finalFiles = copied.map(path => fileRecord(path, outDir)).sort((a, b) => a.path.localeCompare(b.path));
+  const finalFiles = copied
+    .map(path => fileRecord(path, outDir))
+    .sort((a, b) => a.path.localeCompare(b.path));
   manifest.files = finalFiles;
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
 

@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = process.cwd();
 const DEFAULT_TARGET_VERSION = '1.0.0';
-const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const VERSION_RE =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 function fromRoot(path) {
   return resolve(ROOT, path);
@@ -34,7 +35,8 @@ function parseArgs(argv = process.argv.slice(2)) {
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
-    if ((token === '--target-version' || token === '--version') && argv[i + 1]) args.targetVersion = argv[++i];
+    if ((token === '--target-version' || token === '--version') && argv[i + 1])
+      args.targetVersion = argv[++i];
     else if (token === '--date' && argv[i + 1]) args.date = argv[++i];
     else if (token === '--apply') args.apply = true;
     else if (token === '--json') args.json = true;
@@ -203,10 +205,14 @@ export function prepareReleaseCut(options = {}) {
   const versions = currentVersionSnapshot();
   const versionValues = Object.values(versions);
   const failures = [];
-  if (versionValues.some(value => !value)) failures.push('One or more release version surfaces are missing');
-  if (new Set(versionValues).size !== 1) failures.push(`Release version surfaces are not aligned: ${JSON.stringify(versions)}`);
+  if (versionValues.some(value => !value))
+    failures.push('One or more release version surfaces are missing');
+  if (new Set(versionValues).size !== 1)
+    failures.push(`Release version surfaces are not aligned: ${JSON.stringify(versions)}`);
   if (versions.packageJson && compareCoreVersions(targetVersion, versions.packageJson) < 0) {
-    failures.push(`Target version ${targetVersion} is lower than current package version ${versions.packageJson}`);
+    failures.push(
+      `Target version ${targetVersion} is lower than current package version ${versions.packageJson}`,
+    );
   }
 
   const files = plannedFiles(targetVersion, date).map(([path, after]) => {
@@ -251,7 +257,9 @@ async function main() {
     console.log(JSON.stringify(report, null, 2));
   } else if (report.ok) {
     const changed = report.files.filter(file => file.changed).map(file => file.path);
-    console.log(`${report.apply ? 'Applied' : 'Planned'} Audrey ${report.targetVersion} release cut: ${changed.length} file(s)`);
+    console.log(
+      `${report.apply ? 'Applied' : 'Planned'} Audrey ${report.targetVersion} release cut: ${changed.length} file(s)`,
+    );
     for (const file of changed) console.log(`- ${file}`);
   } else {
     console.error('Release cut preparation failed:');
