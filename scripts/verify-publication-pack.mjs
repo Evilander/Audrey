@@ -70,25 +70,33 @@ function referencesPendingClaim(entry, claimMap) {
 }
 
 function hasPendingBoundaryLanguage(text) {
-  return /\b(pending|deferred|does not report|not reporting|not claimed|Stage-B|live credentialed)\b/i.test(text);
+  return /\b(pending|deferred|does not report|not reporting|not claimed|Stage-B|live credentialed)\b/i.test(
+    text,
+  );
 }
 
 function validateEntry(entry, claimMap, forbiddenNeedles) {
   const failures = [];
   const reservedUrlChars = Number.isInteger(entry.reservedUrlChars) ? entry.reservedUrlChars : 0;
   if (entry.text.length > entry.maxChars) {
-    failures.push(`${entry.id}: text length ${entry.text.length} exceeds maxChars ${entry.maxChars}`);
+    failures.push(
+      `${entry.id}: text length ${entry.text.length} exceeds maxChars ${entry.maxChars}`,
+    );
   }
   if (entry.text.includes(SEEDED_SECRET)) failures.push(`${entry.id}: contains seeded raw secret`);
-  if (entry.text.includes('runtime-key')) failures.push(`${entry.id}: contains runtime-key test credential`);
+  if (entry.text.includes('runtime-key'))
+    failures.push(`${entry.id}: contains runtime-key test credential`);
   for (const claimId of entry.claimIds) {
     if (!claimMap.has(claimId)) failures.push(`${entry.id}: unknown claim id ${claimId}`);
   }
   for (const needle of forbiddenNeedles) {
-    if (entry.text.includes(needle)) failures.push(`${entry.id}: contains forbidden claim text: ${needle}`);
+    if (entry.text.includes(needle))
+      failures.push(`${entry.id}: contains forbidden claim text: ${needle}`);
   }
   if (referencesPendingClaim(entry, claimMap) && !hasPendingBoundaryLanguage(entry.text)) {
-    failures.push(`${entry.id}: references a pending claim without explicit pending/deferred boundary language`);
+    failures.push(
+      `${entry.id}: references a pending claim without explicit pending/deferred boundary language`,
+    );
   }
   if (/10\/10/.test(entry.text) && !/\b(local|Stage-A)\b/i.test(entry.text)) {
     failures.push(`${entry.id}: 10/10 claim must be scoped as local or Stage-A`);
@@ -106,10 +114,14 @@ function validateEntry(entry, claimMap, forbiddenNeedles) {
     if (!Number.isInteger(entry.reservedUrlChars)) {
       failures.push(`${entry.id}: X post requiring an artifact URL must set reservedUrlChars`);
     } else if (entry.reservedUrlChars < X_URL_RESERVED_CHARS) {
-      failures.push(`${entry.id}: X artifact URL reserve must be at least ${X_URL_RESERVED_CHARS} characters`);
+      failures.push(
+        `${entry.id}: X artifact URL reserve must be at least ${X_URL_RESERVED_CHARS} characters`,
+      );
     }
     if (entry.text.length + reservedUrlChars > entry.maxChars) {
-      failures.push(`${entry.id}: text length ${entry.text.length} plus URL reserve ${reservedUrlChars} exceeds maxChars ${entry.maxChars}`);
+      failures.push(
+        `${entry.id}: text length ${entry.text.length} plus URL reserve ${reservedUrlChars} exceeds maxChars ${entry.maxChars}`,
+      );
     }
   }
   return failures;
@@ -122,14 +134,16 @@ export async function verifyPublicationPack(options = {}) {
   const claimRegister = readJson(pack.claimRegister);
   const claimMap = new Map((claimRegister.claims ?? []).map(claim => [claim.id, claim]));
   const forbiddenNeedles = (claimRegister.claims ?? []).flatMap(claim =>
-    (claim.forbiddenText ?? []).map(needle => needle.text));
+    (claim.forbiddenText ?? []).map(needle => needle.text),
+  );
 
   const schemaFailures = validateSchema(pack, schema, 'audrey-publication-pack');
   const ids = new Set();
   const entryReports = [];
   const failures = [...schemaFailures.map(failure => `publication pack schema: ${failure}`)];
 
-  if (!claimReport.ok) failures.push(...claimReport.failures.map(failure => `claim verifier: ${failure}`));
+  if (!claimReport.ok)
+    failures.push(...claimReport.failures.map(failure => `claim verifier: ${failure}`));
 
   for (const entry of pack.entries ?? []) {
     const entryFailures = [];

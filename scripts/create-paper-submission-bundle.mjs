@@ -138,10 +138,14 @@ export async function writePaperSubmissionBundle(options = {}) {
   const claimVerification = await verifyPaperClaims();
   const publicationPackVerification = await verifyPublicationPack();
   if (!claimVerification.ok) {
-    throw new Error(`Cannot create paper submission bundle with invalid claims: ${claimVerification.failures.join('; ')}`);
+    throw new Error(
+      `Cannot create paper submission bundle with invalid claims: ${claimVerification.failures.join('; ')}`,
+    );
   }
   if (!publicationPackVerification.ok) {
-    throw new Error(`Cannot create paper submission bundle with invalid publication pack: ${publicationPackVerification.failures.join('; ')}`);
+    throw new Error(
+      `Cannot create paper submission bundle with invalid publication pack: ${publicationPackVerification.failures.join('; ')}`,
+    );
   }
 
   rmSync(outDir, { recursive: true, force: true });

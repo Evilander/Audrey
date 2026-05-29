@@ -28,7 +28,10 @@ interface DecayProceduralRow {
 
 export function applyDecay(
   db: Database.Database,
-  { dormantThreshold = 0.1, halfLives }: { dormantThreshold?: number; halfLives?: Partial<HalfLives> } = {},
+  {
+    dormantThreshold = 0.1,
+    halfLives,
+  }: { dormantThreshold?: number; halfLives?: Partial<HalfLives> } = {},
 ): DecayResult {
   const now = new Date();
   let totalEvaluated = 0;

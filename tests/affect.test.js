@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { arousalSalienceBoost, affectSimilarity, moodCongruenceModifier, detectResonance } from '../dist/src/affect.js';
+import {
+  arousalSalienceBoost,
+  affectSimilarity,
+  moodCongruenceModifier,
+  detectResonance,
+} from '../dist/src/affect.js';
 import { createDatabase, closeDatabase } from '../dist/src/db.js';
 import { createEmbeddingProvider } from '../dist/src/embedding.js';
 import { encodeEpisode } from '../dist/src/encode.js';
@@ -54,24 +59,17 @@ describe('affectSimilarity', () => {
   });
 
   it('returns 1.0 for identical affect', () => {
-    expect(affectSimilarity(
-      { valence: 0.5, arousal: 0.7 },
-      { valence: 0.5, arousal: 0.7 },
-    )).toBeCloseTo(1.0);
+    expect(
+      affectSimilarity({ valence: 0.5, arousal: 0.7 }, { valence: 0.5, arousal: 0.7 }),
+    ).toBeCloseTo(1.0);
   });
 
   it('returns 0 for opposite valence', () => {
-    expect(affectSimilarity(
-      { valence: -1.0 },
-      { valence: 1.0 },
-    )).toBeCloseTo(0);
+    expect(affectSimilarity({ valence: -1.0 }, { valence: 1.0 })).toBeCloseTo(0);
   });
 
   it('returns 0.5 for orthogonal valence (valence-only)', () => {
-    const sim = affectSimilarity(
-      { valence: 0.0 },
-      { valence: 1.0 },
-    );
+    const sim = affectSimilarity({ valence: 0.0 }, { valence: 1.0 });
     expect(sim).toBeCloseTo(0.5, 1);
   });
 
@@ -88,10 +86,7 @@ describe('affectSimilarity', () => {
   });
 
   it('handles valence-only comparison', () => {
-    const sim = affectSimilarity(
-      { valence: 0.8 },
-      { valence: 0.8 },
-    );
+    const sim = affectSimilarity({ valence: 0.8 }, { valence: 0.8 });
     expect(sim).toBeCloseTo(1.0);
   });
 });
@@ -104,33 +99,24 @@ describe('moodCongruenceModifier', () => {
   });
 
   it('returns 1.0 + weight for identical affect (default weight 0.2)', () => {
-    expect(moodCongruenceModifier(
-      { valence: 0.5, arousal: 0.7 },
-      { valence: 0.5, arousal: 0.7 },
-    )).toBeCloseTo(1.2);
+    expect(
+      moodCongruenceModifier({ valence: 0.5, arousal: 0.7 }, { valence: 0.5, arousal: 0.7 }),
+    ).toBeCloseTo(1.2);
   });
 
   it('returns ~1.0 for opposite valence', () => {
-    const result = moodCongruenceModifier(
-      { valence: -1.0 },
-      { valence: 1.0 },
-    );
+    const result = moodCongruenceModifier({ valence: -1.0 }, { valence: 1.0 });
     expect(result).toBeCloseTo(1.0, 1);
   });
 
   it('respects custom weight', () => {
-    expect(moodCongruenceModifier(
-      { valence: 0.5, arousal: 0.7 },
-      { valence: 0.5, arousal: 0.7 },
-      0.4,
-    )).toBeCloseTo(1.4);
+    expect(
+      moodCongruenceModifier({ valence: 0.5, arousal: 0.7 }, { valence: 0.5, arousal: 0.7 }, 0.4),
+    ).toBeCloseTo(1.4);
   });
 
   it('returns partial boost for partial valence match', () => {
-    const result = moodCongruenceModifier(
-      { valence: 0.5 },
-      { valence: 0.0 },
-    );
+    const result = moodCongruenceModifier({ valence: 0.5 }, { valence: 0.0 });
     expect(result).toBeGreaterThan(1.0);
     expect(result).toBeLessThan(1.2);
   });
@@ -176,10 +162,16 @@ describe('detectResonance', () => {
       affect: { valence: -0.3, arousal: 0.6, label: 'frustration' },
     });
 
-    const resonances = await detectResonance(db, embedding, newId, {
-      content: 'debugging a frustrating auth bug',
-      affect: { valence: -0.3, arousal: 0.6 },
-    }, { threshold: 0.5, affectThreshold: 0.5 });
+    const resonances = await detectResonance(
+      db,
+      embedding,
+      newId,
+      {
+        content: 'debugging a frustrating auth bug',
+        affect: { valence: -0.3, arousal: 0.6 },
+      },
+      { threshold: 0.5, affectThreshold: 0.5 },
+    );
 
     expect(resonances.length).toBeGreaterThan(0);
     expect(resonances[0].emotionalSimilarity).toBeGreaterThan(0.5);
@@ -202,10 +194,16 @@ describe('detectResonance', () => {
       affect: { valence: -0.8, arousal: 0.9, label: 'rage' },
     });
 
-    const resonances = await detectResonance(db, embedding, newId, {
-      content: 'debugging went really well today',
-      affect: { valence: -0.8, arousal: 0.9 },
-    }, { threshold: 0.5, affectThreshold: 0.9 });
+    const resonances = await detectResonance(
+      db,
+      embedding,
+      newId,
+      {
+        content: 'debugging went really well today',
+        affect: { valence: -0.8, arousal: 0.9 },
+      },
+      { threshold: 0.5, affectThreshold: 0.9 },
+    );
 
     expect(resonances).toEqual([]);
   });
@@ -222,10 +220,16 @@ describe('detectResonance', () => {
   });
 
   it('respects enabled=false', async () => {
-    const resonances = await detectResonance(db, null, 'any', {
-      content: 'test',
-      affect: { valence: 0.5 },
-    }, { enabled: false });
+    const resonances = await detectResonance(
+      db,
+      null,
+      'any',
+      {
+        content: 'test',
+        affect: { valence: 0.5 },
+      },
+      { enabled: false },
+    );
     expect(resonances).toEqual([]);
   });
 });

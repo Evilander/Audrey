@@ -27,9 +27,10 @@ describe('sqlite-vec foundation', () => {
 
   it('loads sqlite-vec and creates vec0 tables when dimensions provided', () => {
     const { db } = createDatabase(TEST_DIR, { dimensions: 8 });
-    const tables = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    ).all().map(t => t.name);
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all()
+      .map(t => t.name);
     expect(tables).toContain('vec_episodes');
     expect(tables).toContain('vec_semantics');
     expect(tables).toContain('vec_procedures');
@@ -38,9 +39,7 @@ describe('sqlite-vec foundation', () => {
 
   it('creates audrey_config table and stores dimensions', () => {
     const { db } = createDatabase(TEST_DIR, { dimensions: 64 });
-    const row = db.prepare(
-      "SELECT value FROM audrey_config WHERE key = 'dimensions'"
-    ).get();
+    const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get();
     expect(row).toBeDefined();
     expect(row.value).toBe('64');
     closeDatabase(db);
@@ -60,18 +59,17 @@ describe('sqlite-vec foundation', () => {
     const { db: db1 } = createDatabase(TEST_DIR, { dimensions: 64 });
     closeDatabase(db1);
     const { db: db2 } = createDatabase(TEST_DIR, { dimensions: 64 });
-    const row = db2.prepare(
-      "SELECT value FROM audrey_config WHERE key = 'dimensions'"
-    ).get();
+    const row = db2.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get();
     expect(row.value).toBe('64');
     closeDatabase(db2);
   });
 
   it('does NOT create vec0 tables when dimensions not provided (backwards compat)', () => {
     const { db } = createDatabase(TEST_DIR);
-    const tables = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-    ).all().map(t => t.name);
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all()
+      .map(t => t.name);
     expect(tables).not.toContain('vec_episodes');
     expect(tables).not.toContain('vec_semantics');
     expect(tables).not.toContain('vec_procedures');
@@ -89,19 +87,19 @@ describe('sqlite-vec foundation', () => {
     const v3 = makeVector(dims, 1.01); // very similar to v1
 
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
     ).run('ep-1', Buffer.from(v1.buffer), 'direct-observation', BigInt(0));
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
     ).run('ep-2', Buffer.from(v2.buffer), 'inference', BigInt(0));
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
     ).run('ep-3', Buffer.from(v3.buffer), 'direct-observation', BigInt(1));
 
     // KNN: find 2 nearest to v1
-    const results = db.prepare(
-      'SELECT id, distance FROM vec_episodes WHERE embedding MATCH ? AND k = ?'
-    ).all(Buffer.from(v1.buffer), 2);
+    const results = db
+      .prepare('SELECT id, distance FROM vec_episodes WHERE embedding MATCH ? AND k = ?')
+      .all(Buffer.from(v1.buffer), 2);
 
     expect(results).toHaveLength(2);
     expect(results[0].id).toBe('ep-1'); // exact match
@@ -119,19 +117,21 @@ describe('sqlite-vec foundation', () => {
     const v3 = makeVector(dims, 1.02);
 
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
     ).run('ep-1', Buffer.from(v1.buffer), 'direct-observation', BigInt(0));
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
     ).run('ep-2', Buffer.from(v2.buffer), 'inference', BigInt(0));
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
     ).run('ep-3', Buffer.from(v3.buffer), 'direct-observation', BigInt(1));
 
     // Filter by source
-    const results = db.prepare(
-      'SELECT id, distance FROM vec_episodes WHERE embedding MATCH ? AND k = ? AND source = ?'
-    ).all(Buffer.from(v1.buffer), 3, 'direct-observation');
+    const results = db
+      .prepare(
+        'SELECT id, distance FROM vec_episodes WHERE embedding MATCH ? AND k = ? AND source = ?',
+      )
+      .all(Buffer.from(v1.buffer), 3, 'direct-observation');
 
     expect(results).toHaveLength(2);
     const ids = results.map(r => r.id);
@@ -149,16 +149,22 @@ describe('sqlite-vec foundation', () => {
     const v1 = makeVector(dims, 1.0);
     const v2 = makeVector(dims, 1.01);
 
-    db.prepare(
-      'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)'
-    ).run('sem-1', Buffer.from(v1.buffer), 'active');
-    db.prepare(
-      'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)'
-    ).run('sem-2', Buffer.from(v2.buffer), 'dormant');
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      'sem-1',
+      Buffer.from(v1.buffer),
+      'active',
+    );
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      'sem-2',
+      Buffer.from(v2.buffer),
+      'dormant',
+    );
 
-    const results = db.prepare(
-      'SELECT id, distance FROM vec_semantics WHERE embedding MATCH ? AND k = ? AND state = ?'
-    ).all(Buffer.from(v1.buffer), 2, 'active');
+    const results = db
+      .prepare(
+        'SELECT id, distance FROM vec_semantics WHERE embedding MATCH ? AND k = ? AND state = ?',
+      )
+      .all(Buffer.from(v1.buffer), 2, 'active');
 
     expect(results).toHaveLength(1);
     expect(results[0].id).toBe('sem-1');
@@ -173,16 +179,22 @@ describe('sqlite-vec foundation', () => {
     const v1 = makeVector(dims, 1.0);
     const v2 = makeVector(dims, 1.01);
 
-    db.prepare(
-      'INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)'
-    ).run('proc-1', Buffer.from(v1.buffer), 'active');
-    db.prepare(
-      'INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)'
-    ).run('proc-2', Buffer.from(v2.buffer), 'superseded');
+    db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)').run(
+      'proc-1',
+      Buffer.from(v1.buffer),
+      'active',
+    );
+    db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)').run(
+      'proc-2',
+      Buffer.from(v2.buffer),
+      'superseded',
+    );
 
-    const results = db.prepare(
-      'SELECT id, distance FROM vec_procedures WHERE embedding MATCH ? AND k = ? AND state = ?'
-    ).all(Buffer.from(v1.buffer), 2, 'active');
+    const results = db
+      .prepare(
+        'SELECT id, distance FROM vec_procedures WHERE embedding MATCH ? AND k = ? AND state = ?',
+      )
+      .all(Buffer.from(v1.buffer), 2, 'active');
 
     expect(results).toHaveLength(1);
     expect(results[0].id).toBe('proc-1');
@@ -197,26 +209,48 @@ describe('sqlite-vec foundation', () => {
       const { db: db1 } = createDatabase(TEST_DIR);
       const v1 = makeVector(dims, 1.0);
       const v2 = makeVector(dims, 2.0);
-      db1.prepare(`INSERT INTO episodes (id, content, embedding, source, source_reliability, consolidated, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        'ep-1', 'test content 1', Buffer.from(v1.buffer), 'direct-observation', 0.95, 0, new Date().toISOString()
-      );
-      db1.prepare(`INSERT INTO episodes (id, content, embedding, source, source_reliability, consolidated, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        'ep-2', 'test content 2', Buffer.from(v2.buffer), 'inference', 0.7, 1, new Date().toISOString()
-      );
+      db1
+        .prepare(
+          `INSERT INTO episodes (id, content, embedding, source, source_reliability, consolidated, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'ep-1',
+          'test content 1',
+          Buffer.from(v1.buffer),
+          'direct-observation',
+          0.95,
+          0,
+          new Date().toISOString(),
+        );
+      db1
+        .prepare(
+          `INSERT INTO episodes (id, content, embedding, source, source_reliability, consolidated, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'ep-2',
+          'test content 2',
+          Buffer.from(v2.buffer),
+          'inference',
+          0.7,
+          1,
+          new Date().toISOString(),
+        );
       // Also one with NULL embedding — should be skipped
-      db1.prepare(`INSERT INTO episodes (id, content, source, source_reliability, created_at)
-                    VALUES (?, ?, ?, ?, ?)`).run(
-        'ep-3', 'no embedding', 'told-by-user', 0.85, new Date().toISOString()
-      );
+      db1
+        .prepare(
+          `INSERT INTO episodes (id, content, source, source_reliability, created_at)
+                    VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run('ep-3', 'no embedding', 'told-by-user', 0.85, new Date().toISOString());
       closeDatabase(db1);
 
       // Re-open WITH dimensions — migration should run
       const { db: db2 } = createDatabase(TEST_DIR, { dimensions: dims });
-      const rows = db2.prepare(
-        'SELECT id, distance FROM vec_episodes WHERE embedding MATCH ? AND k = ?'
-      ).all(Buffer.from(v1.buffer), 10);
+      const rows = db2
+        .prepare('SELECT id, distance FROM vec_episodes WHERE embedding MATCH ? AND k = ?')
+        .all(Buffer.from(v1.buffer), 10);
 
       expect(rows.length).toBe(2); // ep-1 and ep-2 migrated, ep-3 skipped (no embedding)
       const ids = rows.map(r => r.id);
@@ -230,16 +264,18 @@ describe('sqlite-vec foundation', () => {
       const dims = 8;
       const { db: db1 } = createDatabase(TEST_DIR);
       const v1 = makeVector(dims, 1.0);
-      db1.prepare(`INSERT INTO semantics (id, content, embedding, state, created_at)
-                    VALUES (?, ?, ?, ?, ?)`).run(
-        'sem-1', 'test principle', Buffer.from(v1.buffer), 'active', new Date().toISOString()
-      );
+      db1
+        .prepare(
+          `INSERT INTO semantics (id, content, embedding, state, created_at)
+                    VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run('sem-1', 'test principle', Buffer.from(v1.buffer), 'active', new Date().toISOString());
       closeDatabase(db1);
 
       const { db: db2 } = createDatabase(TEST_DIR, { dimensions: dims });
-      const rows = db2.prepare(
-        'SELECT id, distance FROM vec_semantics WHERE embedding MATCH ? AND k = ?'
-      ).all(Buffer.from(v1.buffer), 10);
+      const rows = db2
+        .prepare('SELECT id, distance FROM vec_semantics WHERE embedding MATCH ? AND k = ?')
+        .all(Buffer.from(v1.buffer), 10);
 
       expect(rows.length).toBe(1);
       expect(rows[0].id).toBe('sem-1');
@@ -251,16 +287,24 @@ describe('sqlite-vec foundation', () => {
       const dims = 8;
       const { db: db1 } = createDatabase(TEST_DIR);
       const v1 = makeVector(dims, 3.0);
-      db1.prepare(`INSERT INTO procedures (id, content, embedding, state, created_at)
-                    VALUES (?, ?, ?, ?, ?)`).run(
-        'proc-1', 'test procedure', Buffer.from(v1.buffer), 'active', new Date().toISOString()
-      );
+      db1
+        .prepare(
+          `INSERT INTO procedures (id, content, embedding, state, created_at)
+                    VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'proc-1',
+          'test procedure',
+          Buffer.from(v1.buffer),
+          'active',
+          new Date().toISOString(),
+        );
       closeDatabase(db1);
 
       const { db: db2 } = createDatabase(TEST_DIR, { dimensions: dims });
-      const rows = db2.prepare(
-        'SELECT id, distance FROM vec_procedures WHERE embedding MATCH ? AND k = ?'
-      ).all(Buffer.from(v1.buffer), 10);
+      const rows = db2
+        .prepare('SELECT id, distance FROM vec_procedures WHERE embedding MATCH ? AND k = ?')
+        .all(Buffer.from(v1.buffer), 10);
 
       expect(rows.length).toBe(1);
       expect(rows[0].id).toBe('proc-1');
@@ -272,10 +316,20 @@ describe('sqlite-vec foundation', () => {
       const dims = 8;
       const { db: db1 } = createDatabase(TEST_DIR);
       const v1 = makeVector(dims, 1.0);
-      db1.prepare(`INSERT INTO episodes (id, content, embedding, source, source_reliability, consolidated, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        'ep-1', 'test', Buffer.from(v1.buffer), 'direct-observation', 0.95, 0, new Date().toISOString()
-      );
+      db1
+        .prepare(
+          `INSERT INTO episodes (id, content, embedding, source, source_reliability, consolidated, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'ep-1',
+          'test',
+          Buffer.from(v1.buffer),
+          'direct-observation',
+          0.95,
+          0,
+          new Date().toISOString(),
+        );
       closeDatabase(db1);
 
       // Open with dimensions (triggers migration)
@@ -284,9 +338,9 @@ describe('sqlite-vec foundation', () => {
 
       // Open again (migration should not duplicate)
       const { db: db3 } = createDatabase(TEST_DIR, { dimensions: dims });
-      const rows = db3.prepare(
-        'SELECT id, distance FROM vec_episodes WHERE embedding MATCH ? AND k = ?'
-      ).all(Buffer.from(v1.buffer), 10);
+      const rows = db3
+        .prepare('SELECT id, distance FROM vec_episodes WHERE embedding MATCH ? AND k = ?')
+        .all(Buffer.from(v1.buffer), 10);
 
       expect(rows.length).toBe(1);
       expect(rows[0].id).toBe('ep-1');

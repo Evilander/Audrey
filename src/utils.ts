@@ -4,11 +4,11 @@ export function cosineSimilarity(bufA: Buffer, bufB: Buffer, provider: Embedding
   const a = provider.bufferToVector(bufA);
   const b = provider.bufferToVector(bufB);
   if (a.length !== b.length) {
-    throw new Error(
-      `cosineSimilarity: vector length mismatch (a=${a.length}, b=${b.length})`,
-    );
+    throw new Error(`cosineSimilarity: vector length mismatch (a=${a.length}, b=${b.length})`);
   }
-  let dot = 0, magA = 0, magB = 0;
+  let dot = 0,
+    magA = 0,
+    magB = 0;
   for (let i = 0; i < a.length; i++) {
     const ai = a[i]!;
     const bi = b[i]!;
@@ -30,17 +30,27 @@ export function daysBetween(dateStr: string, now: Date): number {
 
 export function safeJsonParse<T>(str: string | null | undefined, fallback: T): T {
   if (!str) return fallback;
-  try { return JSON.parse(str); }
-  catch { return fallback; }
+  try {
+    return JSON.parse(str) as T;
+  } catch {
+    return fallback;
+  }
 }
 
-export function requireApiKey(apiKey: string | undefined | null, operation: string, envVar: string): asserts apiKey is string {
+export function requireApiKey(
+  apiKey: string | undefined | null,
+  operation: string,
+  envVar: string,
+): asserts apiKey is string {
   if (typeof apiKey !== 'string' || apiKey.trim() === '') {
     throw new Error(`${operation} requires ${envVar}`);
   }
 }
 
-export async function describeHttpError(response: { status: number; text: () => Promise<string> }): Promise<string> {
+export async function describeHttpError(response: {
+  status: number;
+  text: () => Promise<string>;
+}): Promise<string> {
   if (typeof response.text !== 'function') {
     return `${response.status}`;
   }

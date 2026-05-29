@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AudreyConfig, EmbeddingConfig, LLMConfig } from '../src/types.js';
 
-export const VERSION = '1.0.1';
+export const VERSION = '1.0.2';
 export const SERVER_NAME = 'audrey-memory';
 export const DEFAULT_AGENT = 'local-agent';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
@@ -67,11 +67,12 @@ export function resolveEmbeddingProvider(
     assertValidProvider(explicit, VALID_EMBEDDING_PROVIDERS, 'AUDREY_EMBEDDING_PROVIDER');
     const provider = explicit as EmbeddingConfig['provider'];
     const dims = defaultEmbeddingDimensions(explicit);
-    const apiKey = explicit === 'gemini'
-      ? (env['GOOGLE_API_KEY'] || env['GEMINI_API_KEY'])
-      : explicit === 'openai'
-        ? env['OPENAI_API_KEY']
-        : undefined;
+    const apiKey =
+      explicit === 'gemini'
+        ? env['GOOGLE_API_KEY'] || env['GEMINI_API_KEY']
+        : explicit === 'openai'
+          ? env['OPENAI_API_KEY']
+          : undefined;
     const result: EmbeddingConfig & { dimensions: number } = { provider, apiKey, dimensions: dims };
     if (explicit === 'local') result.device = env['AUDREY_DEVICE'] || 'gpu';
     return result;
@@ -115,7 +116,7 @@ export function buildAudreyConfig(): AudreyConfig {
   const config: AudreyConfig = { dataDir, agent, embedding };
   if (llm) {
     // LLMConfig requires provider as literal union; resolveLLMProvider guarantees this
-    config.llm = llm as AudreyConfig['llm'];
+    config.llm = llm;
   }
 
   return config;
@@ -124,7 +125,9 @@ export function buildAudreyConfig(): AudreyConfig {
 export function resolveHostAgent(host: string | undefined): string {
   if (!host) return HOST_AGENT_NAMES.generic;
   if (host in HOST_AGENT_NAMES) return HOST_AGENT_NAMES[host as AudreyHost];
-  throw new Error(`Unsupported MCP host "${host}". Supported hosts: ${Object.keys(HOST_AGENT_NAMES).join(', ')}`);
+  throw new Error(
+    `Unsupported MCP host "${host}". Supported hosts: ${Object.keys(HOST_AGENT_NAMES).join(', ')}`,
+  );
 }
 
 export function buildAudreyMcpEnv(
@@ -136,12 +139,12 @@ export function buildAudreyMcpEnv(
   const providerEnv = includeSecrets
     ? env
     : {
-      ...env,
-      ANTHROPIC_API_KEY: undefined,
-      GOOGLE_API_KEY: undefined,
-      GEMINI_API_KEY: undefined,
-      OPENAI_API_KEY: undefined,
-    };
+        ...env,
+        ANTHROPIC_API_KEY: undefined,
+        GOOGLE_API_KEY: undefined,
+        GEMINI_API_KEY: undefined,
+        OPENAI_API_KEY: undefined,
+      };
   const envPairs = new Map<string, string>();
   const addEnv = (key: string, value: string | undefined | null): void => {
     if (value === undefined || value === null || value === '') return;
@@ -186,7 +189,10 @@ export function buildStdioMcpServerConfig(
   };
 }
 
-function jsonHostConfig(host: string | undefined, env: Record<string, string | undefined>): unknown {
+function jsonHostConfig(
+  host: string | undefined,
+  env: Record<string, string | undefined>,
+): unknown {
   const config = buildStdioMcpServerConfig(env, host);
   if (host === 'vscode') {
     return {
@@ -238,11 +244,9 @@ export function buildInstallArgs(
   env: Record<string, string | undefined> = process.env,
   options: McpEnvOptions = {},
 ): string[] {
-  const envPairs = buildAudreyMcpEnv(
-    env,
-    env['AUDREY_AGENT'] || HOST_AGENT_NAMES['claude-code'],
-    { includeSecrets: options.includeSecrets ?? false },
-  );
+  const envPairs = buildAudreyMcpEnv(env, env['AUDREY_AGENT'] || HOST_AGENT_NAMES['claude-code'], {
+    includeSecrets: options.includeSecrets ?? false,
+  });
   const args = ['mcp', 'add', '-s', 'user', SERVER_NAME];
   for (const [key, value] of Object.entries(envPairs)) {
     args.push('-e', `${key}=${value}`);

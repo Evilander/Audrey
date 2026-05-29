@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase, closeDatabase } from '../dist/src/db.js';
-import { insertEvent, listEvents, countEvents, recentFailures, deleteEventsBefore } from '../dist/src/events.js';
+import {
+  insertEvent,
+  listEvents,
+  countEvents,
+  recentFailures,
+  deleteEventsBefore,
+} from '../dist/src/events.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-events-data';
@@ -45,9 +51,27 @@ describe('memory_events CRUD', () => {
   });
 
   it('filters by sessionId, toolName, outcome, since', () => {
-    insertEvent(db, { eventType: 'PostToolUse', source: 'tool-trace', toolName: 'Bash', sessionId: 'S1', outcome: 'succeeded' });
-    insertEvent(db, { eventType: 'PostToolUse', source: 'tool-trace', toolName: 'Bash', sessionId: 'S1', outcome: 'failed' });
-    insertEvent(db, { eventType: 'PostToolUse', source: 'tool-trace', toolName: 'Edit', sessionId: 'S2', outcome: 'succeeded' });
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      sessionId: 'S1',
+      outcome: 'succeeded',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      sessionId: 'S1',
+      outcome: 'failed',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Edit',
+      sessionId: 'S2',
+      outcome: 'succeeded',
+    });
 
     expect(listEvents(db, { sessionId: 'S1' })).toHaveLength(2);
     expect(listEvents(db, { sessionId: 'S2' })).toHaveLength(1);
@@ -57,10 +81,37 @@ describe('memory_events CRUD', () => {
   });
 
   it('recentFailures groups failures by tool with most recent error', () => {
-    insertEvent(db, { eventType: 'PostToolUseFailure', source: 'tool-trace', toolName: 'Bash', outcome: 'failed', errorSummary: 'old error', createdAt: '2026-04-20T10:00:00Z' });
-    insertEvent(db, { eventType: 'PostToolUseFailure', source: 'tool-trace', toolName: 'Bash', outcome: 'failed', errorSummary: 'newer error', createdAt: '2026-04-22T10:00:00Z' });
-    insertEvent(db, { eventType: 'PostToolUseFailure', source: 'tool-trace', toolName: 'Edit', outcome: 'failed', errorSummary: 'edit failed', createdAt: '2026-04-21T10:00:00Z' });
-    insertEvent(db, { eventType: 'PostToolUse', source: 'tool-trace', toolName: 'Bash', outcome: 'succeeded', createdAt: '2026-04-22T11:00:00Z' });
+    insertEvent(db, {
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'failed',
+      errorSummary: 'old error',
+      createdAt: '2026-04-20T10:00:00Z',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'failed',
+      errorSummary: 'newer error',
+      createdAt: '2026-04-22T10:00:00Z',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      toolName: 'Edit',
+      outcome: 'failed',
+      errorSummary: 'edit failed',
+      createdAt: '2026-04-21T10:00:00Z',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'succeeded',
+      createdAt: '2026-04-22T11:00:00Z',
+    });
 
     const failures = recentFailures(db, { since: '2026-04-19T00:00:00Z' });
     expect(failures).toHaveLength(2);
@@ -71,8 +122,18 @@ describe('memory_events CRUD', () => {
   });
 
   it('deleteEventsBefore removes events older than cutoff', () => {
-    insertEvent(db, { eventType: 'PostToolUse', source: 'tool-trace', toolName: 'Bash', createdAt: '2026-01-01T00:00:00Z' });
-    insertEvent(db, { eventType: 'PostToolUse', source: 'tool-trace', toolName: 'Bash', createdAt: '2026-04-22T00:00:00Z' });
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      createdAt: '2026-01-01T00:00:00Z',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      createdAt: '2026-04-22T00:00:00Z',
+    });
     const deleted = deleteEventsBefore(db, '2026-02-01T00:00:00Z');
     expect(deleted).toBe(1);
     expect(countEvents(db)).toBe(1);

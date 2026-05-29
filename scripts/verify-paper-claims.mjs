@@ -54,7 +54,7 @@ Options:
 
 function assertTextNeedles(needles, shouldExist, failures) {
   for (const needle of needles) {
-    let text = '';
+    let text;
     try {
       text = readText(needle.path);
     } catch (error) {
@@ -64,8 +64,10 @@ function assertTextNeedles(needles, shouldExist, failures) {
     const normalizedText = text.replace(/\s+/g, ' ');
     const normalizedNeedle = needle.text.replace(/\s+/g, ' ');
     const found = text.includes(needle.text) || normalizedText.includes(normalizedNeedle);
-    if (shouldExist && !found) failures.push(`${needle.path} is missing claim text: ${needle.text}`);
-    if (!shouldExist && found) failures.push(`${needle.path} contains forbidden claim text: ${needle.text}`);
+    if (shouldExist && !found)
+      failures.push(`${needle.path} is missing claim text: ${needle.text}`);
+    if (!shouldExist && found)
+      failures.push(`${needle.path} contains forbidden claim text: ${needle.text}`);
   }
 }
 
@@ -73,11 +75,16 @@ function guardbenchLocalPassed() {
   const summary = readJson('benchmarks/output/guardbench-summary.json');
   const failures = [];
   if (summary.passed !== 10) failures.push(`GuardBench passed expected 10, got ${summary.passed}`);
-  if (summary.scenarios !== 10) failures.push(`GuardBench scenarios expected 10, got ${summary.scenarios}`);
-  if (summary.redactionLeaks !== 0) failures.push(`GuardBench decision redaction leaks expected 0, got ${summary.redactionLeaks}`);
-  if (summary.artifactRedactionSweep?.passed !== true) failures.push('GuardBench artifact redaction sweep did not pass');
+  if (summary.scenarios !== 10)
+    failures.push(`GuardBench scenarios expected 10, got ${summary.scenarios}`);
+  if (summary.redactionLeaks !== 0)
+    failures.push(`GuardBench decision redaction leaks expected 0, got ${summary.redactionLeaks}`);
+  if (summary.artifactRedactionSweep?.passed !== true)
+    failures.push('GuardBench artifact redaction sweep did not pass');
   if (summary.artifactRedactionSweep?.leakCount !== 0) {
-    failures.push(`GuardBench artifact leak count expected 0, got ${summary.artifactRedactionSweep?.leakCount}`);
+    failures.push(
+      `GuardBench artifact leak count expected 0, got ${summary.artifactRedactionSweep?.leakCount}`,
+    );
   }
   return failures;
 }
@@ -88,9 +95,9 @@ function noPublishedSecretLeaks() {
     'benchmarks/output/guardbench-summary.json',
     'benchmarks/output/guardbench-raw.json',
   ];
-  return paths.flatMap(path => readText(path).includes(SEEDED_SECRET)
-    ? [`${path} contains the seeded raw secret`]
-    : []);
+  return paths.flatMap(path =>
+    readText(path).includes(SEEDED_SECRET) ? [`${path} contains the seeded raw secret`] : [],
+  );
 }
 
 function adapterRegistryHasMem0Zep() {
@@ -104,15 +111,26 @@ function adapterRegistryHasMem0Zep() {
 
 function externalEvidencePending() {
   const evidence = readJson('benchmarks/output/external/guardbench-external-evidence.json');
-  const rows = (evidence.adapters ?? []).filter(adapter => ['mem0-platform', 'zep-cloud'].includes(adapter.id));
+  const rows = (evidence.adapters ?? []).filter(adapter =>
+    ['mem0-platform', 'zep-cloud'].includes(adapter.id),
+  );
   const failures = [];
-  if (rows.length !== 2) failures.push(`External evidence expected Mem0 and Zep rows, got ${rows.length}`);
+  if (rows.length !== 2)
+    failures.push(`External evidence expected Mem0 and Zep rows, got ${rows.length}`);
   if (rows.every(row => row.status === 'verified')) {
-    failures.push('External evidence is fully verified but claim register still marks external scores pending');
+    failures.push(
+      'External evidence is fully verified but claim register still marks external scores pending',
+    );
   }
   for (const row of rows) {
-    if (row.status !== 'pending') failures.push(`External evidence row ${row.id} should remain pending until strict live evidence passes`);
-    if (row.evidenceKind !== 'dry-run') failures.push(`External evidence row ${row.id} should be dry-run evidence before live credentials`);
+    if (row.status !== 'pending')
+      failures.push(
+        `External evidence row ${row.id} should remain pending until strict live evidence passes`,
+      );
+    if (row.evidenceKind !== 'dry-run')
+      failures.push(
+        `External evidence row ${row.id} should be dry-run evidence before live credentials`,
+      );
   }
   return failures;
 }
@@ -121,9 +139,13 @@ function externalEvidenceNoSecrets() {
   const text = readText('benchmarks/output/external/guardbench-external-evidence.json');
   const evidence = JSON.parse(text);
   const failures = [];
-  if (text.includes('runtime-key')) failures.push('External evidence report contains test runtime-key');
+  if (text.includes('runtime-key'))
+    failures.push('External evidence report contains test runtime-key');
   for (const row of evidence.adapters ?? []) {
-    if (row.secretLeakCount !== 0) failures.push(`External evidence row ${row.id} reports ${row.secretLeakCount} credential leak(s)`);
+    if (row.secretLeakCount !== 0)
+      failures.push(
+        `External evidence row ${row.id} reports ${row.secretLeakCount} credential leak(s)`,
+      );
   }
   return failures;
 }
@@ -134,7 +156,11 @@ function paperStageBoundaryExcludesExternalScores() {
   if (!paper.includes('this paper does not report external-system GuardBench scores')) {
     failures.push('Paper missing explicit external-score exclusion');
   }
-  if (!paper.includes('External scores added only when live adapter runs and raw outputs are published')) {
+  if (
+    !paper.includes(
+      'External scores added only when live adapter runs and raw outputs are published',
+    )
+  ) {
     failures.push('Paper missing Stage-B external-score condition');
   }
   return failures;
@@ -151,7 +177,8 @@ async function runArtifactCheck(name) {
   if (name === 'external-evidence-pending') return externalEvidencePending();
   if (name === 'guardbench-local-passed') return guardbenchLocalPassed();
   if (name === 'no-published-secret-leaks') return noPublishedSecretLeaks();
-  if (name === 'paper-stage-boundary-excludes-external-scores') return paperStageBoundaryExcludesExternalScores();
+  if (name === 'paper-stage-boundary-excludes-external-scores')
+    return paperStageBoundaryExcludesExternalScores();
   if (name === 'publication-verifier-ok') return publicationVerifierOk();
   return [`Unknown claim artifact check: ${name}`];
 }
@@ -168,7 +195,8 @@ export async function verifyPaperClaims(options = {}) {
     assertTextNeedles(claim.forbiddenText ?? [], false, failures);
     for (const evidence of claim.evidence ?? []) {
       const [path] = evidence.split('#');
-      if (!existsSync(fromRoot(path))) failures.push(`Missing evidence file for ${claim.id}: ${path}`);
+      if (!existsSync(fromRoot(path)))
+        failures.push(`Missing evidence file for ${claim.id}: ${path}`);
     }
     for (const check of claim.artifactChecks ?? []) {
       failures.push(...(await runArtifactCheck(check)));

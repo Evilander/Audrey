@@ -36,56 +36,115 @@ describe('recall', () => {
     const semId1 = generateId();
     const semVec1 = await embedding.embed('Stripe rate limits are 100 requests per second');
     const semBuf1 = embedding.vectorToBuffer(semVec1);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
         contradicting_count, retrieval_count, created_at, embedding_model, embedding_version)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      semId1, 'Stripe rate limits are 100 requests per second', semBuf1,
-      'active', 3, 3, 0, 0, now, embedding.modelName, embedding.modelVersion
+    `,
+    ).run(
+      semId1,
+      'Stripe rate limits are 100 requests per second',
+      semBuf1,
+      'active',
+      3,
+      3,
+      0,
+      0,
+      now,
+      embedding.modelName,
+      embedding.modelVersion,
     );
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(semId1, semBuf1, 'active');
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      semId1,
+      semBuf1,
+      'active',
+    );
 
     const semId2 = generateId();
     const semVec2 = await embedding.embed('PostgreSQL handles concurrent connections well');
     const semBuf2 = embedding.vectorToBuffer(semVec2);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
         contradicting_count, retrieval_count, created_at, embedding_model, embedding_version)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      semId2, 'PostgreSQL handles concurrent connections well', semBuf2,
-      'active', 2, 2, 0, 0, now, embedding.modelName, embedding.modelVersion
+    `,
+    ).run(
+      semId2,
+      'PostgreSQL handles concurrent connections well',
+      semBuf2,
+      'active',
+      2,
+      2,
+      0,
+      0,
+      now,
+      embedding.modelName,
+      embedding.modelVersion,
     );
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(semId2, semBuf2, 'active');
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      semId2,
+      semBuf2,
+      'active',
+    );
 
     // Seed a dormant semantic memory
     const semId3 = generateId();
     const semVec3 = await embedding.embed('Old API endpoint is deprecated');
     const semBuf3 = embedding.vectorToBuffer(semVec3);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
         contradicting_count, retrieval_count, created_at, embedding_model, embedding_version)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      semId3, 'Old API endpoint is deprecated', semBuf3,
-      'dormant', 1, 1, 0, 0, now, embedding.modelName, embedding.modelVersion
+    `,
+    ).run(
+      semId3,
+      'Old API endpoint is deprecated',
+      semBuf3,
+      'dormant',
+      1,
+      1,
+      0,
+      0,
+      now,
+      embedding.modelName,
+      embedding.modelVersion,
     );
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(semId3, semBuf3, 'dormant');
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      semId3,
+      semBuf3,
+      'dormant',
+    );
 
     // Seed a procedural memory
     const procId = generateId();
     const procVec = await embedding.embed('When rate limited, implement exponential backoff');
     const procBuf = embedding.vectorToBuffer(procVec);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO procedures (id, content, embedding, state, success_count, failure_count,
         retrieval_count, created_at, embedding_model, embedding_version)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      procId, 'When rate limited, implement exponential backoff', procBuf,
-      'active', 5, 0, 0, now, embedding.modelName, embedding.modelVersion
+    `,
+    ).run(
+      procId,
+      'When rate limited, implement exponential backoff',
+      procBuf,
+      'active',
+      5,
+      0,
+      0,
+      now,
+      embedding.modelName,
+      embedding.modelVersion,
     );
-    db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)').run(procId, procBuf, 'active');
+    db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)').run(
+      procId,
+      procBuf,
+      'active',
+    );
   });
 
   afterEach(() => {
@@ -120,7 +179,7 @@ describe('recall', () => {
   it('counts vector tables with one SQL roundtrip before KNN', async () => {
     const originalPrepare = db.prepare.bind(db);
     let vectorCountQueries = 0;
-    db.prepare = (sql) => {
+    db.prepare = sql => {
       const normalized = String(sql).replace(/\s+/g, ' ').trim();
       if (normalized.includes('COUNT(*) FROM vec_')) vectorCountQueries += 1;
       return originalPrepare(sql);
@@ -132,12 +191,16 @@ describe('recall', () => {
   });
 
   it('increments retrieval_count on recalled semantic memories', async () => {
-    const before = db.prepare('SELECT id, retrieval_count FROM semantics WHERE state = ?').all('active');
+    const before = db
+      .prepare('SELECT id, retrieval_count FROM semantics WHERE state = ?')
+      .all('active');
     const beforeMap = Object.fromEntries(before.map(r => [r.id, r.retrieval_count]));
 
     await recall(db, embedding, 'Stripe rate limit', { types: ['semantic'] });
 
-    const after = db.prepare('SELECT id, retrieval_count FROM semantics WHERE state = ?').all('active');
+    const after = db
+      .prepare('SELECT id, retrieval_count FROM semantics WHERE state = ?')
+      .all('active');
     const afterMap = Object.fromEntries(after.map(r => [r.id, r.retrieval_count]));
 
     const incremented = after.some(r => afterMap[r.id] > (beforeMap[r.id] || 0));
@@ -200,12 +263,16 @@ describe('recall', () => {
   });
 
   it('also increments retrieval_count on recalled procedural memories', async () => {
-    const before = db.prepare('SELECT id, retrieval_count FROM procedures WHERE state = ?').all('active');
+    const before = db
+      .prepare('SELECT id, retrieval_count FROM procedures WHERE state = ?')
+      .all('active');
     const beforeMap = Object.fromEntries(before.map(r => [r.id, r.retrieval_count]));
 
     await recall(db, embedding, 'backoff strategy', { types: ['procedural'] });
 
-    const after = db.prepare('SELECT id, retrieval_count FROM procedures WHERE state = ?').all('active');
+    const after = db
+      .prepare('SELECT id, retrieval_count FROM procedures WHERE state = ?')
+      .all('active');
     const afterMap = Object.fromEntries(after.map(r => [r.id, r.retrieval_count]));
 
     const incremented = after.some(r => afterMap[r.id] > (beforeMap[r.id] || 0));
@@ -215,19 +282,23 @@ describe('recall', () => {
   it('surfaces partial failures when a recall path breaks', async () => {
     db.exec('DROP TABLE vec_semantics');
 
-    const results = await recall(db, embedding, 'Stripe rate limit', { types: ['semantic'], retrieval: 'vector' });
+    const results = await recall(db, embedding, 'Stripe rate limit', {
+      types: ['semantic'],
+      retrieval: 'vector',
+    });
 
     expect(results).toHaveLength(0);
     expect(results.partialFailure).toBe(true);
-    expect(results.errors).toEqual([
-      expect.objectContaining({ type: 'semantic' }),
-    ]);
+    expect(results.errors).toEqual([expect.objectContaining({ type: 'semantic' })]);
   });
 
   it('surfaces partial failures when FTS lookup breaks', async () => {
     db.exec('DROP TABLE fts_episodes');
 
-    const results = await recall(db, embedding, 'Stripe rate limit', { types: ['episodic'], retrieval: 'hybrid' });
+    const results = await recall(db, embedding, 'Stripe rate limit', {
+      types: ['episodic'],
+      retrieval: 'hybrid',
+    });
 
     expect(results.partialFailure).toBe(true);
     expect(results.errors).toEqual([
@@ -431,7 +502,10 @@ describe('recall', () => {
 
       const withContext = await recall(db, embedding, 'debugging context episode', {
         types: ['episodic'],
-        confidenceConfig: { retrievalContext: { task: 'debugging', domain: 'payments' }, contextWeight: 0.3 },
+        confidenceConfig: {
+          retrievalContext: { task: 'debugging', domain: 'payments' },
+          contextWeight: 0.3,
+        },
       });
       const withoutContext = await recall(db, embedding, 'debugging context episode', {
         types: ['episodic'],
@@ -475,7 +549,10 @@ describe('recall', () => {
 
       const results = await recall(db, embedding, 'context match field test', {
         types: ['episodic'],
-        confidenceConfig: { retrievalContext: { task: 'debugging', domain: 'billing' }, contextWeight: 0.3 },
+        confidenceConfig: {
+          retrievalContext: { task: 'debugging', domain: 'billing' },
+          contextWeight: 0.3,
+        },
       });
       const match = results.find(r => r.content === 'context match field test');
       expect(match).toBeDefined();
@@ -502,19 +579,34 @@ describe('recall', () => {
       const semId = generateId();
       const semVec = await embedding.embed('semantic context immunity test');
       const semBuf = embedding.vectorToBuffer(semVec);
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
           contradicting_count, retrieval_count, created_at, embedding_model, embedding_version)
         VALUES (?, ?, ?, 'active', 3, 3, 0, 0, ?, ?, ?)
-      `).run(semId, 'semantic context immunity test', semBuf, now, embedding.modelName, embedding.modelVersion);
-      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(semId, semBuf, 'active');
+      `,
+      ).run(
+        semId,
+        'semantic context immunity test',
+        semBuf,
+        now,
+        embedding.modelName,
+        embedding.modelVersion,
+      );
+      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+        semId,
+        semBuf,
+        'active',
+      );
 
       // Call without context first to avoid retrieval_count drift between calls
       const withoutCtx = await recall(db, embedding, 'semantic context immunity test', {
         types: ['semantic'],
       });
       // Reset retrieval_count so both calls see the same state
-      db.prepare('UPDATE semantics SET retrieval_count = 0, last_reinforced_at = NULL WHERE id = ?').run(semId);
+      db.prepare(
+        'UPDATE semantics SET retrieval_count = 0, last_reinforced_at = NULL WHERE id = ?',
+      ).run(semId);
 
       const withCtx = await recall(db, embedding, 'semantic context immunity test', {
         types: ['semantic'],
@@ -616,28 +708,56 @@ describe('recall', () => {
       const loId = generateId();
       const loVec = await embedding.embed('low interference semantic fact');
       const loBuf = embedding.vectorToBuffer(loVec);
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
           contradicting_count, retrieval_count, interference_count, created_at, embedding_model, embedding_version)
         VALUES (?, ?, ?, 'active', 3, 3, 0, 0, 0, ?, ?, ?)
-      `).run(loId, 'low interference semantic fact', loBuf, now, embedding.modelName, embedding.modelVersion);
-      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(loId, loBuf, 'active');
+      `,
+      ).run(
+        loId,
+        'low interference semantic fact',
+        loBuf,
+        now,
+        embedding.modelName,
+        embedding.modelVersion,
+      );
+      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+        loId,
+        loBuf,
+        'active',
+      );
 
       const hiId = generateId();
       const hiVec = await embedding.embed('high interference semantic fact');
       const hiBuf = embedding.vectorToBuffer(hiVec);
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
           contradicting_count, retrieval_count, interference_count, created_at, embedding_model, embedding_version)
         VALUES (?, ?, ?, 'active', 3, 3, 0, 0, 50, ?, ?, ?)
-      `).run(hiId, 'high interference semantic fact', hiBuf, now, embedding.modelName, embedding.modelVersion);
-      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(hiId, hiBuf, 'active');
+      `,
+      ).run(
+        hiId,
+        'high interference semantic fact',
+        hiBuf,
+        now,
+        embedding.modelName,
+        embedding.modelVersion,
+      );
+      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+        hiId,
+        hiBuf,
+        'active',
+      );
 
       const loResults = await recall(db, embedding, 'low interference semantic fact', {
-        types: ['semantic'], limit: 20,
+        types: ['semantic'],
+        limit: 20,
       });
       const hiResults = await recall(db, embedding, 'high interference semantic fact', {
-        types: ['semantic'], limit: 20,
+        types: ['semantic'],
+        limit: 20,
       });
 
       const loMatch = loResults.find(r => r.id === loId);
@@ -653,26 +773,50 @@ describe('recall', () => {
       const loId = generateId();
       const loVec = await embedding.embed('low salience episode memory');
       const loBuf = embedding.vectorToBuffer(loVec);
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO episodes (id, content, embedding, source, source_reliability, salience, created_at, embedding_model, embedding_version)
         VALUES (?, ?, ?, 'direct-observation', 0.95, 0.1, ?, ?, ?)
-      `).run(loId, 'low salience episode memory', loBuf, now, embedding.modelName, embedding.modelVersion);
-      db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run(loId, loBuf, 'direct-observation', BigInt(0));
+      `,
+      ).run(
+        loId,
+        'low salience episode memory',
+        loBuf,
+        now,
+        embedding.modelName,
+        embedding.modelVersion,
+      );
+      db.prepare(
+        'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
+      ).run(loId, loBuf, 'direct-observation', BigInt(0));
 
       const hiId = generateId();
       const hiVec = await embedding.embed('high salience episode memory');
       const hiBuf = embedding.vectorToBuffer(hiVec);
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO episodes (id, content, embedding, source, source_reliability, salience, created_at, embedding_model, embedding_version)
         VALUES (?, ?, ?, 'direct-observation', 0.95, 0.9, ?, ?, ?)
-      `).run(hiId, 'high salience episode memory', hiBuf, now, embedding.modelName, embedding.modelVersion);
-      db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)').run(hiId, hiBuf, 'direct-observation', BigInt(0));
+      `,
+      ).run(
+        hiId,
+        'high salience episode memory',
+        hiBuf,
+        now,
+        embedding.modelName,
+        embedding.modelVersion,
+      );
+      db.prepare(
+        'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
+      ).run(hiId, hiBuf, 'direct-observation', BigInt(0));
 
       const loResults = await recall(db, embedding, 'low salience episode memory', {
-        types: ['episodic'], limit: 20,
+        types: ['episodic'],
+        limit: 20,
       });
       const hiResults = await recall(db, embedding, 'high salience episode memory', {
-        types: ['episodic'], limit: 20,
+        types: ['episodic'],
+        limit: 20,
       });
 
       const loMatch = loResults.find(r => r.id === loId);
@@ -687,15 +831,29 @@ describe('recall', () => {
       const semId = generateId();
       const semVec = await embedding.embed('baseline default modifier test');
       const semBuf = embedding.vectorToBuffer(semVec);
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
           contradicting_count, retrieval_count, interference_count, salience, created_at, embedding_model, embedding_version)
         VALUES (?, ?, ?, 'active', 3, 3, 0, 0, 0, 0.5, ?, ?, ?)
-      `).run(semId, 'baseline default modifier test', semBuf, now, embedding.modelName, embedding.modelVersion);
-      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(semId, semBuf, 'active');
+      `,
+      ).run(
+        semId,
+        'baseline default modifier test',
+        semBuf,
+        now,
+        embedding.modelName,
+        embedding.modelVersion,
+      );
+      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+        semId,
+        semBuf,
+        'active',
+      );
 
       const results = await recall(db, embedding, 'baseline default modifier test', {
-        types: ['semantic'], limit: 20,
+        types: ['semantic'],
+        limit: 20,
       });
       const match = results.find(r => r.id === semId);
       expect(match).toBeDefined();
@@ -709,8 +867,15 @@ describe('recall', () => {
 
   describe('private memory filtering', () => {
     it('excludes private memories from recall by default', async () => {
-      await encodeEpisode(db, embedding, { content: 'secret memory', source: 'direct-observation', private: true });
-      await encodeEpisode(db, embedding, { content: 'public memory xyz', source: 'direct-observation' });
+      await encodeEpisode(db, embedding, {
+        content: 'secret memory',
+        source: 'direct-observation',
+        private: true,
+      });
+      await encodeEpisode(db, embedding, {
+        content: 'public memory xyz',
+        source: 'direct-observation',
+      });
 
       const results = await recall(db, embedding, 'secret memory public memory xyz', { limit: 20 });
       const contents = results.map(r => r.content);
@@ -719,9 +884,16 @@ describe('recall', () => {
     });
 
     it('includes private memories when includePrivate: true', async () => {
-      await encodeEpisode(db, embedding, { content: 'secret memory', source: 'direct-observation', private: true });
+      await encodeEpisode(db, embedding, {
+        content: 'secret memory',
+        source: 'direct-observation',
+        private: true,
+      });
 
-      const results = await recall(db, embedding, 'secret memory', { limit: 20, includePrivate: true });
+      const results = await recall(db, embedding, 'secret memory', {
+        limit: 20,
+        includePrivate: true,
+      });
       const contents = results.map(r => r.content);
       expect(contents).toContain('secret memory');
     });
@@ -754,7 +926,9 @@ describe('recall', () => {
 
       const results = await recall(db, embedding, 'What caused the outage?', { limit: 10 });
       const contents = results.map(r => r.content);
-      expect(contents).toContain('The outage was caused by an expired TLS certificate on api.example.com.');
+      expect(contents).toContain(
+        'The outage was caused by an expired TLS certificate on api.example.com.',
+      );
       expect(contents).not.toContain('The outage was caused by database corruption.');
     });
   });

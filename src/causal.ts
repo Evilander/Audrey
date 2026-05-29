@@ -5,7 +5,13 @@ import { buildCausalArticulationPrompt } from './prompts.js';
 
 export function addCausalLink(
   db: Database.Database,
-  { causeId, effectId, linkType = 'causal', mechanism, confidence }: {
+  {
+    causeId,
+    effectId,
+    linkType = 'causal',
+    mechanism,
+    confidence,
+  }: {
     causeId: string;
     effectId: string;
     linkType?: string;
@@ -16,10 +22,12 @@ export function addCausalLink(
   const id = generateId();
   const now = new Date().toISOString();
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO causal_links (id, cause_id, effect_id, link_type, mechanism, confidence, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, causeId, effectId, linkType, mechanism, confidence, now);
+  `,
+  ).run(id, causeId, effectId, linkType, mechanism, confidence, now);
 
   return id;
 }
@@ -41,9 +49,9 @@ export function getCausalChain(
       if (visited.has(nodeId)) continue;
       visited.add(nodeId);
 
-      const links = db.prepare(
-        'SELECT * FROM causal_links WHERE cause_id = ?'
-      ).all(nodeId) as CausalLinkRow[];
+      const links = db
+        .prepare('SELECT * FROM causal_links WHERE cause_id = ?')
+        .all(nodeId) as CausalLinkRow[];
 
       for (const link of links) {
         if (!visited.has(link.effect_id)) {
@@ -89,9 +97,10 @@ export async function articulateCausalLink(
   const result = {
     spurious: candidate.spurious,
     mechanism: candidate.mechanism,
-    linkType: typeof candidate.linkType === 'string' && candidate.linkType
-      ? candidate.linkType
-      : 'correlational',
+    linkType:
+      typeof candidate.linkType === 'string' && candidate.linkType
+        ? candidate.linkType
+        : 'correlational',
     confidence: candidate.confidence,
   };
 

@@ -71,9 +71,9 @@ function clusterViaKNN(
     const vecRow = getEmbedding.get(ep.id) as VecEmbeddingRow | undefined;
     if (!vecRow) continue;
 
-    const neighbors = (agent
-      ? knnQuery.all(vecRow.embedding, k, agent)
-      : knnQuery.all(vecRow.embedding, k)) as KnnRow[];
+    const neighbors = (
+      agent ? knnQuery.all(vecRow.embedding, k, agent) : knnQuery.all(vecRow.embedding, k)
+    ) as KnnRow[];
     for (const neighbor of neighbors) {
       if (neighbor.id === ep.id) continue;
       const j = idToIndex.get(neighbor.id);
@@ -106,18 +106,14 @@ export function clusterEpisodes(
   embeddingProvider: EmbeddingProvider,
   options: { similarityThreshold?: number; minClusterSize?: number; agent?: string } = {},
 ): EpisodeRow[][] {
-  const {
-    similarityThreshold = 0.85,
-    minClusterSize = 3,
-    agent,
-  } = options;
+  const { similarityThreshold = 0.85, minClusterSize = 3, agent } = options;
 
   const episodeQuery = agent
     ? 'SELECT * FROM episodes WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL AND agent = ?'
     : 'SELECT * FROM episodes WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL';
   const episodes = agent
-    ? db.prepare(episodeQuery).all(agent) as EpisodeRow[]
-    : db.prepare(episodeQuery).all() as EpisodeRow[];
+    ? (db.prepare(episodeQuery).all(agent) as EpisodeRow[])
+    : (db.prepare(episodeQuery).all() as EpisodeRow[]);
 
   if (episodes.length === 0) return [];
 
@@ -132,7 +128,10 @@ function defaultExtractPrinciple(episodes: EpisodeRow[]): ExtractedPrinciple {
   };
 }
 
-async function llmExtractPrinciple(llmProvider: LLMProvider, episodes: EpisodeRow[]): Promise<ExtractedPrinciple> {
+async function llmExtractPrinciple(
+  llmProvider: LLMProvider,
+  episodes: EpisodeRow[],
+): Promise<ExtractedPrinciple> {
   const messages = buildPrincipleExtractionPrompt(episodes);
   return llmProvider.json(messages) as Promise<ExtractedPrinciple>;
 }
@@ -167,23 +166,35 @@ export async function runConsolidation(
   const runId = generateId();
   const now = new Date().toISOString();
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO consolidation_runs (
       id, started_at, status, input_episode_ids, output_memory_ids, consolidation_model, checkpoint_cursor
     )
     VALUES (?, ?, 'running', '[]', '[]', ?, ?)
-  `).run(runId, now, llmProvider?.modelName || null, now);
+  `,
+  ).run(runId, now, llmProvider?.modelName || null, now);
 
   try {
-    const clusters = clusterEpisodes(db, embeddingProvider, { similarityThreshold, minClusterSize, agent });
+    const clusters = clusterEpisodes(db, embeddingProvider, {
+      similarityThreshold,
+      minClusterSize,
+      agent,
+    });
 
-    const episodesEvaluated = (agent
-      ? db.prepare(
-        'SELECT COUNT(*) as count FROM episodes WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL AND agent = ?'
-      ).get(agent) as CountRow
-      : db.prepare(
-        'SELECT COUNT(*) as count FROM episodes WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL'
-      ).get() as CountRow).count;
+    const episodesEvaluated = (
+      agent
+        ? (db
+            .prepare(
+              'SELECT COUNT(*) as count FROM episodes WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL AND agent = ?',
+            )
+            .get(agent) as CountRow)
+        : (db
+            .prepare(
+              'SELECT COUNT(*) as count FROM episodes WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL',
+            )
+            .get() as CountRow)
+    ).count;
 
     const allInputIds: string[] = [];
     const allOutputIds: string[] = [];
@@ -197,7 +208,9 @@ export async function runConsolidation(
         embedding_model, embedding_version, created_at, salience
       ) VALUES (?, ?, ?, ?, 'active', ?, ?, 0, 0, ?, ?, ?, ?)
     `);
-    const insertVecProcedure = db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)');
+    const insertVecProcedure = db.prepare(
+      'INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)',
+    );
     const insertSemantic = db.prepare(`
       INSERT INTO semantics (
         id, content, agent, embedding, state, evidence_episode_ids,
@@ -206,7 +219,9 @@ export async function runConsolidation(
         consolidation_model, created_at, salience
       ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    const insertVecSemantic = db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)');
+    const insertVecSemantic = db.prepare(
+      'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)',
+    );
     const updateRunCompleted = db.prepare(`
       UPDATE consolidation_runs
       SET status = 'completed',
@@ -250,13 +265,19 @@ export async function runConsolidation(
     try {
       for (const prepared of preparedClusters) {
         const placeholders = inClause(prepared.clusterIds);
-        const eligibleCount = (db.prepare(`
+        const eligibleCount = (
+          db
+            .prepare(
+              `
           SELECT COUNT(*) AS count
           FROM episodes
           WHERE id IN (${placeholders})
             AND consolidated = 0
             AND superseded_by IS NULL
-        `).get(...prepared.clusterIds) as CountRow).count;
+        `,
+            )
+            .get(...prepared.clusterIds) as CountRow
+        ).count;
 
         if (eligibleCount !== prepared.clusterIds.length) {
           continue;
@@ -299,7 +320,9 @@ export async function runConsolidation(
           insertFTSSemantic(db, prepared.memoryId, prepared.principle.content);
         }
 
-        db.prepare(`UPDATE episodes SET consolidated = 1 WHERE id IN (${placeholders})`).run(...prepared.clusterIds);
+        db.prepare(`UPDATE episodes SET consolidated = 1 WHERE id IN (${placeholders})`).run(
+          ...prepared.clusterIds,
+        );
         db.prepare(`UPDATE vec_episodes SET consolidated = ? WHERE id IN (${placeholders})`).run(
           BigInt(1),
           ...prepared.clusterIds,
@@ -311,10 +334,21 @@ export async function runConsolidation(
       }
 
       const completedAt = new Date().toISOString();
-      updateRunCompleted.run(completedAt, JSON.stringify(allInputIds), JSON.stringify(allOutputIds), runId);
+      updateRunCompleted.run(
+        completedAt,
+        JSON.stringify(allInputIds),
+        JSON.stringify(allOutputIds),
+        runId,
+      );
       insertMetrics.run(
-        generateId(), runId, minClusterSize, similarityThreshold,
-        episodesEvaluated, clusters.length, principlesExtracted, completedAt,
+        generateId(),
+        runId,
+        minClusterSize,
+        similarityThreshold,
+        episodesEvaluated,
+        clusters.length,
+        principlesExtracted,
+        completedAt,
       );
       db.prepare('COMMIT').run();
     } catch (err) {
@@ -334,11 +368,13 @@ export async function runConsolidation(
     };
   } catch (err) {
     const failedAt = new Date().toISOString();
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE consolidation_runs
       SET status = 'failed', completed_at = ?
       WHERE id = ?
-    `).run(failedAt, runId);
+    `,
+    ).run(failedAt, runId);
     throw err;
   }
 }

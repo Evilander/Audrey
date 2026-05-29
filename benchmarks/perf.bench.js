@@ -136,16 +136,24 @@ export async function runPerfBenchmark({
     };
 
     if (queueProcessingTimes.length !== runs) {
-      throw new Error(`expected ${runs} post-encode queue events, got ${queueProcessingTimes.length}`);
+      throw new Error(
+        `expected ${runs} post-encode queue events, got ${queueProcessingTimes.length}`,
+      );
     }
 
     assertBudget('encode response p95', result.encode_response_ms.p95, budgets.encodeResponseP95Ms);
     assertBudget('hybrid recall p95', result.hybrid_recall_ms.p95, budgets.hybridRecallP95Ms);
-    assertBudget('queue processing p50', result.queue_processing_ms.p50, budgets.queueProcessingP50Ms);
+    assertBudget(
+      'queue processing p50',
+      result.queue_processing_ms.p50,
+      budgets.queueProcessingP50Ms,
+    );
 
-    out(`Audrey perf gate passed: encode p95=${result.encode_response_ms.p95}ms, `
-      + `hybrid recall p95=${result.hybrid_recall_ms.p95}ms, `
-      + `queue p50=${result.queue_processing_ms.p50}ms`);
+    out(
+      `Audrey perf gate passed: encode p95=${result.encode_response_ms.p95}ms, ` +
+        `hybrid recall p95=${result.hybrid_recall_ms.p95}ms, ` +
+        `queue p50=${result.queue_processing_ms.p50}ms`,
+    );
     return result;
   } finally {
     audrey.close();

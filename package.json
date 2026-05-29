@@ -1,6 +1,6 @@
 {
   "name": "audrey",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Local-first memory runtime for AI agents with recall, consolidation, memory reflexes, contradiction detection, and tool-trace learning",
   "type": "module",
   "main": "dist/src/index.js",
@@ -72,9 +72,9 @@
     "test": "node scripts/run-vitest.mjs",
     "test:watch": "node scripts/run-vitest.mjs watch",
     "test:artifacts": "npm run bench:perf && npm run bench:memory:check && npm run bench:guard:check && npm run bench:guard:card && npm run bench:guard:bundle && npm run bench:guard:bundle:verify && npm run bench:guard:leaderboard && npm run bench:guard:adapter-self-test && npm run bench:guard:adapter-self-test:validate && npm run bench:guard:external:dry-run && npm run bench:guard:external:evidence && npm run paper:sync && npm run paper:arxiv && npm run paper:arxiv:verify && npm run paper:arxiv:compile && npm run paper:bundle && npm run paper:bundle:verify && npm run paper:verify",
-    "release:gate": "npm run typecheck && npm test && npm run bench:memory:check && npm run bench:guard:check && npm run bench:guard:card && npm run bench:guard:bundle && npm run bench:guard:bundle:verify && npm run bench:guard:leaderboard && npm run bench:guard:adapter-registry:validate && npm run bench:guard:external:dry-run && npm run bench:guard:external:evidence && npm run bench:guard:adapter-module:validate && npm run bench:guard:adapter-self-test && npm run bench:guard:adapter-self-test:validate && npm run bench:guard:validate && npm run bench:guard:publication:verify && npm run python:release:check && npm run smoke:cli && npm run security:audit && npm run pack:check",
-    "release:gate:sandbox": "npm run build && npm run typecheck && npm run bench:perf && npm run bench:memory:check && npm run bench:guard:check && npm run bench:guard:card && npm run bench:guard:bundle && npm run bench:guard:bundle:verify && npm run bench:guard:leaderboard && npm run bench:guard:adapter-registry:validate && npm run bench:guard:external:dry-run && npm run bench:guard:external:evidence && npm run bench:guard:adapter-module:validate && npm run bench:guard:adapter-self-test && npm run bench:guard:adapter-self-test:validate && npm run bench:guard:validate && npm run bench:guard:publication:verify && npm run python:release:check && npm run smoke:cli && npm run security:audit && npm run pack:check",
-    "release:gate:paper": "npm run build && npm run typecheck && npm run bench:perf && npm run bench:memory:check && npm run bench:guard:check && npm run bench:guard:card && npm run bench:guard:bundle && npm run bench:guard:bundle:verify && npm run bench:guard:leaderboard && npm run bench:guard:adapter-registry:validate && npm run bench:guard:external:dry-run && npm run bench:guard:external:evidence && npm run bench:guard:adapter-module:validate && npm run bench:guard:adapter-self-test && npm run bench:guard:adapter-self-test:validate && npm run bench:guard:validate && npm run bench:guard:publication:verify && npm run python:release:check && npm run paper:sync && npm run paper:arxiv && npm run paper:arxiv:verify && npm run paper:arxiv:compile && npm run paper:launch-plan && npm run paper:launch-results && npm run paper:bundle && npm run paper:bundle:verify && npm run paper:verify && npm run release:readiness && npm run smoke:cli && npm run security:audit && npm run pack:check",
+    "release:gate": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run bench:memory:check && npm run bench:guard:check && npm run bench:guard:card && npm run bench:guard:bundle && npm run bench:guard:bundle:verify && npm run bench:guard:leaderboard && npm run bench:guard:adapter-registry:validate && npm run bench:guard:external:dry-run && npm run bench:guard:external:evidence && npm run bench:guard:adapter-module:validate && npm run bench:guard:adapter-self-test && npm run bench:guard:adapter-self-test:validate && npm run bench:guard:validate && npm run bench:guard:publication:verify && npm run python:release:check && npm run smoke:cli && npm run security:audit && npm run pack:check",
+    "release:gate:sandbox": "npm run build && npm run typecheck && npm run lint && npm run format:check && npm run bench:perf && npm run bench:memory:check && npm run bench:guard:check && npm run bench:guard:card && npm run bench:guard:bundle && npm run bench:guard:bundle:verify && npm run bench:guard:leaderboard && npm run bench:guard:adapter-registry:validate && npm run bench:guard:external:dry-run && npm run bench:guard:external:evidence && npm run bench:guard:adapter-module:validate && npm run bench:guard:adapter-self-test && npm run bench:guard:adapter-self-test:validate && npm run bench:guard:validate && npm run bench:guard:publication:verify && npm run python:release:check && npm run smoke:cli && npm run security:audit && npm run pack:check",
+    "release:gate:paper": "npm run build && npm run typecheck && npm run lint && npm run format:check && npm run bench:perf && npm run bench:memory:check && npm run bench:guard:check && npm run bench:guard:card && npm run bench:guard:bundle && npm run bench:guard:bundle:verify && npm run bench:guard:leaderboard && npm run bench:guard:adapter-registry:validate && npm run bench:guard:external:dry-run && npm run bench:guard:external:evidence && npm run bench:guard:adapter-module:validate && npm run bench:guard:adapter-self-test && npm run bench:guard:adapter-self-test:validate && npm run bench:guard:validate && npm run bench:guard:publication:verify && npm run python:release:check && npm run paper:sync && npm run paper:arxiv && npm run paper:arxiv:verify && npm run paper:arxiv:compile && npm run paper:launch-plan && npm run paper:launch-results && npm run paper:bundle && npm run paper:bundle:verify && npm run paper:verify && npm run release:readiness && npm run smoke:cli && npm run security:audit && npm run pack:check",
     "release:cut:plan": "node scripts/prepare-release-cut.mjs --json",
     "release:cut:apply": "node scripts/prepare-release-cut.mjs --apply",
     "release:readiness": "node scripts/verify-release-readiness.mjs --allow-pending",
@@ -135,6 +135,10 @@
     "paper:sync": "node scripts/sync-paper-artifacts.mjs",
     "paper:verify": "node scripts/verify-paper-artifacts.mjs",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"mcp-server/**/*.ts\" \"tests/**/*.js\" \"benchmarks/**/*.{js,mjs}\" \"scripts/**/*.{js,mjs}\" \"examples/**/*.js\" \"*.{js,mjs}\" \".prettierrc.json\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"mcp-server/**/*.ts\" \"tests/**/*.js\" \"benchmarks/**/*.{js,mjs}\" \"scripts/**/*.{js,mjs}\" \"examples/**/*.js\" \"*.{js,mjs}\" \".prettierrc.json\"",
     "serve": "node dist/mcp-server/index.js serve",
     "docker:build": "docker build -t audrey:local .",
     "docker:up": "docker compose up -d --build",
@@ -200,10 +204,19 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.2",
+    "eslint": "^10.4.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.3",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.60.0",
     "vitest": "^4.1.5"
+  },
+  "overrides": {
+    "qs": "^6.15.2"
   },
   "directories": {
     "example": "examples",

@@ -165,9 +165,19 @@ describe('observeTool — end-to-end action trace memory', () => {
   });
 
   it('recentFailures surfaces previously-failed tools', () => {
-    audrey.observeTool({ event: 'PostToolUseFailure', tool: 'Bash', outcome: 'failed', errorSummary: 'missing env var' });
+    audrey.observeTool({
+      event: 'PostToolUseFailure',
+      tool: 'Bash',
+      outcome: 'failed',
+      errorSummary: 'missing env var',
+    });
     audrey.observeTool({ event: 'PostToolUse', tool: 'Bash', outcome: 'succeeded' });
-    audrey.observeTool({ event: 'PostToolUseFailure', tool: 'Edit', outcome: 'failed', errorSummary: 'file locked' });
+    audrey.observeTool({
+      event: 'PostToolUseFailure',
+      tool: 'Edit',
+      outcome: 'failed',
+      errorSummary: 'file locked',
+    });
 
     const failures = audrey.recentFailures();
     expect(failures.map(f => f.tool_name).sort()).toEqual(['Bash', 'Edit']);
@@ -196,9 +206,24 @@ describe('observeTool — end-to-end action trace memory', () => {
   });
 
   it('sessions persist across observations', () => {
-    audrey.observeTool({ event: 'PreToolUse', tool: 'Bash', sessionId: 'S-1', outcome: 'succeeded' });
-    audrey.observeTool({ event: 'PostToolUse', tool: 'Bash', sessionId: 'S-1', outcome: 'succeeded' });
-    audrey.observeTool({ event: 'PreToolUse', tool: 'Edit', sessionId: 'S-2', outcome: 'succeeded' });
+    audrey.observeTool({
+      event: 'PreToolUse',
+      tool: 'Bash',
+      sessionId: 'S-1',
+      outcome: 'succeeded',
+    });
+    audrey.observeTool({
+      event: 'PostToolUse',
+      tool: 'Bash',
+      sessionId: 'S-1',
+      outcome: 'succeeded',
+    });
+    audrey.observeTool({
+      event: 'PreToolUse',
+      tool: 'Edit',
+      sessionId: 'S-2',
+      outcome: 'succeeded',
+    });
     expect(audrey.countEvents({ sessionId: 'S-1' })).toBe(2);
     expect(audrey.countEvents({ sessionId: 'S-2' })).toBe(1);
   });

@@ -118,7 +118,7 @@ function parseMetadata(value: string | null): Record<string, unknown> {
   try {
     const parsed = JSON.parse(value) as unknown;
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
+      ? (parsed as Record<string, unknown>)
       : {};
   } catch {
     return {};
@@ -126,10 +126,14 @@ function parseMetadata(value: string | null): Record<string, unknown> {
 }
 
 function getPreToolUseReceipt(audrey: Audrey, receiptId: string): MemoryEvent | null {
-  const receipt = audrey.db.prepare(`
+  const receipt = audrey.db
+    .prepare(
+      `
     SELECT * FROM memory_events
     WHERE id = ? AND event_type = 'PreToolUse'
-  `).get(receiptId) as MemoryEvent | undefined;
+  `,
+    )
+    .get(receiptId) as MemoryEvent | undefined;
   return receipt ?? null;
 }
 
@@ -153,14 +157,18 @@ function evidenceFeedbackEntries(
   const entries = Object.entries((feedback ?? {}) as Record<string, unknown>);
   for (const [id, outcome] of entries) {
     if (!isMemoryValidateOutcome(outcome)) {
-      throw new Error(`invalid evidence feedback outcome for ${id}: expected used, helpful, or wrong`);
+      throw new Error(
+        `invalid evidence feedback outcome for ${id}: expected used, helpful, or wrong`,
+      );
     }
   }
   return entries as Array<[string, MemoryValidateOutcome]>;
 }
 
 function getGuardOutcomeEvent(audrey: Audrey, receiptId: string): MemoryEvent | null {
-  const event = audrey.db.prepare(`
+  const event = audrey.db
+    .prepare(
+      `
     SELECT * FROM memory_events
     WHERE event_type IN ('PostToolUse', 'PostToolUseFailure')
       AND metadata IS NOT NULL
@@ -168,7 +176,9 @@ function getGuardOutcomeEvent(audrey: Audrey, receiptId: string): MemoryEvent | 
       AND json_extract(metadata, '$.receipt_id') = ?
     ORDER BY created_at DESC
     LIMIT 1
-  `).get(receiptId) as MemoryEvent | undefined;
+  `,
+    )
+    .get(receiptId) as MemoryEvent | undefined;
   return event ?? null;
 }
 
@@ -180,8 +190,12 @@ function summarizeLearning(validated: GuardValidatedEvidence[]): string {
   const applied = validated.filter(v => v.validated).length;
   const skipped = validated.length - applied;
   if (validated.length === 0) return 'Recorded action outcome; no evidence feedback supplied.';
-  return `Recorded action outcome; validated ${applied} evidence item${applied === 1 ? '' : 's'}`
-    + (skipped > 0 ? ` and skipped ${skipped} non-memory evidence item${skipped === 1 ? '' : 's'}.` : '.');
+  return (
+    `Recorded action outcome; validated ${applied} evidence item${applied === 1 ? '' : 's'}` +
+    (skipped > 0
+      ? ` and skipped ${skipped} non-memory evidence item${skipped === 1 ? '' : 's'}.`
+      : '.')
+  );
 }
 
 function displayDecision(decision: MemoryPreflight['decision']): ControllerGuardDecision {
@@ -221,18 +235,17 @@ function sameActionEvents(audrey: Audrey, action: AgentAction): MemoryEvent[] {
   if (!action.tool) return [];
   const key = guardActionKey(action);
   const tool = action.tool.toLowerCase();
-  return audrey.listEvents({ limit: 1000 })
-    .filter(event => {
-      if (event.tool_name?.toLowerCase() !== tool) return false;
-      if (event.actor_agent && event.actor_agent !== audrey.agent) return false;
-      if (!event.metadata) return false;
-      try {
-        const metadata = JSON.parse(event.metadata) as Record<string, unknown>;
-        return metadata.audrey_guard_action_key === key;
-      } catch {
-        return false;
-      }
-    });
+  return audrey.listEvents({ limit: 1000 }).filter(event => {
+    if (event.tool_name?.toLowerCase() !== tool) return false;
+    if (event.actor_agent && event.actor_agent !== audrey.agent) return false;
+    if (!event.metadata) return false;
+    try {
+      const metadata = JSON.parse(event.metadata) as Record<string, unknown>;
+      return metadata.audrey_guard_action_key === key;
+    } catch {
+      return false;
+    }
+  });
 }
 
 function latestSucceededEvent(events: MemoryEvent[]): MemoryEvent | undefined {
@@ -249,9 +262,8 @@ function matchingFailureEvents(
 ): MemoryEvent[] {
   const events = sameActionEvents(audrey, action);
   const latestSuccessAt = latestSucceededEvent(events)?.created_at;
-  const cutoffMs = failureDecayDays > 0
-    ? Date.now() - failureDecayDays * 24 * 60 * 60 * 1000
-    : -Infinity;
+  const cutoffMs =
+    failureDecayDays > 0 ? Date.now() - failureDecayDays * 24 * 60 * 60 * 1000 : -Infinity;
   return events
     .filter(event => event.outcome === 'failed')
     .filter(event => !latestSuccessAt || event.created_at > latestSuccessAt)
@@ -296,19 +308,27 @@ export class MemoryController {
     const hasExactFailure = exactFailures.length > 0;
     const acknowledgedPriorFailure = hasExactFailure && action.acknowledgePriorFailure === true;
     const exactRepeatedFailure = hasExactFailure && !acknowledgedPriorFailure;
-    const recoveredExactFailure = !hasExactFailure && recoveredFailure && result.decision !== 'block';
+    const recoveredExactFailure =
+      !hasExactFailure && recoveredFailure && result.decision !== 'block';
     const recommendedActions = [...result.recommended_actions];
     if (exactRepeatedFailure) {
-      recommendedActions.unshift('Do not repeat the exact failed action until the prior error is understood or the command is changed.');
+      recommendedActions.unshift(
+        'Do not repeat the exact failed action until the prior error is understood or the command is changed.',
+      );
     } else if (acknowledgedPriorFailure) {
-      recommendedActions.unshift('Prior failure acknowledged; proceeding with extra caution. Surface the prior error in your action notes.');
+      recommendedActions.unshift(
+        'Prior failure acknowledged; proceeding with extra caution. Surface the prior error in your action notes.',
+      );
     } else if (recoveredExactFailure) {
-      recommendedActions.unshift('This exact action has succeeded since its last failure; proceed with normal validation.');
+      recommendedActions.unshift(
+        'This exact action has succeeded since its last failure; proceed with normal validation.',
+      );
     }
 
     let decision: ControllerGuardDecision;
     if (exactRepeatedFailure) decision = 'block';
-    else if (acknowledgedPriorFailure) decision = displayDecision(result.decision) === 'block' ? 'block' : 'warn';
+    else if (acknowledgedPriorFailure)
+      decision = displayDecision(result.decision) === 'block' ? 'block' : 'warn';
     else if (recoveredExactFailure) decision = 'allow';
     else decision = displayDecision(result.decision);
 
@@ -333,7 +353,13 @@ export class MemoryController {
       decision,
       riskScore,
       summary,
-      evidenceIds: [...new Set([...exactFailureEvidence, ...(recoveredFailure ? [recoveredFailure.id] : []), ...result.evidence_ids])],
+      evidenceIds: [
+        ...new Set([
+          ...exactFailureEvidence,
+          ...(recoveredFailure ? [recoveredFailure.id] : []),
+          ...result.evidence_ids,
+        ]),
+      ],
       recommendedActions: [...new Set(recommendedActions)],
       capsule: result.capsule,
       reflexes: result.reflexes,
@@ -375,7 +401,9 @@ export class MemoryController {
         `Tool failure: ${tool} failed while attempting: ${safeAction}.`,
         safeCommand ? `Command: ${safeCommand}.` : '',
         `Error: ${safeError}`,
-      ].filter(Boolean).join(' '),
+      ]
+        .filter(Boolean)
+        .join(' '),
       source: 'tool-result',
       tags: ['tool-failure', tool],
       salience: 0.85,
@@ -406,13 +434,16 @@ export async function beforeAction(
     throw new Error(`guard receipt not found: ${receiptId}`);
   }
   const metadata = parseMetadata(receipt.metadata);
-  audrey.db.prepare('UPDATE memory_events SET metadata = ? WHERE id = ?').run(JSON.stringify({
-    ...metadata,
-    guard: true,
-    guard_phase: 'before',
-    evidence_ids: preflight.evidence_ids,
-    reflex_ids: reflexReport.reflexes.map(reflex => reflex.id),
-  }), receiptId);
+  audrey.db.prepare('UPDATE memory_events SET metadata = ? WHERE id = ?').run(
+    JSON.stringify({
+      ...metadata,
+      guard: true,
+      guard_phase: 'before',
+      evidence_ids: preflight.evidence_ids,
+      reflex_ids: reflexReport.reflexes.map(reflex => reflex.id),
+    }),
+    receiptId,
+  );
 
   return {
     receipt_id: receiptId,

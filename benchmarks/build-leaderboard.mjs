@@ -34,14 +34,16 @@ function rowFromBundle(dir) {
 
 function compareRows(a, b) {
   return (
-    Number(b.verification.ok) - Number(a.verification.ok)
-    || Number(b.conformance.ok) - Number(a.conformance.ok)
-    || (b.score.fullContractPassRate ?? -1) - (a.score.fullContractPassRate ?? -1)
-    || (b.score.decisionAccuracy ?? -1) - (a.score.decisionAccuracy ?? -1)
-    || (b.score.evidenceRecall ?? -1) - (a.score.evidenceRecall ?? -1)
-    || (a.score.redactionLeaks ?? Number.MAX_SAFE_INTEGER) - (b.score.redactionLeaks ?? Number.MAX_SAFE_INTEGER)
-    || (a.score.latency?.p95Ms ?? Number.MAX_SAFE_INTEGER) - (b.score.latency?.p95Ms ?? Number.MAX_SAFE_INTEGER)
-    || a.subject.name.localeCompare(b.subject.name)
+    Number(b.verification.ok) - Number(a.verification.ok) ||
+    Number(b.conformance.ok) - Number(a.conformance.ok) ||
+    (b.score.fullContractPassRate ?? -1) - (a.score.fullContractPassRate ?? -1) ||
+    (b.score.decisionAccuracy ?? -1) - (a.score.decisionAccuracy ?? -1) ||
+    (b.score.evidenceRecall ?? -1) - (a.score.evidenceRecall ?? -1) ||
+    (a.score.redactionLeaks ?? Number.MAX_SAFE_INTEGER) -
+      (b.score.redactionLeaks ?? Number.MAX_SAFE_INTEGER) ||
+    (a.score.latency?.p95Ms ?? Number.MAX_SAFE_INTEGER) -
+      (b.score.latency?.p95Ms ?? Number.MAX_SAFE_INTEGER) ||
+    a.subject.name.localeCompare(b.subject.name)
   );
 }
 
@@ -49,7 +51,9 @@ export function buildGuardBenchLeaderboard(options = {}) {
   const bundleDirs = options.bundleDirs?.length
     ? options.bundleDirs
     : ['benchmarks/output/submission-bundle'];
-  const rows = bundleDirs.map(rowFromBundle).sort(compareRows)
+  const rows = bundleDirs
+    .map(rowFromBundle)
+    .sort(compareRows)
     .map((row, index) => ({ rank: index + 1, ...row }));
   return {
     schemaVersion: '1.0.0',
@@ -66,12 +70,16 @@ export function buildGuardBenchLeaderboard(options = {}) {
       'subject.name',
     ],
     rows,
-    failures: rows.flatMap(row => row.verification.failures.map(failure => `${row.subject.name}: ${failure}`)),
+    failures: rows.flatMap(row =>
+      row.verification.failures.map(failure => `${row.subject.name}: ${failure}`),
+    ),
   };
 }
 
 export function writeGuardBenchLeaderboard(options = {}) {
-  const outJson = resolve(options.outJson ?? 'benchmarks/output/leaderboard/guardbench-leaderboard.json');
+  const outJson = resolve(
+    options.outJson ?? 'benchmarks/output/leaderboard/guardbench-leaderboard.json',
+  );
   const outMd = resolve(options.outMd ?? 'benchmarks/output/leaderboard/guardbench-leaderboard.md');
   const schemasDir = resolve(options.schemasDir ?? 'benchmarks/schemas');
   const leaderboard = buildGuardBenchLeaderboard(options);
@@ -97,18 +105,23 @@ export function renderMarkdown(leaderboard) {
     '|---:|---|---:|---:|---:|---:|---:|---:|---:|---|',
   ];
   for (const row of leaderboard.rows) {
-    lines.push([
-      row.rank,
-      row.subject.name,
-      row.verification.ok ? 'yes' : 'no',
-      row.conformance.ok ? 'yes' : 'no',
-      percent(row.score.fullContractPassRate),
-      percent(row.score.decisionAccuracy),
-      percent(row.score.evidenceRecall),
-      number(row.score.redactionLeaks),
-      row.score.latency?.p95Ms == null ? 'n/a' : `${row.score.latency.p95Ms}ms`,
-      row.source.dir,
-    ].join(' | ').replace(/^/, '| ').replace(/$/, ' |'));
+    lines.push(
+      [
+        row.rank,
+        row.subject.name,
+        row.verification.ok ? 'yes' : 'no',
+        row.conformance.ok ? 'yes' : 'no',
+        percent(row.score.fullContractPassRate),
+        percent(row.score.decisionAccuracy),
+        percent(row.score.evidenceRecall),
+        number(row.score.redactionLeaks),
+        row.score.latency?.p95Ms == null ? 'n/a' : `${row.score.latency.p95Ms}ms`,
+        row.source.dir,
+      ]
+        .join(' | ')
+        .replace(/^/, '| ')
+        .replace(/$/, ' |'),
+    );
   }
   if (leaderboard.failures.length) {
     lines.push('', '## Verification Failures', '');

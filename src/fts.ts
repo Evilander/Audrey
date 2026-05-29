@@ -24,9 +24,9 @@ export function createFTSTables(db: Database.Database): void {
 }
 
 export function hasFTSTables(db: Database.Database): boolean {
-  const row = db.prepare(
-    "SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name='fts_episodes'"
-  ).get() as { c: number };
+  const row = db
+    .prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name='fts_episodes'")
+    .get() as { c: number };
   return row.c > 0;
 }
 
@@ -38,7 +38,9 @@ export function insertFTSEpisode(
 ): void {
   const tagsText = tags ? (Array.isArray(tags) ? tags.join(' ') : tags) : '';
   db.prepare('INSERT OR REPLACE INTO fts_episodes(id, content, tags) VALUES (?, ?, ?)').run(
-    id, content, tagsText
+    id,
+    content,
+    tagsText,
   );
 }
 
@@ -73,7 +75,9 @@ export function searchFTSEpisodes(
 ): FTSMatch[] {
   const agentClause = agentFilter ? 'AND e.agent = ?' : '';
   const params = agentFilter ? [query, agentFilter, limit] : [query, limit];
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT f.id, f.content, e.agent, bm25(fts_episodes) AS rank
     FROM fts_episodes f
     JOIN episodes e ON e.id = f.id
@@ -82,7 +86,9 @@ export function searchFTSEpisodes(
       ${agentClause}
     ORDER BY rank
     LIMIT ?
-  `).all(...params) as FTSMatch[];
+  `,
+    )
+    .all(...params) as FTSMatch[];
 }
 
 export function searchFTSSemantics(
@@ -93,7 +99,9 @@ export function searchFTSSemantics(
 ): FTSMatch[] {
   const agentClause = agentFilter ? 'AND s.agent = ?' : '';
   const params = agentFilter ? [query, agentFilter, limit] : [query, limit];
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT f.id, f.content, s.agent, bm25(fts_semantics) AS rank
     FROM fts_semantics f
     JOIN semantics s ON s.id = f.id
@@ -102,7 +110,9 @@ export function searchFTSSemantics(
       ${agentClause}
     ORDER BY rank
     LIMIT ?
-  `).all(...params) as FTSMatch[];
+  `,
+    )
+    .all(...params) as FTSMatch[];
 }
 
 export function searchFTSProcedures(
@@ -113,7 +123,9 @@ export function searchFTSProcedures(
 ): FTSMatch[] {
   const agentClause = agentFilter ? 'AND p.agent = ?' : '';
   const params = agentFilter ? [query, agentFilter, limit] : [query, limit];
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT f.id, f.content, p.agent, bm25(fts_procedures) AS rank
     FROM fts_procedures f
     JOIN procedures p ON p.id = f.id
@@ -122,7 +134,9 @@ export function searchFTSProcedures(
       ${agentClause}
     ORDER BY rank
     LIMIT ?
-  `).all(...params) as FTSMatch[];
+  `,
+    )
+    .all(...params) as FTSMatch[];
 }
 
 interface EpisodeRow {
@@ -141,9 +155,15 @@ interface ContentRow {
  */
 export function backfillFTS(db: Database.Database): void {
   const episodes = db.prepare('SELECT id, content, tags FROM episodes').all() as EpisodeRow[];
-  const insert = db.prepare('INSERT OR IGNORE INTO fts_episodes(id, content, tags) VALUES (?, ?, ?)');
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO fts_episodes(id, content, tags) VALUES (?, ?, ?)',
+  );
   for (const ep of episodes) {
-    const parsed: unknown = ep.tags ? (typeof ep.tags === 'string' ? JSON.parse(ep.tags) : ep.tags) : [];
+    const parsed: unknown = ep.tags
+      ? typeof ep.tags === 'string'
+        ? JSON.parse(ep.tags)
+        : ep.tags
+      : [];
     const tagsText = Array.isArray(parsed) ? (parsed as string[]).join(' ') : '';
     insert.run(ep.id, ep.content, tagsText);
   }

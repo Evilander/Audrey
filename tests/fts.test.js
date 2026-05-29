@@ -16,11 +16,31 @@ describe('FTS5 full-text search', () => {
       embedding: { provider: 'mock', dimensions: 64 },
     });
 
-    await audrey.encode({ content: 'Stripe API returns HTTP 429 when rate limit exceeded', source: 'direct-observation', tags: ['stripe', 'rate-limit'] });
-    await audrey.encode({ content: 'PostgreSQL VACUUM ANALYZE improves query planner estimates', source: 'tool-result', tags: ['postgres', 'performance'] });
-    await audrey.encode({ content: 'The deploy pipeline failed due to OOM killer on the build step', source: 'direct-observation', tags: ['deploy', 'oom'] });
-    await audrey.encode({ content: 'Redis SCAN is safer than KEYS for production iteration', source: 'told-by-user', tags: ['redis'] });
-    await audrey.encode({ content: 'HTTP 429 rate limiting also affects the Stripe webhook endpoint', source: 'direct-observation', tags: ['stripe', 'webhook'] });
+    await audrey.encode({
+      content: 'Stripe API returns HTTP 429 when rate limit exceeded',
+      source: 'direct-observation',
+      tags: ['stripe', 'rate-limit'],
+    });
+    await audrey.encode({
+      content: 'PostgreSQL VACUUM ANALYZE improves query planner estimates',
+      source: 'tool-result',
+      tags: ['postgres', 'performance'],
+    });
+    await audrey.encode({
+      content: 'The deploy pipeline failed due to OOM killer on the build step',
+      source: 'direct-observation',
+      tags: ['deploy', 'oom'],
+    });
+    await audrey.encode({
+      content: 'Redis SCAN is safer than KEYS for production iteration',
+      source: 'told-by-user',
+      tags: ['redis'],
+    });
+    await audrey.encode({
+      content: 'HTTP 429 rate limiting also affects the Stripe webhook endpoint',
+      source: 'direct-observation',
+      tags: ['stripe', 'webhook'],
+    });
   });
 
   afterAll(() => {
@@ -29,9 +49,9 @@ describe('FTS5 full-text search', () => {
   });
 
   it('FTS tables exist after encoding', () => {
-    const tables = audrey.db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'fts_%'"
-    ).all();
+    const tables = audrey.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'fts_%'")
+      .all();
     expect(tables.map(t => t.name)).toContain('fts_episodes');
   });
 
@@ -47,7 +67,7 @@ describe('FTS5 full-text search', () => {
   });
 
   it('hybrid recall finds more relevant results than vector alone', async () => {
-    const vectorOnly = await audrey.recall('VACUUM ANALYZE', { retrieval: 'vector', limit: 5 });
+    await audrey.recall('VACUUM ANALYZE', { retrieval: 'vector', limit: 5 });
     const hybrid = await audrey.recall('VACUUM ANALYZE', { retrieval: 'hybrid', limit: 5 });
     // Hybrid should find the PostgreSQL memory via keyword match even if vector similarity is low
     const hybridHasPostgres = hybrid.some(r => r.content.includes('VACUUM'));

@@ -152,7 +152,9 @@ describe('Audrey Guard controller', () => {
     });
 
     expect(after.validated_evidence.some(v => v.id === memoryId && v.validated)).toBe(true);
-    expect(after.validated_evidence.some(v => v.id.startsWith('failure:') && !v.validated)).toBe(true);
+    expect(after.validated_evidence.some(v => v.id.startsWith('failure:') && !v.validated)).toBe(
+      true,
+    );
 
     const impact = audrey.impact();
     expect(impact.validatedTotal).toBe(1);
@@ -190,15 +192,21 @@ describe('Audrey Guard controller', () => {
       },
     });
 
-    expect(after.validated_evidence).toContainEqual(expect.objectContaining({
-      id: receiptMemoryId,
-      validated: true,
-    }));
-    expect(after.validated_evidence).toContainEqual(expect.objectContaining({
-      id: unrelatedMemoryId,
-      validated: false,
-    }));
-    expect(after.validated_evidence.find(v => v.id === unrelatedMemoryId)?.reason).toMatch(/receipt evidence/i);
+    expect(after.validated_evidence).toContainEqual(
+      expect.objectContaining({
+        id: receiptMemoryId,
+        validated: true,
+      }),
+    );
+    expect(after.validated_evidence).toContainEqual(
+      expect.objectContaining({
+        id: unrelatedMemoryId,
+        validated: false,
+      }),
+    );
+    expect(after.validated_evidence.find(v => v.id === unrelatedMemoryId)?.reason).toMatch(
+      /receipt evidence/i,
+    );
 
     const impact = audrey.impact();
     expect(impact.validatedTotal).toBe(1);
@@ -218,14 +226,16 @@ describe('Audrey Guard controller', () => {
       includeCapsule: false,
     });
 
-    expect(() => audrey.afterAction({
-      receiptId: before.receipt_id,
-      tool: 'deploy',
-      outcome: 'blocked',
-      evidenceFeedback: {
-        [memoryId]: 'bogus',
-      },
-    })).toThrow(/invalid evidence feedback/i);
+    expect(() =>
+      audrey.afterAction({
+        receiptId: before.receipt_id,
+        tool: 'deploy',
+        outcome: 'blocked',
+        evidenceFeedback: {
+          [memoryId]: 'bogus',
+        },
+      }),
+    ).toThrow(/invalid evidence feedback/i);
 
     const impact = audrey.impact();
     expect(impact.validatedTotal).toBe(0);
@@ -238,11 +248,13 @@ describe('Audrey Guard controller', () => {
       outcome: 'unknown',
     }).event;
 
-    expect(() => audrey.afterAction({
-      receiptId: preTool.id,
-      tool: 'npm test',
-      outcome: 'succeeded',
-    })).toThrow(/not a guard receipt/i);
+    expect(() =>
+      audrey.afterAction({
+        receiptId: preTool.id,
+        tool: 'npm test',
+        outcome: 'succeeded',
+      }),
+    ).toThrow(/not a guard receipt/i);
   });
 
   it('afterAction rejects replay for a receipt that already has an outcome', async () => {
@@ -257,15 +269,19 @@ describe('Audrey Guard controller', () => {
       outcome: 'succeeded',
     });
 
-    expect(() => audrey.afterAction({
-      receiptId: before.receipt_id,
-      tool: 'npm test',
-      outcome: 'failed',
-      errorSummary: 'replayed failure',
-    })).toThrow(/already has an outcome/i);
+    expect(() =>
+      audrey.afterAction({
+        receiptId: before.receipt_id,
+        tool: 'npm test',
+        outcome: 'failed',
+        errorSummary: 'replayed failure',
+      }),
+    ).toThrow(/already has an outcome/i);
 
     expect(audrey.listEvents({ eventType: 'PostToolUse', toolName: 'npm test' })).toHaveLength(1);
-    expect(audrey.listEvents({ eventType: 'PostToolUseFailure', toolName: 'npm test' })).toHaveLength(0);
+    expect(
+      audrey.listEvents({ eventType: 'PostToolUseFailure', toolName: 'npm test' }),
+    ).toHaveLength(0);
   });
 
   it('afterAction records failed outcomes as PostToolUseFailure and default outcomes as PostToolUse', async () => {
@@ -291,8 +307,12 @@ describe('Audrey Guard controller', () => {
 
     expect(failed.outcome).toBe('failed');
     expect(unknown.outcome).toBe('unknown');
-    expect(audrey.listEvents({ eventType: 'PostToolUseFailure', toolName: 'npm test' })).toHaveLength(1);
-    expect(audrey.listEvents({ eventType: 'PostToolUse', toolName: 'node script.js' })).toHaveLength(1);
+    expect(
+      audrey.listEvents({ eventType: 'PostToolUseFailure', toolName: 'npm test' }),
+    ).toHaveLength(1);
+    expect(
+      audrey.listEvents({ eventType: 'PostToolUse', toolName: 'node script.js' }),
+    ).toHaveLength(1);
   });
 
   it('emits guard-before and guard-after events', async () => {
@@ -320,13 +340,17 @@ describe('Audrey Guard controller', () => {
       tool: 'npm test',
       includeCapsule: false,
     });
-    audrey.db.prepare('UPDATE memory_events SET metadata = ? WHERE id = ?').run('{not-json', before.receipt_id);
+    audrey.db
+      .prepare('UPDATE memory_events SET metadata = ? WHERE id = ?')
+      .run('{not-json', before.receipt_id);
 
-    expect(() => audrey.afterAction({
-      receiptId: before.receipt_id,
-      tool: 'npm test',
-      outcome: 'succeeded',
-    })).toThrow(/not a guard receipt/i);
+    expect(() =>
+      audrey.afterAction({
+        receiptId: before.receipt_id,
+        tool: 'npm test',
+        outcome: 'succeeded',
+      }),
+    ).toThrow(/not a guard receipt/i);
   });
 
   it('afterAction finds receipts outside the recent event list limit', async () => {

@@ -27,6 +27,7 @@ async function embedInChunks(
       const cause = err instanceof Error ? err.message : String(err);
       throw new Error(
         `reembedAll: embedBatch failed for ${label} (rows ${i}-${i + slice.length - 1}): ${cause}`,
+        { cause: err },
       );
     }
   }
@@ -55,9 +56,15 @@ export async function reembedAll(
     createVec0Tables(db, embeddingProvider.dimensions);
   }
 
-  const episodes = db.prepare('SELECT id, content, source, consolidated FROM episodes').all() as EpisodeMigrateRow[];
-  const semantics = db.prepare('SELECT id, content, state FROM semantics').all() as SemanticMigrateRow[];
-  const procedures = db.prepare('SELECT id, content, state FROM procedures').all() as ProcedureMigrateRow[];
+  const episodes = db
+    .prepare('SELECT id, content, source, consolidated FROM episodes')
+    .all() as EpisodeMigrateRow[];
+  const semantics = db
+    .prepare('SELECT id, content, state FROM semantics')
+    .all() as SemanticMigrateRow[];
+  const procedures = db
+    .prepare('SELECT id, content, state FROM procedures')
+    .all() as ProcedureMigrateRow[];
 
   const episodeVectors = await embedInChunks(
     embeddingProvider,
@@ -77,22 +84,33 @@ export async function reembedAll(
 
   const updateEpLegacy = db.prepare('UPDATE episodes SET embedding = ? WHERE id = ?');
   const deleteVecEp = db.prepare('DELETE FROM vec_episodes WHERE id = ?');
-  const insertVecEp = db.prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)');
+  const insertVecEp = db.prepare(
+    'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
+  );
 
   const updateSemLegacy = db.prepare('UPDATE semantics SET embedding = ? WHERE id = ?');
   const deleteVecSem = db.prepare('DELETE FROM vec_semantics WHERE id = ?');
-  const insertVecSem = db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)');
+  const insertVecSem = db.prepare(
+    'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)',
+  );
 
   const updateProcLegacy = db.prepare('UPDATE procedures SET embedding = ? WHERE id = ?');
   const deleteVecProc = db.prepare('DELETE FROM vec_procedures WHERE id = ?');
-  const insertVecProc = db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)');
+  const insertVecProc = db.prepare(
+    'INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)',
+  );
 
   const writeTx = db.transaction(() => {
     for (let i = 0; i < episodes.length; i++) {
       const buf = embeddingProvider.vectorToBuffer(episodeVectors[i]!);
       updateEpLegacy.run(buf, episodes[i]!.id);
       deleteVecEp.run(episodes[i]!.id);
-      insertVecEp.run(episodes[i]!.id, buf, episodes[i]!.source, BigInt(episodes[i]!.consolidated ?? 0));
+      insertVecEp.run(
+        episodes[i]!.id,
+        buf,
+        episodes[i]!.source,
+        BigInt(episodes[i]!.consolidated ?? 0),
+      );
     }
     for (let i = 0; i < semantics.length; i++) {
       const buf = embeddingProvider.vectorToBuffer(semanticVectors[i]!);

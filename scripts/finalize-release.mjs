@@ -67,7 +67,8 @@ function safeRepoRelativePath(value, label) {
 function normalizeArgs(args) {
   args.version = safeVersion(args.version);
   args.artifactDir = safeRepoRelativePath(args.artifactDir, '--artifact-dir');
-  if (args.commitMessage !== null) args.commitMessage = safeString(args.commitMessage, '--commit-message');
+  if (args.commitMessage !== null)
+    args.commitMessage = safeString(args.commitMessage, '--commit-message');
   if (args.npmOtp !== null) args.npmOtp = safeString(args.npmOtp, '--npm-otp');
   return args;
 }
@@ -109,7 +110,8 @@ function parseArgs(argv = process.argv.slice(2)) {
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
-    if ((token === '--version' || token === '--target-version') && argv[i + 1]) args.version = argv[++i];
+    if ((token === '--version' || token === '--target-version') && argv[i + 1])
+      args.version = argv[++i];
     else if (token === '--artifact-dir' && argv[i + 1]) args.artifactDir = argv[++i];
     else if (token === '--commit-message' && argv[i + 1]) args.commitMessage = argv[++i];
     else if (token === '--npm-otp' && argv[i + 1]) args.npmOtp = argv[++i];
@@ -162,7 +164,9 @@ function commandFor(command, args) {
   if (!RELEASE_COMMANDS.has(command)) {
     throw new Error(`Unsupported release command: ${command}`);
   }
-  const safeArgs = args.map((arg, index) => safeString(String(arg), `${command} argument ${index + 1}`));
+  const safeArgs = args.map((arg, index) =>
+    safeString(String(arg), `${command} argument ${index + 1}`),
+  );
   if (process.platform === 'win32' && command === 'npm') {
     return { command: 'cmd.exe', args: ['/d', '/c', 'npm', ...safeArgs] };
   }
@@ -218,7 +222,9 @@ function listArtifacts(artifactDir, version) {
   }
 
   return files.map(path => ({
-    path: path.startsWith(ROOT) ? path.slice(ROOT.length + 1).replaceAll('\\', '/') : path.replaceAll('\\', '/'),
+    path: path.startsWith(ROOT)
+      ? path.slice(ROOT.length + 1).replaceAll('\\', '/')
+      : path.replaceAll('\\', '/'),
     sha256: sha256(path),
     bytes: readFileSync(path).byteLength,
   }));
@@ -280,15 +286,23 @@ function buildPlan(args) {
   if (args.tag) commands.push(`git tag -a ${tagName} -m "Audrey ${args.version}"`);
   if (args.push) commands.push(`git push origin HEAD:master --follow-tags`);
   if (args.pack) commands.push(`npm pack --pack-destination ${args.artifactDir}`);
-  if (args.sourceBundle) commands.push(`git bundle create ${args.artifactDir}/audrey-${args.version}.git.bundle refs/heads/master refs/tags/v${args.version}`);
+  if (args.sourceBundle)
+    commands.push(
+      `git bundle create ${args.artifactDir}/audrey-${args.version}.git.bundle refs/heads/master refs/tags/v${args.version}`,
+    );
   if (args.publishNpm) {
     const otp = args.npmOtp ? ' --otp <provided>' : '';
-    commands.push(`npm publish ${args.artifactDir}/audrey-${args.version}.tgz --access public --registry ${NPM_REGISTRY}${otp}`);
+    commands.push(
+      `npm publish ${args.artifactDir}/audrey-${args.version}.tgz --access public --registry ${NPM_REGISTRY}${otp}`,
+    );
   }
-  if (args.publishPypi) commands.push(`python -m twine upload python/dist/audrey_memory-${args.version}*`);
+  if (args.publishPypi)
+    commands.push(`python -m twine upload python/dist/audrey_memory-${args.version}*`);
 
   if (actions.length === 0) {
-    blockers.push('Select at least one action such as --pack, --source-bundle, --commit, --tag, --push, --publish-npm, or --publish-pypi');
+    blockers.push(
+      'Select at least one action such as --pack, --source-bundle, --commit, --tag, --push, --publish-npm, or --publish-pypi',
+    );
   }
   if (args.publishPypi && !pypiCredentialEnv()) {
     blockers.push('Set TWINE_PASSWORD, PYPI_API_TOKEN, or UV_PUBLISH_TOKEN before --publish-pypi');
@@ -312,12 +326,18 @@ function buildPlan(args) {
 }
 
 function runReadiness(plan) {
-  const readiness = run('node', ['scripts/verify-release-readiness.mjs', '--allow-pending', '--json'], { timeout: 180_000 });
+  const readiness = run(
+    'node',
+    ['scripts/verify-release-readiness.mjs', '--allow-pending', '--json'],
+    { timeout: 180_000 },
+  );
   plan.results.push(readiness);
   assertOk(readiness);
   const report = JSON.parse(readiness.stdout);
   if (!report.ok) {
-    throw new Error(`release readiness failed: ${report.failures?.join('; ') || 'unknown failure'}`);
+    throw new Error(
+      `release readiness failed: ${report.failures?.join('; ') || 'unknown failure'}`,
+    );
   }
   plan.readiness = {
     ok: report.ok,
@@ -367,7 +387,20 @@ function createSourceBundle(args, plan) {
   }
 
   const tree = assertOk(run('git', ['write-tree'], { env })).stdout;
-  const commit = assertOk(run('git', ['commit-tree', tree, '-p', 'HEAD', '-m', args.commitMessage ?? `Release Audrey ${args.version}`], { env })).stdout;
+  const commit = assertOk(
+    run(
+      'git',
+      [
+        'commit-tree',
+        tree,
+        '-p',
+        'HEAD',
+        '-m',
+        args.commitMessage ?? `Release Audrey ${args.version}`,
+      ],
+      { env },
+    ),
+  ).stdout;
   const tagContent = [
     `object ${commit}`,
     'type commit',
@@ -384,17 +417,33 @@ function createSourceBundle(args, plan) {
   mkdirSync(join(gitDir, 'refs', 'heads'), { recursive: true });
   mkdirSync(join(gitDir, 'refs', 'tags'), { recursive: true });
   writeFileSync(join(gitDir, 'HEAD'), 'ref: refs/heads/master\n', 'utf-8');
-  writeFileSync(join(gitDir, 'config'), '[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tbare = true\n', 'utf-8');
+  writeFileSync(
+    join(gitDir, 'config'),
+    '[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tbare = true\n',
+    'utf-8',
+  );
   writeFileSync(join(gitDir, 'refs', 'heads', 'master'), `${commit}\n`, 'utf-8');
   writeFileSync(join(gitDir, 'refs', 'tags', `v${args.version}`), `${tag}\n`, 'utf-8');
 
-  const bundle = run('git', ['--git-dir', gitDir, 'bundle', 'create', bundlePath, 'refs/heads/master', `refs/tags/v${args.version}`], {
-    env: {
-      GIT_OBJECT_DIRECTORY: objectDir,
-      GIT_ALTERNATE_OBJECT_DIRECTORIES: fromRoot('.git/objects'),
+  const bundle = run(
+    'git',
+    [
+      '--git-dir',
+      gitDir,
+      'bundle',
+      'create',
+      bundlePath,
+      'refs/heads/master',
+      `refs/tags/v${args.version}`,
+    ],
+    {
+      env: {
+        GIT_OBJECT_DIRECTORY: objectDir,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: fromRoot('.git/objects'),
+      },
+      timeout: 180_000,
     },
-    timeout: 180_000,
-  });
+  );
   plan.results.push(bundle);
   assertOk(bundle);
 
@@ -410,7 +459,11 @@ function createSourceBundle(args, plan) {
     indexFile: '.tmp/release.index',
     bundle: args.artifactDir.replaceAll('\\', '/') + `/audrey-${args.version}.git.bundle`,
   };
-  writeFileSync(fromRoot('.tmp/release-git-object-report.json'), `${JSON.stringify(objectReport, null, 2)}\n`, 'utf-8');
+  writeFileSync(
+    fromRoot('.tmp/release-git-object-report.json'),
+    `${JSON.stringify(objectReport, null, 2)}\n`,
+    'utf-8',
+  );
   plan.sourceControl = objectReport;
 }
 
@@ -434,18 +487,22 @@ function execute(args, plan) {
   }
 
   if (args.push) {
-    const push = run('git', [
-      '-c',
-      'http.sslBackend=openssl',
-      '-c',
-      'credential.helper=',
-      '-c',
-      'core.askPass=',
-      'push',
-      'origin',
-      'HEAD:master',
-      '--follow-tags',
-    ], { timeout: 45_000 });
+    const push = run(
+      'git',
+      [
+        '-c',
+        'http.sslBackend=openssl',
+        '-c',
+        'credential.helper=',
+        '-c',
+        'core.askPass=',
+        'push',
+        'origin',
+        'HEAD:master',
+        '--follow-tags',
+      ],
+      { timeout: 45_000 },
+    );
     plan.results.push(push);
     assertOk(push);
   }
@@ -464,7 +521,14 @@ function execute(args, plan) {
     const whoami = run('npm', ['whoami', '--registry', NPM_REGISTRY]);
     plan.results.push(whoami);
     assertOk(whoami);
-    const publishArgs = ['publish', npmTarballPath(args.artifactDir, args.version), '--access', 'public', '--registry', NPM_REGISTRY];
+    const publishArgs = [
+      'publish',
+      npmTarballPath(args.artifactDir, args.version),
+      '--access',
+      'public',
+      '--registry',
+      NPM_REGISTRY,
+    ];
     if (args.npmOtp) publishArgs.push('--otp', args.npmOtp);
     const publish = run('npm', publishArgs, { timeout: 180_000 });
     plan.results.push(publish);
@@ -473,19 +537,29 @@ function execute(args, plan) {
 
   if (args.publishPypi) {
     const uploadEnv = pypiCredentialEnv();
-    if (!uploadEnv) throw new Error('Missing PyPI credentials: set TWINE_PASSWORD, PYPI_API_TOKEN, or UV_PUBLISH_TOKEN');
+    if (!uploadEnv)
+      throw new Error(
+        'Missing PyPI credentials: set TWINE_PASSWORD, PYPI_API_TOKEN, or UV_PUBLISH_TOKEN',
+      );
     const build = run('npm', ['run', 'python:release:check'], { timeout: 180_000 });
     plan.results.push(build);
     assertOk(build);
     const artifacts = pythonArtifactPaths(args.version);
     if (artifacts.length === 0) throw new Error(`No Python artifacts found for ${args.version}`);
-    const upload = run('python', ['-m', 'twine', 'upload', ...artifacts], { timeout: 180_000, env: uploadEnv });
+    const upload = run('python', ['-m', 'twine', 'upload', ...artifacts], {
+      timeout: 180_000,
+      env: uploadEnv,
+    });
     plan.results.push(upload);
     assertOk(upload);
   }
 
   plan.artifacts = listArtifacts(artifactDir, args.version);
-  writeFileSync(join(artifactDir, 'release-finalize-report.json'), `${JSON.stringify(plan, null, 2)}\n`, 'utf-8');
+  writeFileSync(
+    join(artifactDir, 'release-finalize-report.json'),
+    `${JSON.stringify(plan, null, 2)}\n`,
+    'utf-8',
+  );
 }
 
 function printPlan(plan, json) {
@@ -503,7 +577,8 @@ function printPlan(plan, json) {
   }
   if (plan.artifacts.length) {
     console.log('Artifacts:');
-    for (const artifact of plan.artifacts) console.log(`- ${artifact.path} sha256=${artifact.sha256}`);
+    for (const artifact of plan.artifacts)
+      console.log(`- ${artifact.path} sha256=${artifact.sha256}`);
   }
 }
 

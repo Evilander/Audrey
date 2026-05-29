@@ -22,7 +22,6 @@ import type {
   RecallError,
   RecallResult,
   RecallResults,
-  ReembedCounts,
   ReflectMemory,
   ReflectResult,
   TruthResolution,
@@ -78,7 +77,13 @@ import {
 import { renderAllRules, type RuleDoc } from './rules-compiler.js';
 import { insertEvent } from './events.js';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { dirname, join, resolve as pathResolve, relative, isAbsolute as pathIsAbsolute } from 'node:path';
+import {
+  dirname,
+  join,
+  resolve as pathResolve,
+  relative,
+  isAbsolute as pathIsAbsolute,
+} from 'node:path';
 import { ProfileRecorder, type ProfileDiagnostics } from './profile.js';
 import { performance } from 'node:perf_hooks';
 
@@ -312,7 +317,9 @@ export class Audrey extends EventEmitter {
     this.agent = agent;
     this.dataDir = dataDir;
     this.embeddingProvider = createEmbeddingProvider(embedding);
-    const { db, migrated } = createDatabase(dataDir, { dimensions: this.embeddingProvider.dimensions });
+    const { db, migrated } = createDatabase(dataDir, {
+      dimensions: this.embeddingProvider.dimensions,
+    });
     this.db = db;
     this._migrationPending = migrated;
     this.llmProvider = llm ? createLLMProvider(llm) : null;
@@ -391,7 +398,10 @@ export class Audrey extends EventEmitter {
     return this._embeddingWarmupPromise;
   }
 
-  async _waitForEmbeddingWarmup(profile?: ProfileRecorder, spanName = 'embedding.wait_for_warmup'): Promise<void> {
+  async _waitForEmbeddingWarmup(
+    profile?: ProfileRecorder,
+    spanName = 'embedding.wait_for_warmup',
+  ): Promise<void> {
     if (!this._embeddingWarmupPromise || this._embeddingWarm) return;
     const wait = async (): Promise<void> => {
       try {
@@ -405,12 +415,21 @@ export class Audrey extends EventEmitter {
     else await wait();
   }
 
-  async _validateEncodedMemory(id: string, params: EncodeParams, embedding?: EncodedEmbedding): Promise<void> {
-    const validation = await validateMemory(this.db, this.embeddingProvider, { id, ...params }, {
-      llmProvider: this.llmProvider,
-      embeddingVector: embedding?.vector,
-      embeddingBuffer: embedding?.buffer,
-    });
+  async _validateEncodedMemory(
+    id: string,
+    params: EncodeParams,
+    embedding?: EncodedEmbedding,
+  ): Promise<void> {
+    const validation = await validateMemory(
+      this.db,
+      this.embeddingProvider,
+      { id, ...params },
+      {
+        llmProvider: this.llmProvider,
+        embeddingVector: embedding?.vector,
+        embeddingBuffer: embedding?.buffer,
+      },
+    );
     if (validation.action === 'reinforced') {
       this.emit('reinforcement', {
         episodeId: id,
@@ -432,25 +451,49 @@ export class Audrey extends EventEmitter {
     try {
       await run();
     } catch (err) {
-      this._emitQueueError(Object.assign(err instanceof Error ? err : new Error(String(err)), {
-        stage: name,
-      }));
+      this._emitQueueError(
+        Object.assign(err instanceof Error ? err : new Error(String(err)), {
+          stage: name,
+        }),
+      );
     }
   }
 
-  async _runPostEncode(id: string, params: EncodeParams, embedding: EncodedEmbedding): Promise<void> {
+  async _runPostEncode(
+    id: string,
+    params: EncodeParams,
+    embedding: EncodedEmbedding,
+  ): Promise<void> {
     if (this.interferenceConfig.enabled) {
       await this._runPostEncodeStage('interference', async () => {
-        const affected = await applyInterference(this.db, this.embeddingProvider, id, params, this.interferenceConfig, embedding);
+        const affected = await applyInterference(
+          this.db,
+          this.embeddingProvider,
+          id,
+          params,
+          this.interferenceConfig,
+          embedding,
+        );
         if (affected.length > 0) {
           this.emit('interference', { episodeId: id, affected });
         }
       });
     }
 
-    if (this.affectConfig.enabled && this.affectConfig.resonance.enabled && params.affect?.valence !== undefined) {
+    if (
+      this.affectConfig.enabled &&
+      this.affectConfig.resonance.enabled &&
+      params.affect?.valence !== undefined
+    ) {
       await this._runPostEncodeStage('resonance', async () => {
-        const echoes = await detectResonance(this.db, this.embeddingProvider, id, params, this.affectConfig.resonance, embedding);
+        const echoes = await detectResonance(
+          this.db,
+          this.embeddingProvider,
+          id,
+          params,
+          this.affectConfig.resonance,
+          embedding,
+        );
         if (echoes.length > 0) {
           this.emit('resonance', { episodeId: id, affect: params.affect, echoes });
         }
@@ -522,10 +565,7 @@ export class Audrey extends EventEmitter {
       timeout = setTimeout(() => resolve(timedOut), timeoutMs);
     });
 
-    const result = await Promise.race([
-      this._postEncodeQueue.then(() => true),
-      timeoutPromise,
-    ]);
+    const result = await Promise.race([this._postEncodeQueue.then(() => true), timeoutPromise]);
     if (timeout) clearTimeout(timeout);
 
     const drained = result === true && this._pendingPostEncodeIds.size === 0;
@@ -539,7 +579,9 @@ export class Audrey extends EventEmitter {
     return this._encodeInternal(params);
   }
 
-  async encodeWithDiagnostics(params: EncodeParams): Promise<{ id: string; diagnostics: ProfileDiagnostics }> {
+  async encodeWithDiagnostics(
+    params: EncodeParams,
+  ): Promise<{ id: string; diagnostics: ProfileDiagnostics }> {
     const profile = new ProfileRecorder('memory_encode');
     const id = await this._encodeInternal(params, profile);
     return { id, diagnostics: profile.finish() };
@@ -550,27 +592,35 @@ export class Audrey extends EventEmitter {
     if (profile) await profile.measure('encode.ensure_migrated', () => this._ensureMigrated());
     else await this._ensureMigrated();
 
-    const encodeParams = { ...params, agent: params.agent ?? this.agent, arousalWeight: this.affectConfig.arousalWeight };
+    const encodeParams = {
+      ...params,
+      agent: params.agent ?? this.agent,
+      arousalWeight: this.affectConfig.arousalWeight,
+    };
     let encodedVector: number[] | undefined;
     let encodedBuffer: Buffer | undefined;
     const id = profile
-      ? await profile.measure('encode.episode', () => encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
-        profile,
-        onVector: (vector, buffer) => {
-          encodedVector = vector;
-          encodedBuffer = buffer;
-        },
-      }))
+      ? await profile.measure('encode.episode', () =>
+          encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
+            profile,
+            onVector: (vector, buffer) => {
+              encodedVector = vector;
+              encodedBuffer = buffer;
+            },
+          }),
+        )
       : await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
-        onVector: (vector, buffer) => {
-          encodedVector = vector;
-          encodedBuffer = buffer;
-        },
-      });
+          onVector: (vector, buffer) => {
+            encodedVector = vector;
+            encodedBuffer = buffer;
+          },
+        });
     const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
     this.emit('encode', { id, ...params });
     const postEncodeTask = profile
-      ? profile.measureSync('encode.enqueue_background', () => this._enqueuePostEncode(id, params, encodedEmbedding))
+      ? profile.measureSync('encode.enqueue_background', () =>
+          this._enqueuePostEncode(id, params, encodedEmbedding),
+        )
       : this._enqueuePostEncode(id, params, encodedEmbedding);
     if (params.waitForConsolidation) {
       if (profile) await profile.measure('encode.wait_for_consolidation', () => postEncodeTask);
@@ -599,13 +649,16 @@ export class Audrey extends EventEmitter {
 
     let parsed: { memories?: unknown[] };
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(raw) as { memories?: unknown[] };
     } catch {
       return { encoded: 0, memories: [], skipped: 'invalid llm response' };
     }
 
     const memories = Array.isArray(parsed.memories)
-      ? parsed.memories.map(normalizeReflectionMemory).filter((mem): mem is ReflectMemory => mem !== null).slice(0, 50)
+      ? parsed.memories
+          .map(normalizeReflectionMemory)
+          .filter((mem): mem is ReflectMemory => mem !== null)
+          .slice(0, 50)
       : [];
     let encoded = 0;
     for (const mem of memories) {
@@ -640,9 +693,13 @@ export class Audrey extends EventEmitter {
       agent: params.agent ?? this.agent,
       arousalWeight: this.affectConfig.arousalWeight,
     }));
-    const vectors = await this.embeddingProvider.embedBatch(normalized.map(params => params.content));
+    const vectors = await this.embeddingProvider.embedBatch(
+      normalized.map(params => params.content),
+    );
     if (vectors.length !== normalized.length) {
-      throw new Error(`embedBatch returned ${vectors.length} vectors for ${normalized.length} inputs`);
+      throw new Error(
+        `embedBatch returned ${vectors.length} vectors for ${normalized.length} inputs`,
+      );
     }
 
     const ids: string[] = [];
@@ -727,12 +784,14 @@ export class Audrey extends EventEmitter {
     return config;
   }
 
-  async consolidate(options: Partial<ConsolidationOptions> = {}): Promise<ConsolidationResult & { status: string }> {
+  async consolidate(
+    options: Partial<ConsolidationOptions> = {},
+  ): Promise<ConsolidationResult & { status: string }> {
     await this._ensureMigrated();
     // Use ?? throughout so 0 / '' are not silently replaced with the default.
     const result = await runConsolidation(this.db, this.embeddingProvider, {
       minClusterSize: options.minClusterSize ?? this.consolidationConfig.minEpisodes,
-      similarityThreshold: options.similarityThreshold ?? 0.80,
+      similarityThreshold: options.similarityThreshold ?? 0.8,
       agent: options.agent ?? this.agent,
       extractPrinciple: options.extractPrinciple,
       llmProvider: options.llmProvider ?? this.llmProvider ?? undefined,
@@ -763,33 +822,44 @@ export class Audrey extends EventEmitter {
       throw new Error('resolveTruth requires an LLM provider');
     }
 
-    const contradiction = this.db.prepare(
-      'SELECT * FROM contradictions WHERE id = ?'
-    ).get(contradictionId) as { claim_a_id: string; claim_a_type: string; claim_b_id: string; claim_b_type: string } | undefined;
+    const contradiction = this.db
+      .prepare('SELECT * FROM contradictions WHERE id = ?')
+      .get(contradictionId) as
+      | { claim_a_id: string; claim_a_type: string; claim_b_id: string; claim_b_type: string }
+      | undefined;
     if (!contradiction) throw new Error(`Contradiction not found: ${contradictionId}`);
 
     const claimA = this._loadClaimContent(contradiction.claim_a_id, contradiction.claim_a_type);
     const claimB = this._loadClaimContent(contradiction.claim_b_id, contradiction.claim_b_type);
 
     const messages = buildContextResolutionPrompt(claimA, claimB);
-    const result = await this.llmProvider.json(messages) as TruthResolution;
+    const result = (await this.llmProvider.json(messages)) as TruthResolution;
 
     const now = new Date().toISOString();
     const newState = result.resolution === 'context_dependent' ? 'context_dependent' : 'resolved';
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       UPDATE contradictions SET state = ?, resolution = ?, resolved_at = ?
       WHERE id = ?
-    `).run(newState, JSON.stringify(result), now, contradictionId);
+    `,
+      )
+      .run(newState, JSON.stringify(result), now, contradictionId);
 
     if (result.resolution === 'a_wins' && contradiction.claim_a_type === 'semantic') {
-      this.db.prepare("UPDATE semantics SET state = 'active' WHERE id = ?").run(contradiction.claim_a_id);
+      this.db
+        .prepare("UPDATE semantics SET state = 'active' WHERE id = ?")
+        .run(contradiction.claim_a_id);
     }
     if (result.resolution === 'b_wins' && contradiction.claim_b_type === 'semantic') {
-      this.db.prepare("UPDATE semantics SET state = 'active' WHERE id = ?").run(contradiction.claim_b_id);
+      this.db
+        .prepare("UPDATE semantics SET state = 'active' WHERE id = ?")
+        .run(contradiction.claim_b_id);
     }
     if (result.resolution === 'context_dependent') {
       if (contradiction.claim_a_type === 'semantic' && result.conditions) {
-        this.db.prepare("UPDATE semantics SET state = 'context_dependent', conditions = ? WHERE id = ?")
+        this.db
+          .prepare("UPDATE semantics SET state = 'context_dependent', conditions = ? WHERE id = ?")
           .run(JSON.stringify(result.conditions), contradiction.claim_a_id);
       }
     }
@@ -799,11 +869,15 @@ export class Audrey extends EventEmitter {
 
   _loadClaimContent(claimId: string, claimType: string): string {
     if (claimType === 'semantic') {
-      const row = this.db.prepare('SELECT content FROM semantics WHERE id = ?').get(claimId) as ContentRow | undefined;
+      const row = this.db.prepare('SELECT content FROM semantics WHERE id = ?').get(claimId) as
+        | ContentRow
+        | undefined;
       if (!row) throw new Error(`Semantic memory not found: ${claimId}`);
       return row.content;
     } else if (claimType === 'episodic') {
-      const row = this.db.prepare('SELECT content FROM episodes WHERE id = ?').get(claimId) as ContentRow | undefined;
+      const row = this.db.prepare('SELECT content FROM episodes WHERE id = ?').get(claimId) as
+        | ContentRow
+        | undefined;
       if (!row) throw new Error(`Episode not found: ${claimId}`);
       return row.content;
     }
@@ -821,35 +895,55 @@ export class Audrey extends EventEmitter {
   memoryStatus(): MemoryStatusResult {
     const episodes = (this.db.prepare('SELECT COUNT(*) as c FROM episodes').get() as CountRow).c;
     const semantics = (this.db.prepare('SELECT COUNT(*) as c FROM semantics').get() as CountRow).c;
-    const procedures = (this.db.prepare('SELECT COUNT(*) as c FROM procedures').get() as CountRow).c;
-    const searchableEpisodes = (this.db.prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL').get() as CountRow).c;
-    const searchableSemantics = (this.db.prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL').get() as CountRow).c;
-    const searchableProcedures = (this.db.prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL').get() as CountRow).c;
+    const procedures = (this.db.prepare('SELECT COUNT(*) as c FROM procedures').get() as CountRow)
+      .c;
+    const searchableEpisodes = (
+      this.db
+        .prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL')
+        .get() as CountRow
+    ).c;
+    const searchableSemantics = (
+      this.db
+        .prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL')
+        .get() as CountRow
+    ).c;
+    const searchableProcedures = (
+      this.db
+        .prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL')
+        .get() as CountRow
+    ).c;
 
-    let vecEpisodes = 0, vecSemantics = 0, vecProcedures = 0;
+    let vecEpisodes = 0,
+      vecSemantics = 0,
+      vecProcedures = 0;
     try {
       vecEpisodes = (this.db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get() as CountRow).c;
-      vecSemantics = (this.db.prepare('SELECT COUNT(*) as c FROM vec_semantics').get() as CountRow).c;
-      vecProcedures = (this.db.prepare('SELECT COUNT(*) as c FROM vec_procedures').get() as CountRow).c;
+      vecSemantics = (this.db.prepare('SELECT COUNT(*) as c FROM vec_semantics').get() as CountRow)
+        .c;
+      vecProcedures = (
+        this.db.prepare('SELECT COUNT(*) as c FROM vec_procedures').get() as CountRow
+      ).c;
     } catch {
       // vec tables may not exist if no dimensions configured
     }
 
-    const dimsRow = this.db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as ConfigRow | undefined;
+    const dimsRow = this.db
+      .prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'")
+      .get() as ConfigRow | undefined;
     const dimensions = dimsRow ? parseInt(dimsRow.value, 10) : null;
-    const versionRow = this.db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get() as ConfigRow | undefined;
+    const versionRow = this.db
+      .prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'")
+      .get() as ConfigRow | undefined;
     const schemaVersion = versionRow ? parseInt(versionRow.value, 10) : 0;
 
-    const device = this.embeddingProvider._actualDevice
-      ?? this.embeddingProvider.device
-      ?? null;
+    const device = this.embeddingProvider._actualDevice ?? this.embeddingProvider.device ?? null;
 
-    const healthy = episodes === vecEpisodes
-      && semantics === vecSemantics
-      && procedures === vecProcedures;
-    const reembedRecommended = searchableEpisodes !== vecEpisodes
-      || searchableSemantics !== vecSemantics
-      || searchableProcedures !== vecProcedures;
+    const healthy =
+      episodes === vecEpisodes && semantics === vecSemantics && procedures === vecProcedures;
+    const reembedRecommended =
+      searchableEpisodes !== vecEpisodes ||
+      searchableSemantics !== vecSemantics ||
+      searchableProcedures !== vecProcedures;
 
     return {
       episodes,
@@ -876,31 +970,53 @@ export class Audrey extends EventEmitter {
     };
   }
 
-  async greeting({ context, recentLimit = 10, principleLimit = 5, identityLimit = 5, scope = 'agent' }: GreetingOptions = {}): Promise<GreetingResult> {
+  async greeting({
+    context,
+    recentLimit = 10,
+    principleLimit = 5,
+    identityLimit = 5,
+    scope = 'agent',
+  }: GreetingOptions = {}): Promise<GreetingResult> {
     const agentClause = scope === 'agent' ? 'AND agent = ?' : '';
     const agentParam = scope === 'agent' ? [this.agent] : [];
-    const recent = this.db.prepare(
-      `SELECT id, content, source, tags, salience, created_at FROM episodes WHERE "private" = 0 ${agentClause} ORDER BY created_at DESC LIMIT ?`
-    ).all(...agentParam, recentLimit) as GreetingEpisodeRow[];
+    const recent = this.db
+      .prepare(
+        `SELECT id, content, source, tags, salience, created_at FROM episodes WHERE "private" = 0 ${agentClause} ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(...agentParam, recentLimit) as GreetingEpisodeRow[];
 
-    const principles = this.db.prepare(
-      `SELECT id, content, salience, created_at FROM semantics WHERE state = ? ${agentClause} ORDER BY salience DESC LIMIT ?`
-    ).all('active', ...agentParam, principleLimit) as GreetingPrincipleRow[];
+    const principles = this.db
+      .prepare(
+        `SELECT id, content, salience, created_at FROM semantics WHERE state = ? ${agentClause} ORDER BY salience DESC LIMIT ?`,
+      )
+      .all('active', ...agentParam, principleLimit) as GreetingPrincipleRow[];
 
-    const identity = this.db.prepare(
-      `SELECT id, content, tags, salience, created_at FROM episodes WHERE "private" = 1 ${agentClause} ORDER BY created_at DESC LIMIT ?`
-    ).all(...agentParam, identityLimit) as GreetingIdentityRow[];
+    const identity = this.db
+      .prepare(
+        `SELECT id, content, tags, salience, created_at FROM episodes WHERE "private" = 1 ${agentClause} ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(...agentParam, identityLimit) as GreetingIdentityRow[];
 
-    const unresolved = this.db.prepare(
-      `SELECT id, content, tags, salience, created_at FROM episodes WHERE tags LIKE '%unresolved%' AND salience > 0.3 ${agentClause} ORDER BY created_at DESC LIMIT 10`
-    ).all(...agentParam) as GreetingUnresolvedRow[];
+    const unresolved = this.db
+      .prepare(
+        `SELECT id, content, tags, salience, created_at FROM episodes WHERE tags LIKE '%unresolved%' AND salience > 0.3 ${agentClause} ORDER BY created_at DESC LIMIT 10`,
+      )
+      .all(...agentParam) as GreetingUnresolvedRow[];
 
-    const rawAffectRows = this.db.prepare(
-      `SELECT affect FROM episodes WHERE affect IS NOT NULL AND affect != '{}' ${agentClause} ORDER BY created_at DESC LIMIT 20`
-    ).all(...agentParam) as AffectRow[];
+    const rawAffectRows = this.db
+      .prepare(
+        `SELECT affect FROM episodes WHERE affect IS NOT NULL AND affect != '{}' ${agentClause} ORDER BY created_at DESC LIMIT 20`,
+      )
+      .all(...agentParam) as AffectRow[];
 
     const affectParsed = rawAffectRows
-      .map(r => { try { return JSON.parse(r.affect) as Affect; } catch { return null; } })
+      .map(r => {
+        try {
+          return JSON.parse(r.affect) as Affect;
+        } catch {
+          return null;
+        }
+      })
       .filter((a): a is Affect => a !== null && a.valence !== undefined);
 
     let mood: { valence: number; arousal: number; samples: number };
@@ -925,11 +1041,13 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  async dream(options: {
-    minClusterSize?: number;
-    similarityThreshold?: number;
-    dormantThreshold?: number;
-  } = {}): Promise<DreamResult> {
+  async dream(
+    options: {
+      minClusterSize?: number;
+      similarityThreshold?: number;
+      dormantThreshold?: number;
+    } = {},
+  ): Promise<DreamResult> {
     await this._ensureMigrated();
 
     const consolidation = await this.consolidate({
@@ -983,16 +1101,20 @@ export class Audrey extends EventEmitter {
     }
   }
 
-  suggestConsolidationParams(): { minClusterSize: number; similarityThreshold: number; confidence: string } {
+  suggestConsolidationParams(): {
+    minClusterSize: number;
+    similarityThreshold: number;
+    confidence: string;
+  } {
     return suggestParamsFn(this.db);
   }
 
   validate(input: MemoryValidateInput): MemoryValidateResult | null {
     let preflightMetadata: Record<string, unknown> | null = null;
     if (input.preflightEventId) {
-      const preflightEvent = this.db.prepare(
-        "SELECT event_type, metadata FROM memory_events WHERE id = ?"
-      ).get(input.preflightEventId) as { event_type: string; metadata: string | null } | undefined;
+      const preflightEvent = this.db
+        .prepare('SELECT event_type, metadata FROM memory_events WHERE id = ?')
+        .get(input.preflightEventId) as { event_type: string; metadata: string | null } | undefined;
       if (!preflightEvent) {
         throw new ValidateLineageError(
           'PREFLIGHT_NOT_FOUND',
@@ -1013,7 +1135,9 @@ export class Audrey extends EventEmitter {
         }
       }
       const preflightEvidenceIds = Array.isArray(preflightMetadata?.preflight_evidence_ids)
-        ? preflightMetadata.preflight_evidence_ids.filter((id): id is string => typeof id === 'string')
+        ? preflightMetadata.preflight_evidence_ids.filter(
+            (id): id is string => typeof id === 'string',
+          )
         : [];
       if (preflightEvidenceIds.length > 0 && !preflightEvidenceIds.includes(input.id)) {
         throw new ValidateLineageError(
@@ -1021,9 +1145,10 @@ export class Audrey extends EventEmitter {
           `memory id ${input.id} was not evidence for preflight_event_id ${input.preflightEventId}`,
         );
       }
-      const preflightActionKey = typeof preflightMetadata?.audrey_guard_action_key === 'string'
-        ? preflightMetadata.audrey_guard_action_key
-        : undefined;
+      const preflightActionKey =
+        typeof preflightMetadata?.audrey_guard_action_key === 'string'
+          ? preflightMetadata.audrey_guard_action_key
+          : undefined;
       if (input.actionKey && preflightActionKey && input.actionKey !== preflightActionKey) {
         throw new ValidateLineageError(
           'ACTION_KEY_MISMATCH',
@@ -1044,9 +1169,12 @@ export class Audrey extends EventEmitter {
       // helpful-vs-wrong breakdown over a window. Outcome is mapped onto the
       // events-table enum: helpful → succeeded, wrong → failed, used → unknown.
       // The original outcome string is preserved in metadata.
-      const eventOutcome = input.outcome === 'helpful' ? 'succeeded'
-        : input.outcome === 'wrong' ? 'failed'
-        : 'unknown';
+      const eventOutcome =
+        input.outcome === 'helpful'
+          ? 'succeeded'
+          : input.outcome === 'wrong'
+            ? 'failed'
+            : 'unknown';
       insertEvent(this.db, {
         eventType: 'Validate',
         source: 'memory_validate',
@@ -1079,7 +1207,10 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  async forgetByQuery(query: string, options: { minSimilarity?: number; purge?: boolean } = {}): Promise<ForgetResult | null> {
+  async forgetByQuery(
+    query: string,
+    options: { minSimilarity?: number; purge?: boolean } = {},
+  ): Promise<ForgetResult | null> {
     await this._ensureMigrated();
     const result = await forgetByQueryFn(this.db, this.embeddingProvider, query, options);
     if (result) this.emit('forget', result);
@@ -1101,7 +1232,7 @@ export class Audrey extends EventEmitter {
       // Use closeAsync() (preferred) or call drainPostEncodeQueue() before close() to avoid this.
       console.error(
         `[audrey] close() called with ${this._pendingPostEncodeIds.size} pending post-encode tasks ` +
-        `(use closeAsync() or await drainPostEncodeQueue() first to avoid losing consolidation work)`,
+          `(use closeAsync() or await drainPostEncodeQueue() first to avoid losing consolidation work)`,
       );
     }
     closeDatabase(this.db);
@@ -1181,7 +1312,9 @@ export class Audrey extends EventEmitter {
   async promote(options: PromoteOptions = {}): Promise<PromoteResult> {
     const target: PromotionTarget = options.target ?? 'claude-rules';
     if (target !== 'claude-rules') {
-      throw new Error(`promote target "${target}" is not implemented yet. PR 4 v1 ships claude-rules only.`);
+      throw new Error(
+        `promote target "${target}" is not implemented yet. PR 4 v1 ships claude-rules only.`,
+      );
     }
 
     const candidates = findPromotionCandidates(this.db, {
@@ -1202,7 +1335,10 @@ export class Audrey extends EventEmitter {
       const allowedRoots = [pathResolve(process.cwd())];
       const extra = process.env.AUDREY_PROMOTE_ROOTS;
       if (extra) {
-        for (const root of extra.split(/[:;]/).map(s => s.trim()).filter(Boolean)) {
+        for (const root of extra
+          .split(/[:;]/)
+          .map(s => s.trim())
+          .filter(Boolean)) {
           allowedRoots.push(pathResolve(root));
         }
       }
@@ -1213,7 +1349,7 @@ export class Audrey extends EventEmitter {
       if (!isUnderAllowedRoot) {
         throw new Error(
           `promote: refusing to write to ${projectDir} — path is outside cwd and AUDREY_PROMOTE_ROOTS. ` +
-          `Set AUDREY_PROMOTE_ROOTS=<path1>:<path2> to allow additional locations.`,
+            `Set AUDREY_PROMOTE_ROOTS=<path1>:<path2> to allow additional locations.`,
         );
       }
     }
@@ -1318,5 +1454,7 @@ export interface PromoteResult {
 export type { RuleDoc };
 
 function db_prepare_get_status(db: Database.Database, runId: string): StatusRow | undefined {
-  return db.prepare('SELECT status FROM consolidation_runs WHERE id = ?').get(runId) as StatusRow | undefined;
+  return db.prepare('SELECT status FROM consolidation_runs WHERE id = ?').get(runId) as
+    | StatusRow
+    | undefined;
 }

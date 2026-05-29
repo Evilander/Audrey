@@ -25,7 +25,8 @@ const memoryStateSchema = z.enum([
   'rolled_back',
 ]);
 
-const idSchema = z.string()
+const idSchema = z
+  .string()
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'id must use stable memory-id characters');
@@ -176,8 +177,14 @@ export const importSnapshotSchema = z.object({
   procedures: z.array(exportedProcedureSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
   causalLinks: z.array(exportedCausalLinkSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
   contradictions: z.array(exportedContradictionSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
-  consolidationRuns: z.array(exportedConsolidationRunSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
-  consolidationMetrics: z.array(exportedConsolidationMetricSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
+  consolidationRuns: z
+    .array(exportedConsolidationRunSchema)
+    .max(MAX_IMPORT_ROWS_PER_SECTION)
+    .optional(),
+  consolidationMetrics: z
+    .array(exportedConsolidationMetricSchema)
+    .max(MAX_IMPORT_ROWS_PER_SECTION)
+    .optional(),
   memoryEvents: z.array(exportedMemoryEventSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
   config: z.record(z.string(), z.string()).optional(),
 });
@@ -204,7 +211,9 @@ function isDatabaseEmpty(db: Database.Database): boolean {
     'memory_events',
   ];
 
-  return tables.every(table => (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as CountRow).c === 0);
+  return tables.every(
+    table => (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as CountRow).c === 0,
+  );
 }
 
 function validateSnapshotBudget(snapshot: ImportSnapshot): void {
@@ -214,11 +223,17 @@ function validateSnapshotBudget(snapshot: ImportSnapshot): void {
     ...(snapshot.procedures || []).map(proc => proc.content.length),
   ].reduce((sum, n) => sum + n, 0);
   if (totalBytes > MAX_IMPORT_TOTAL_CONTENT_BYTES) {
-    throw new Error(`snapshot content exceeds import budget of ${MAX_IMPORT_TOTAL_CONTENT_BYTES} bytes`);
+    throw new Error(
+      `snapshot content exceeds import budget of ${MAX_IMPORT_TOTAL_CONTENT_BYTES} bytes`,
+    );
   }
 }
 
-export async function importMemories(db: Database.Database, embeddingProvider: EmbeddingProvider, rawSnapshot: unknown): Promise<void> {
+export async function importMemories(
+  db: Database.Database,
+  embeddingProvider: EmbeddingProvider,
+  rawSnapshot: unknown,
+): Promise<void> {
   if (!isDatabaseEmpty(db)) {
     throw new Error('Cannot import into a database that is not empty');
   }
@@ -234,15 +249,16 @@ export async function importMemories(db: Database.Database, embeddingProvider: E
   const consolidationMetrics = snapshot.consolidationMetrics || [];
   const memoryEvents = snapshot.memoryEvents || [];
 
-  const episodeVectors = episodes.length > 0
-    ? await embeddingProvider.embedBatch(episodes.map(ep => ep.content))
-    : [];
-  const semanticVectors = semantics.length > 0
-    ? await embeddingProvider.embedBatch(semantics.map(sem => sem.content))
-    : [];
-  const procedureVectors = procedures.length > 0
-    ? await embeddingProvider.embedBatch(procedures.map(proc => proc.content))
-    : [];
+  const episodeVectors =
+    episodes.length > 0 ? await embeddingProvider.embedBatch(episodes.map(ep => ep.content)) : [];
+  const semanticVectors =
+    semantics.length > 0
+      ? await embeddingProvider.embedBatch(semantics.map(sem => sem.content))
+      : [];
+  const procedureVectors =
+    procedures.length > 0
+      ? await embeddingProvider.embedBatch(procedures.map(proc => proc.content))
+      : [];
 
   const insertEpisode = db.prepare(`
     INSERT INTO episodes (id, content, embedding, source, agent, source_reliability, salience, context, affect, tags,
@@ -251,7 +267,7 @@ export async function importMemories(db: Database.Database, embeddingProvider: E
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVecEpisode = db.prepare(
-    'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+    'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
   );
 
   const insertSemantic = db.prepare(`
@@ -263,7 +279,7 @@ export async function importMemories(db: Database.Database, embeddingProvider: E
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVecSemantic = db.prepare(
-    'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)'
+    'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)',
   );
 
   const insertProcedure = db.prepare(`
@@ -273,7 +289,7 @@ export async function importMemories(db: Database.Database, embeddingProvider: E
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVecProcedure = db.prepare(
-    'INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)'
+    'INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)',
   );
 
   const insertCausalLink = db.prepare(`

@@ -44,27 +44,32 @@ export const PUBLISHED_LEADERBOARD = [
 export const MEMORY_TRENDS = [
   {
     title: 'Memory is moving from flat retrieval to typed systems',
-    summary: 'Recent work treats episodic, semantic, procedural, and graph memory as separate but cooperating layers.',
+    summary:
+      'Recent work treats episodic, semantic, procedural, and graph memory as separate but cooperating layers.',
     source: 'https://arxiv.org/abs/2507.03724',
   },
   {
     title: 'Benchmarks now emphasize multi-session realism',
-    summary: 'LongMemEval and LoCoMo push memory systems toward temporal updates, abstraction, and cross-session reasoning instead of single-turn fact recall.',
+    summary:
+      'LongMemEval and LoCoMo push memory systems toward temporal updates, abstraction, and cross-session reasoning instead of single-turn fact recall.',
     source: 'https://arxiv.org/abs/2410.10813',
   },
   {
     title: 'Context engineering is now competing with retrieval-first designs',
-    summary: 'Letta argues filesystem and memory-block approaches can outperform simpler retrieval-only memory on realistic long-horizon tasks.',
+    summary:
+      'Letta argues filesystem and memory-block approaches can outperform simpler retrieval-only memory on realistic long-horizon tasks.',
     source: 'https://www.letta.com/blog/memory-blocks',
   },
   {
     title: 'Production teams care about latency and token footprint, not just recall quality',
-    summary: 'Mem0 frames memory as a cost and latency optimization surface in addition to a personalization surface.',
+    summary:
+      'Mem0 frames memory as a cost and latency optimization surface in addition to a personalization surface.',
     source: 'https://arxiv.org/abs/2504.19413',
   },
   {
     title: 'Temporal and multimodal memory are becoming table stakes',
-    summary: 'MIRIX and Graphiti both model time and state change explicitly instead of assuming memories stay forever true.',
+    summary:
+      'MIRIX and Graphiti both model time and state change explicitly instead of assuming memories stay forever true.',
     source: 'https://arxiv.org/abs/2507.07957',
   },
 ];

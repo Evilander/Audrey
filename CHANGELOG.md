@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.0.2 - 2026-05-28
+
+Maintenance and engineering-quality release. No runtime behavior change — the
+full test suite is unchanged from 1.0.1.
+
+### Security
+
+- Pin transitive `qs` to `^6.15.2` via `overrides` to resolve
+  [GHSA-q8mj-m7cp-5q26](https://github.com/advisories/GHSA-q8mj-m7cp-5q26)
+  (moderate denial-of-service in `qs.stringify`), which reaches `audrey` through
+  `@modelcontextprotocol/sdk → express@5`. The advisory was published after the
+  1.0.1 cut; production `npm audit --omit=dev --audit-level=moderate` is clean
+  again.
+
+### Tooling and code quality
+
+- Add flat-config ESLint with type-checked `typescript-eslint` rules over `src/`
+  and `mcp-server/`, plus Prettier and `.editorconfig` matched to the existing
+  house style. New scripts: `lint`, `lint:fix`, `format`, `format:check`.
+- Wire `lint` and `format:check` into CI (Ubuntu matrix + Windows) and the
+  `release:gate`, `release:gate:sandbox`, and `release:gate:paper` gates so the
+  enforced baseline cannot regress.
+- Resolve every lint finding at the source rather than by suppression: the REST
+  handlers now decode request bodies through a typed `RouteBody` contract
+  instead of Hono's default `any`; the three MCP `server` parameters and the
+  local embedding pipeline are typed structurally; rethrows attach an error
+  `cause`; and dead imports/bindings were removed across the tree.
+- One-time Prettier normalization across the codebase, recorded in
+  `.git-blame-ignore-revs` so `git blame` stays meaningful.
+
 ## 1.0.1 - 2026-05-15
 
 ### Honest benchmarking

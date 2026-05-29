@@ -33,7 +33,12 @@ export interface CapsuleOptions {
   recall?: RecallOptions;
 }
 
-export type CapsuleEntryType = 'episode' | 'semantic' | 'procedural' | 'tool_failure' | 'contradiction';
+export type CapsuleEntryType =
+  | 'episode'
+  | 'semantic'
+  | 'procedural'
+  | 'tool_failure'
+  | 'contradiction';
 
 export interface CapsuleEntry {
   memory_id: string;
@@ -125,7 +130,10 @@ function parseTags(raw: string | null | undefined): string[] {
   } catch {
     // fall through: some rows may have been stored as comma-separated
   }
-  return String(raw).split(',').map(t => t.trim()).filter(Boolean);
+  return String(raw)
+    .split(',')
+    .map(t => t.trim())
+    .filter(Boolean);
 }
 
 function parseEvidence(raw: string | null | undefined): string[] {
@@ -211,25 +219,37 @@ function buildContradictionEntry(row: ContradictionRow, reason: string): Capsule
 }
 
 function loadEpisodeEnrichment(db: Database.Database, id: string): EpisodeTagRow | undefined {
-  return db.prepare(`SELECT id, tags, source, created_at, private, agent FROM episodes WHERE id = ?`).get(id) as EpisodeTagRow | undefined;
+  return db
+    .prepare(`SELECT id, tags, source, created_at, private, agent FROM episodes WHERE id = ?`)
+    .get(id) as EpisodeTagRow | undefined;
 }
 
 function loadSemanticEnrichment(db: Database.Database, id: string): SemanticTagRow | undefined {
-  return db.prepare(`SELECT id, state, evidence_episode_ids, created_at, last_reinforced_at FROM semantics WHERE id = ?`).get(id) as SemanticTagRow | undefined;
+  return db
+    .prepare(
+      `SELECT id, state, evidence_episode_ids, created_at, last_reinforced_at FROM semantics WHERE id = ?`,
+    )
+    .get(id) as SemanticTagRow | undefined;
 }
 
 function loadProcedureEnrichment(db: Database.Database, id: string): SemanticTagRow | undefined {
-  return db.prepare(`SELECT id, state, evidence_episode_ids, created_at, last_reinforced_at FROM procedures WHERE id = ?`).get(id) as SemanticTagRow | undefined;
+  return db
+    .prepare(
+      `SELECT id, state, evidence_episode_ids, created_at, last_reinforced_at FROM procedures WHERE id = ?`,
+    )
+    .get(id) as SemanticTagRow | undefined;
 }
 
 function loadOpenContradictions(db: Database.Database, limit: number): ContradictionRow[] {
-  return db.prepare(
-    `SELECT id, claim_a_id, claim_b_id, claim_a_type, claim_b_type, state, created_at
+  return db
+    .prepare(
+      `SELECT id, claim_a_id, claim_b_id, claim_a_type, claim_b_type, state, created_at
      FROM contradictions
      WHERE state = 'open'
      ORDER BY created_at DESC
      LIMIT ?`,
-  ).all(limit) as ContradictionRow[];
+    )
+    .all(limit) as ContradictionRow[];
 }
 
 function categorize(
@@ -240,7 +260,8 @@ function categorize(
 ): Array<keyof MemoryCapsule['sections']> {
   const sections = new Set<keyof MemoryCapsule['sections']>();
   const lowerTags = tags.map(t => t.toLowerCase());
-  const trustedControlSource = result.source === 'direct-observation' || result.source === 'told-by-user';
+  const trustedControlSource =
+    result.source === 'direct-observation' || result.source === 'told-by-user';
 
   if (trustedControlSource && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
     sections.add('must_follow');
@@ -260,7 +281,11 @@ function categorize(
     sections.add('user_preferences');
   }
 
-  if (entry.state === 'disputed' || entry.state === 'context_dependent' || result.confidence < 0.55) {
+  if (
+    entry.state === 'disputed' ||
+    entry.state === 'context_dependent' ||
+    result.confidence < 0.55
+  ) {
     sections.add('uncertain_or_disputed');
   }
 
@@ -288,12 +313,14 @@ export async function buildCapsule(
   query: string,
   options: CapsuleOptions = {},
 ): Promise<MemoryCapsule> {
-  const mode: CapsuleMode = options.mode
-    ?? ((process.env['AUDREY_CAPSULE_MODE'] as CapsuleMode | undefined) ?? 'balanced');
-  const budgetChars = options.budgetChars
-    ?? Number.parseInt(process.env['AUDREY_CONTEXT_BUDGET_CHARS'] ?? '4000', 10);
+  const mode: CapsuleMode =
+    options.mode ?? (process.env['AUDREY_CAPSULE_MODE'] as CapsuleMode | undefined) ?? 'balanced';
+  const budgetChars =
+    options.budgetChars ??
+    Number.parseInt(process.env['AUDREY_CONTEXT_BUDGET_CHARS'] ?? '4000', 10);
   const recentChangeWindowHours = options.recentChangeWindowHours ?? 24;
-  const recallLimit = options.limit ?? (mode === 'conservative' ? 8 : mode === 'aggressive' ? 24 : 16);
+  const recallLimit =
+    options.limit ?? (mode === 'conservative' ? 8 : mode === 'aggressive' ? 24 : 16);
   const recentWindowMs = recentChangeWindowHours * 60 * 60 * 1000;
   const includeRisks = options.includeRisks ?? true;
   const includeContradictions = options.includeContradictions ?? true;
@@ -354,7 +381,11 @@ export async function buildCapsule(
       evidence = parseEvidence(row?.evidence_episode_ids);
     }
 
-    const entry = buildRecallEntry(result, { tags, evidence, scope }, 'Matched query via semantic similarity.');
+    const entry = buildRecallEntry(
+      result,
+      { tags, evidence, scope },
+      'Matched query via semantic similarity.',
+    );
     const assigned = categorize(entry, result, tags, recentWindowMs);
     for (const section of assigned) {
       const entryForSection = { ...entry };
@@ -363,13 +394,20 @@ export async function buildCapsule(
       } else if (section === 'must_follow') {
         entryForSection.reason = 'Tagged as a must-follow rule.';
       } else if (section === 'procedures') {
-        entryForSection.reason = entry.memory_type === 'procedural' ? 'Procedural memory matching query.' : 'Tagged as a procedure.';
+        entryForSection.reason =
+          entry.memory_type === 'procedural'
+            ? 'Procedural memory matching query.'
+            : 'Tagged as a procedure.';
       } else if (section === 'user_preferences') {
-        entryForSection.reason = result.source === 'told-by-user' ? 'User-stated preference.' : 'Tagged as a user preference.';
+        entryForSection.reason =
+          result.source === 'told-by-user'
+            ? 'User-stated preference.'
+            : 'Tagged as a user preference.';
       } else if (section === 'risks') {
         entryForSection.reason = 'Tagged as a risk or warning.';
       } else if (section === 'uncertain_or_disputed') {
-        entryForSection.reason = entry.state === 'disputed' ? 'Disputed memory.' : 'Low-confidence memory.';
+        entryForSection.reason =
+          entry.state === 'disputed' ? 'Disputed memory.' : 'Low-confidence memory.';
       }
       push(section, entryForSection);
     }
@@ -377,9 +415,18 @@ export async function buildCapsule(
 
   // 2. Tool-failure risks from memory_events
   if (includeRisks) {
-    const failures = recentFailures(db, { since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), limit: 5 });
+    const failures = recentFailures(db, {
+      since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+      limit: 5,
+    });
     for (const failure of failures) {
-      push('risks', buildFailureEntry(failure, `Tool ${failure.tool_name ?? '(unknown)'} failed recently; treat as preflight warning.`));
+      push(
+        'risks',
+        buildFailureEntry(
+          failure,
+          `Tool ${failure.tool_name ?? '(unknown)'} failed recently; treat as preflight warning.`,
+        ),
+      );
     }
   }
 
@@ -387,7 +434,10 @@ export async function buildCapsule(
   if (includeContradictions) {
     const contradictions = loadOpenContradictions(db, 5);
     for (const row of contradictions) {
-      push('contradictions', buildContradictionEntry(row, 'Open contradiction — both sides referenced in capsule.'));
+      push(
+        'contradictions',
+        buildContradictionEntry(row, 'Open contradiction — both sides referenced in capsule.'),
+      );
     }
   }
 

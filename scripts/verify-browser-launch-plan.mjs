@@ -89,7 +89,9 @@ function isAllowedHost(platform, value) {
 }
 
 function hasPendingBoundary(text) {
-  return /\b(pending|not claim|not claimed|does not report|remain pending|live evidence|strict evidence)\b/i.test(text);
+  return /\b(pending|not claim|not claimed|does not report|remain pending|live evidence|strict evidence)\b/i.test(
+    text,
+  );
 }
 
 function validateTarget(target, entryMap, sourceIds) {
@@ -107,7 +109,9 @@ function validateTarget(target, entryMap, sourceIds) {
       continue;
     }
     if (entry.platform !== target.platform) {
-      failures.push(`${target.id}: entry ${entryId} belongs to ${entry.platform}, not ${target.platform}`);
+      failures.push(
+        `${target.id}: entry ${entryId} belongs to ${entry.platform}, not ${target.platform}`,
+      );
     }
     if (!allowedEntries.has(entryId)) {
       failures.push(`${target.id}: entry ${entryId} is not approved for ${target.platform}`);
@@ -116,7 +120,9 @@ function validateTarget(target, entryMap, sourceIds) {
       failures.push(`${target.id}: entry ${entryId} exceeds maxChars`);
     }
     if (/\b(Mem0|Zep)\b/.test(entry.text) && !hasPendingBoundary(entry.text)) {
-      failures.push(`${target.id}: entry ${entryId} mentions Mem0/Zep without pending boundary language`);
+      failures.push(
+        `${target.id}: entry ${entryId} mentions Mem0/Zep without pending boundary language`,
+      );
     }
     targetEntries.push(entry);
   }
@@ -124,7 +130,8 @@ function validateTarget(target, entryMap, sourceIds) {
     if (!sourceIds.has(sourceId)) failures.push(`${target.id}: unknown sourceRef ${sourceId}`);
   }
   for (const artifact of target.artifactRefs) {
-    if (!existsSync(fromRoot(artifact))) failures.push(`${target.id}: missing artifactRef ${artifact}`);
+    if (!existsSync(fromRoot(artifact)))
+      failures.push(`${target.id}: missing artifactRef ${artifact}`);
   }
   if (target.platform === 'reddit' && target.manualRuleCheckRequired !== true) {
     failures.push(`${target.id}: Reddit target must require a manual subreddit rule check`);
@@ -135,16 +142,21 @@ function validateTarget(target, entryMap, sourceIds) {
   if (target.platform === 'arxiv' && target.manualRuleCheckRequired !== true) {
     failures.push(`${target.id}: arXiv target must require a manual category/metadata check`);
   }
-  if (!target.humanRequired) failures.push(`${target.id}: browser launch targets must require a human operator`);
-  if (!target.authRequired) failures.push(`${target.id}: browser launch targets must require authenticated account review`);
-  if (target.operatorChecks.length < 2) failures.push(`${target.id}: operator checklist is too thin`);
+  if (!target.humanRequired)
+    failures.push(`${target.id}: browser launch targets must require a human operator`);
+  if (!target.authRequired)
+    failures.push(`${target.id}: browser launch targets must require authenticated account review`);
+  if (target.operatorChecks.length < 2)
+    failures.push(`${target.id}: operator checklist is too thin`);
   if (target.postSubmitChecks.length < 1) failures.push(`${target.id}: missing post-submit checks`);
   if (
     target.platform === 'x' &&
     target.status === 'blocked-until-artifact-url' &&
     !targetEntries.some(entry => entry.requiresArtifactUrl === true)
   ) {
-    failures.push(`${target.id}: X artifact-url launch target must include a publication entry with reserved URL budget`);
+    failures.push(
+      `${target.id}: X artifact-url launch target must include a publication entry with reserved URL budget`,
+    );
   }
 
   return failures;
@@ -160,7 +172,9 @@ export async function verifyBrowserLaunchPlan(options = {}) {
   const ids = new Set();
   const targetReports = [];
   const failures = [
-    ...validateSchema(plan, schema, 'audrey-browser-launch-plan').map(failure => `browser launch plan schema: ${failure}`),
+    ...validateSchema(plan, schema, 'audrey-browser-launch-plan').map(
+      failure => `browser launch plan schema: ${failure}`,
+    ),
   ];
 
   if (!publicationReport.ok) {
@@ -170,7 +184,8 @@ export async function verifyBrowserLaunchPlan(options = {}) {
     failures.push('browser launch plan must point at docs/paper/publication-pack.json');
   }
   for (const command of REQUIRED_PREFLIGHT_COMMANDS) {
-    if (!(plan.preflightCommands ?? []).includes(command)) failures.push(`Missing browser-launch preflight command: ${command}`);
+    if (!(plan.preflightCommands ?? []).includes(command))
+      failures.push(`Missing browser-launch preflight command: ${command}`);
   }
   for (const target of plan.targets ?? []) {
     const targetFailures = [];
@@ -192,7 +207,9 @@ export async function verifyBrowserLaunchPlan(options = {}) {
   for (const id of REQUIRED_TARGETS) {
     if (!ids.has(id)) failures.push(`Missing browser-launch target: ${id}`);
   }
-  const ordered = [...(plan.targets ?? [])].sort((a, b) => a.order - b.order).map(target => target.id);
+  const ordered = [...(plan.targets ?? [])]
+    .sort((a, b) => a.order - b.order)
+    .map(target => target.id);
   if (ordered.join('|') !== REQUIRED_TARGETS.join('|')) {
     failures.push(`Browser-launch target order must be ${REQUIRED_TARGETS.join(', ')}`);
   }

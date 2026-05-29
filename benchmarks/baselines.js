@@ -26,7 +26,10 @@ function keywordScore(queryTokens, content) {
 function sortByScore(rows) {
   return rows
     .filter(row => Number.isFinite(row.score))
-    .sort((a, b) => b.score - a.score || String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    .sort(
+      (a, b) =>
+        b.score - a.score || String(b.createdAt || '').localeCompare(String(a.createdAt || '')),
+    );
 }
 
 function flattenMemories(benchmarkCase, ids = []) {
@@ -127,11 +130,13 @@ export async function runBaselineScenario(system, benchmarkCase, providerConfig,
 
 export function runKeywordRecencyBaseline(benchmarkCase, limit = 5) {
   const queryTokens = tokenize(benchmarkCase.query);
-  return sortByScore(flattenMemories(benchmarkCase).map(memory => ({
-    ...memory,
-    type: 'episodic',
-    score: keywordScore(queryTokens, memory.content),
-  }))).slice(0, limit);
+  return sortByScore(
+    flattenMemories(benchmarkCase).map(memory => ({
+      ...memory,
+      type: 'episodic',
+      score: keywordScore(queryTokens, memory.content),
+    })),
+  ).slice(0, limit);
 }
 
 export function runRecentWindowBaseline(benchmarkCase, limit = 3) {

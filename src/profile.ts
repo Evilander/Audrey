@@ -59,7 +59,9 @@ export class ProfileRecorder {
   }
 }
 
-export function isAudreyProfileEnabled(env: Record<string, string | undefined> = process.env): boolean {
+export function isAudreyProfileEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
   const value = env['AUDREY_PROFILE'];
   return value === '1' || value?.toLowerCase() === 'true' || value?.toLowerCase() === 'yes';
 }

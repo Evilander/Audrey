@@ -124,7 +124,8 @@ describe('Memory Preflight', () => {
       });
     }
     const id = await audrey.encode({
-      content: 'Must-follow delete customer data rule: run npm run export:snapshot before delete customer data actions.',
+      content:
+        'Must-follow delete customer data rule: run npm run export:snapshot before delete customer data actions.',
       source: 'direct-observation',
       tags: ['must-follow', 'delete'],
       salience: 1,
@@ -151,7 +152,9 @@ describe('Memory Preflight', () => {
     });
 
     expect(result.decision).toBe('block');
-    expect(result.warnings.some(w => w.type === 'memory_health' && /recall degraded/i.test(w.message))).toBe(true);
+    expect(
+      result.warnings.some(w => w.type === 'memory_health' && /recall degraded/i.test(w.message)),
+    ).toBe(true);
     expect(result.evidence_ids.some(id => id.startsWith('recall:'))).toBe(true);
     expect(result.status.recall_degraded).toBe(true);
     expect(result.status.last_recall_errors.some(error => error.type === 'fts')).toBe(true);

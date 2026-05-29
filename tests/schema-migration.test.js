@@ -21,33 +21,41 @@ describe('v0.7.0 schema columns', () => {
   });
 
   it('semantics has interference_count column defaulting to 0', () => {
-    db.prepare(
-      `INSERT INTO semantics (id, content, created_at) VALUES (?, ?, ?)`
-    ).run('sem-1', 'test', new Date().toISOString());
+    db.prepare(`INSERT INTO semantics (id, content, created_at) VALUES (?, ?, ?)`).run(
+      'sem-1',
+      'test',
+      new Date().toISOString(),
+    );
     const row = db.prepare('SELECT interference_count FROM semantics WHERE id = ?').get('sem-1');
     expect(row.interference_count).toBe(0);
   });
 
   it('semantics has salience column defaulting to 0.5', () => {
-    db.prepare(
-      `INSERT INTO semantics (id, content, created_at) VALUES (?, ?, ?)`
-    ).run('sem-1', 'test', new Date().toISOString());
+    db.prepare(`INSERT INTO semantics (id, content, created_at) VALUES (?, ?, ?)`).run(
+      'sem-1',
+      'test',
+      new Date().toISOString(),
+    );
     const row = db.prepare('SELECT salience FROM semantics WHERE id = ?').get('sem-1');
     expect(row.salience).toBe(0.5);
   });
 
   it('procedures has interference_count column defaulting to 0', () => {
-    db.prepare(
-      `INSERT INTO procedures (id, content, created_at) VALUES (?, ?, ?)`
-    ).run('proc-1', 'test', new Date().toISOString());
+    db.prepare(`INSERT INTO procedures (id, content, created_at) VALUES (?, ?, ?)`).run(
+      'proc-1',
+      'test',
+      new Date().toISOString(),
+    );
     const row = db.prepare('SELECT interference_count FROM procedures WHERE id = ?').get('proc-1');
     expect(row.interference_count).toBe(0);
   });
 
   it('procedures has salience column defaulting to 0.5', () => {
-    db.prepare(
-      `INSERT INTO procedures (id, content, created_at) VALUES (?, ?, ?)`
-    ).run('proc-1', 'test', new Date().toISOString());
+    db.prepare(`INSERT INTO procedures (id, content, created_at) VALUES (?, ?, ?)`).run(
+      'proc-1',
+      'test',
+      new Date().toISOString(),
+    );
     const row = db.prepare('SELECT salience FROM procedures WHERE id = ?').get('proc-1');
     expect(row.salience).toBe(0.5);
   });
@@ -223,9 +231,7 @@ describe('schema migration framework', () => {
     mkdirSync(LEGACY_DIR, { recursive: true });
     ({ db } = createDatabase(LEGACY_DIR));
 
-    const row = db.prepare(
-      "SELECT value FROM audrey_config WHERE key = 'schema_version'"
-    ).get();
+    const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get();
     expect(row).toBeDefined();
     expect(Number(row.value)).toBeGreaterThanOrEqual(6);
   });
@@ -233,15 +239,15 @@ describe('schema migration framework', () => {
   it('is idempotent — running migrations twice causes no errors', () => {
     mkdirSync(LEGACY_DIR, { recursive: true });
     ({ db } = createDatabase(LEGACY_DIR));
-    const firstVersion = db.prepare(
-      "SELECT value FROM audrey_config WHERE key = 'schema_version'"
-    ).get();
+    const firstVersion = db
+      .prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'")
+      .get();
     closeDatabase(db);
 
     ({ db } = createDatabase(LEGACY_DIR));
-    const secondVersion = db.prepare(
-      "SELECT value FROM audrey_config WHERE key = 'schema_version'"
-    ).get();
+    const secondVersion = db
+      .prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'")
+      .get();
 
     expect(secondVersion.value).toBe(firstVersion.value);
   });
@@ -249,10 +255,12 @@ describe('schema migration framework', () => {
   it('preserves existing data during migration', () => {
     const legacyDb = createLegacyDb();
     const now = new Date().toISOString();
-    legacyDb.prepare(
-      `INSERT INTO episodes (id, content, source, source_reliability, created_at)
-       VALUES (?, ?, ?, ?, ?)`
-    ).run('ep-legacy-1', 'I remember the old days', 'direct-observation', 1.0, now);
+    legacyDb
+      .prepare(
+        `INSERT INTO episodes (id, content, source, source_reliability, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run('ep-legacy-1', 'I remember the old days', 'direct-observation', 1.0, now);
     legacyDb.close();
 
     ({ db } = createDatabase(LEGACY_DIR));

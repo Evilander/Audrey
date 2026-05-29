@@ -22,13 +22,13 @@ export async function startServer(options: ServerOptions) {
   if (!apiKey && !isLoopback && process.env.AUDREY_ALLOW_NO_AUTH !== '1') {
     throw new Error(
       `[audrey-http] refusing to start on ${hostname} without AUDREY_API_KEY. ` +
-      `Set AUDREY_API_KEY=<token> (recommended) or AUDREY_ALLOW_NO_AUTH=1 to override.`,
+        `Set AUDREY_API_KEY=<token> (recommended) or AUDREY_ALLOW_NO_AUTH=1 to override.`,
     );
   }
   if (!apiKey && !isLoopback) {
     console.error(
       `[audrey-http] WARNING: serving on ${hostname} without auth (AUDREY_ALLOW_NO_AUTH=1). ` +
-      `Anyone on this network can read and modify memories.`,
+        `Anyone on this network can read and modify memories.`,
     );
   }
   const audrey = new Audrey(config);
@@ -39,7 +39,7 @@ export async function startServer(options: ServerOptions) {
 
   const app = createApp(audrey, { apiKey });
 
-  const server = serve({ fetch: app.fetch, port, hostname }, (info) => {
+  const server = serve({ fetch: app.fetch, port, hostname }, info => {
     console.error(`[audrey-http] listening on ${hostname}:${info.port}`);
   });
 
@@ -52,7 +52,7 @@ export async function startServer(options: ServerOptions) {
       // tick that finishes startup) Node throws ERR_SERVER_NOT_RUNNING — that
       // outcome already satisfies the caller's intent so we treat it as done.
       await new Promise<void>((resolve, reject) => {
-        server.close((err) => {
+        server.close(err => {
           if (!err) return resolve();
           const code = (err as NodeJS.ErrnoException).code;
           if (code === 'ERR_SERVER_NOT_RUNNING') return resolve();

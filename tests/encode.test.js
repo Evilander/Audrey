@@ -57,7 +57,9 @@ describe('encodeEpisode', () => {
       source: 'direct-observation',
       causal: { trigger: 'batch-processing', consequence: 'queue-backup' },
     });
-    const row = db.prepare('SELECT causal_trigger, causal_consequence FROM episodes WHERE id = ?').get(id);
+    const row = db
+      .prepare('SELECT causal_trigger, causal_consequence FROM episodes WHERE id = ?')
+      .get(id);
     expect(row.causal_trigger).toBe('batch-processing');
     expect(row.causal_consequence).toBe('queue-backup');
   });
@@ -96,7 +98,9 @@ describe('encodeEpisode', () => {
       content: 'test',
       source: 'direct-observation',
     });
-    const row = db.prepare('SELECT embedding_model, embedding_version FROM episodes WHERE id = ?').get(id);
+    const row = db
+      .prepare('SELECT embedding_model, embedding_version FROM episodes WHERE id = ?')
+      .get(id);
     expect(row.embedding_model).toBe('mock-embedding');
     expect(row.embedding_version).toBe('1.0.0');
   });
@@ -118,10 +122,12 @@ describe('encodeEpisode', () => {
   });
 
   it('rejects invalid source types', async () => {
-    await expect(encodeEpisode(db, embedding, {
-      content: 'test',
-      source: 'made-up',
-    })).rejects.toThrow();
+    await expect(
+      encodeEpisode(db, embedding, {
+        content: 'test',
+        source: 'made-up',
+      }),
+    ).rejects.toThrow();
   });
 
   it('writes a row to vec_episodes with the correct id', async () => {

@@ -31,10 +31,14 @@ function redactedText(value: string | undefined): string | undefined {
 function normalizePathForKey(value: string | undefined, base?: string): string {
   if (!value) return '';
   const resolved = isAbsolute(value) ? value : resolve(base || process.cwd(), value);
-  let out = normalize(resolved).replace(/^\\\\\?\\/, '').replace(/\\/g, '/');
+  let out = normalize(resolved)
+    .replace(/^\\\\\?\\/, '')
+    .replace(/\\/g, '/');
   try {
     if (existsSync(resolved)) {
-      out = normalize(realpathSync(resolved)).replace(/^\\\\\?\\/, '').replace(/\\/g, '/');
+      out = normalize(realpathSync(resolved))
+        .replace(/^\\\\\?\\/, '')
+        .replace(/\\/g, '/');
     }
   } catch {
     // Keep the normalized fallback when realpath is unavailable.
@@ -54,6 +58,10 @@ export function guardActionKey(action: GuardActionFingerprintInput): string {
     .sort()
     .join('\n');
   return createHash('sha256')
-    .update([tool.toLowerCase(), safeCommand.replace(/\s+/g, ' ').trim().toLowerCase(), cwd, files].join('\n'))
+    .update(
+      [tool.toLowerCase(), safeCommand.replace(/\s+/g, ' ').trim().toLowerCase(), cwd, files].join(
+        '\n',
+      ),
+    )
     .digest('hex');
 }

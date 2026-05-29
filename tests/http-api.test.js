@@ -80,7 +80,10 @@ describe('HTTP API', () => {
   });
 
   it('POST /v1/recall serializes recall degradation diagnostics', async () => {
-    await audrey.encode({ content: 'The deployment checklist mentions SQLite migrations', source: 'direct-observation' });
+    await audrey.encode({
+      content: 'The deployment checklist mentions SQLite migrations',
+      source: 'direct-observation',
+    });
     audrey.db.exec('DROP TABLE fts_episodes');
 
     const res = await app.request('/v1/recall', {
@@ -93,7 +96,9 @@ describe('HTTP API', () => {
     const body = await res.json();
     expect(Array.isArray(body.results)).toBe(true);
     expect(body.partial_failure).toBe(true);
-    expect(body.errors.some(error => error.type === 'fts' && error.stage === 'recall.fts_lookup')).toBe(true);
+    expect(
+      body.errors.some(error => error.type === 'fts' && error.stage === 'recall.fts_lookup'),
+    ).toBe(true);
   });
 
   it('POST /v1/capsule returns a structured memory packet', async () => {
@@ -382,7 +387,10 @@ describe('HTTP API', () => {
   it('GET /v1/status exposes the latest recall degradation signal', async () => {
     await audrey.encode({ content: 'status degraded recall memory', source: 'direct-observation' });
     audrey.db.exec('DROP TABLE fts_episodes');
-    await audrey.recall('status degraded recall memory', { types: ['episodic'], retrieval: 'hybrid' });
+    await audrey.recall('status degraded recall memory', {
+      types: ['episodic'],
+      retrieval: 'hybrid',
+    });
 
     const res = await app.request('/v1/status');
     expect(res.status).toBe(200);
@@ -507,14 +515,20 @@ describe('HTTP API', () => {
         confidenceConfig: { weights: { affect: 999 } },
       }),
     });
-    expect((await baseline.json()).results.map(r => r.id)).toEqual((await tampered.json()).results.map(r => r.id));
+    expect((await baseline.json()).results.map(r => r.id)).toEqual(
+      (await tampered.json()).results.map(r => r.id),
+    );
   });
 
   it('POST /v1/validate adjusts salience and returns the new state', async () => {
     const encodeRes = await app.request('/v1/encode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: 'closed-loop test memory', source: 'direct-observation', salience: 0.5 }),
+      body: JSON.stringify({
+        content: 'closed-loop test memory',
+        source: 'direct-observation',
+        salience: 0.5,
+      }),
     });
     const { id } = await encodeRes.json();
 
@@ -582,16 +596,19 @@ describe('HTTP API', () => {
 
 describe('HTTP server bind safety', () => {
   it('refuses to start on non-loopback host without API key', async () => {
-    await expect(startServer({
-      hostname: '0.0.0.0',
-      port: 0,
-      config: {
-        dataDir: TEST_DIR + '-bind-safety',
-        agent: 'test',
-        embedding: { provider: 'mock', dimensions: 8 },
-      },
-    })).rejects.toThrow(/refusing to start.*without AUDREY_API_KEY/);
-    if (existsSync(TEST_DIR + '-bind-safety')) rmSync(TEST_DIR + '-bind-safety', { recursive: true });
+    await expect(
+      startServer({
+        hostname: '0.0.0.0',
+        port: 0,
+        config: {
+          dataDir: TEST_DIR + '-bind-safety',
+          agent: 'test',
+          embedding: { provider: 'mock', dimensions: 8 },
+        },
+      }),
+    ).rejects.toThrow(/refusing to start.*without AUDREY_API_KEY/);
+    if (existsSync(TEST_DIR + '-bind-safety'))
+      rmSync(TEST_DIR + '-bind-safety', { recursive: true });
   });
 
   it('allows non-loopback bind when AUDREY_ALLOW_NO_AUTH=1', async () => {
@@ -599,7 +616,7 @@ describe('HTTP server bind safety', () => {
     process.env.AUDREY_ALLOW_NO_AUTH = '1';
     try {
       const server = await startServer({
-        hostname: '127.0.0.1',  // staying on loopback so we don't actually bind LAN in CI
+        hostname: '127.0.0.1', // staying on loopback so we don't actually bind LAN in CI
         port: 0,
         config: {
           dataDir: TEST_DIR + '-allow-no-auth',
@@ -609,7 +626,8 @@ describe('HTTP server bind safety', () => {
       });
       expect(server.hostname).toBe('127.0.0.1');
       await server.close();
-      if (existsSync(TEST_DIR + '-allow-no-auth')) rmSync(TEST_DIR + '-allow-no-auth', { recursive: true });
+      if (existsSync(TEST_DIR + '-allow-no-auth'))
+        rmSync(TEST_DIR + '-allow-no-auth', { recursive: true });
     } finally {
       if (before === undefined) delete process.env.AUDREY_ALLOW_NO_AUTH;
       else process.env.AUDREY_ALLOW_NO_AUTH = before;

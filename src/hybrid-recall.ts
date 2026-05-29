@@ -76,24 +76,43 @@ export function ftsIdsByType(
   if (!sanitized) return out;
   if (types.includes('episodic')) {
     const hits = searchFTSEpisodes(db, sanitized, limit, agentFilter ?? null);
-    out.set('episodic', hits.map(h => h.id));
+    out.set(
+      'episodic',
+      hits.map(h => h.id),
+    );
   }
   if (types.includes('semantic')) {
     const hits = searchFTSSemantics(db, sanitized, limit, agentFilter ?? null);
-    out.set('semantic', hits.map(h => h.id));
+    out.set(
+      'semantic',
+      hits.map(h => h.id),
+    );
   }
   if (types.includes('procedural')) {
     const hits = searchFTSProcedures(db, sanitized, limit, agentFilter ?? null);
-    out.set('procedural', hits.map(h => h.id));
+    out.set(
+      'procedural',
+      hits.map(h => h.id),
+    );
   }
   return out;
 }
 
-function loadFtsOnlyEpisode(db: Database.Database, id: string, includePrivate: boolean, filters: FuseFilters | undefined, agentFilter?: string): RecallResult | null {
-  const row = db.prepare(`
+function loadFtsOnlyEpisode(
+  db: Database.Database,
+  id: string,
+  includePrivate: boolean,
+  filters: FuseFilters | undefined,
+  agentFilter?: string,
+): RecallResult | null {
+  const row = db
+    .prepare(
+      `
     SELECT id, content, source, agent, source_reliability, created_at, superseded_by, "private", tags
     FROM episodes WHERE id = ?
-  `).get(id) as EpisodeFTSRow | undefined;
+  `,
+    )
+    .get(id) as EpisodeFTSRow | undefined;
   if (!row) return null;
   if (agentFilter && row.agent !== agentFilter) return null;
   if (row.superseded_by) return null;
@@ -103,7 +122,7 @@ function loadFtsOnlyEpisode(db: Database.Database, id: string, includePrivate: b
     id: row.id,
     content: row.content,
     type: 'episodic',
-    confidence: row.source_reliability ?? sourceReliability(row.source as never),
+    confidence: row.source_reliability ?? sourceReliability(row.source),
     score: 0,
     source: row.source,
     agent: row.agent ?? 'default',
@@ -111,11 +130,21 @@ function loadFtsOnlyEpisode(db: Database.Database, id: string, includePrivate: b
   };
 }
 
-function loadFtsOnlySemantic(db: Database.Database, id: string, includeDormant: boolean, filters: FuseFilters | undefined, agentFilter?: string): RecallResult | null {
-  const row = db.prepare(`
+function loadFtsOnlySemantic(
+  db: Database.Database,
+  id: string,
+  includeDormant: boolean,
+  filters: FuseFilters | undefined,
+  agentFilter?: string,
+): RecallResult | null {
+  const row = db
+    .prepare(
+      `
     SELECT id, content, agent, state, evidence_count, supporting_count, contradicting_count, created_at
     FROM semantics WHERE id = ?
-  `).get(id) as SemanticFTSRow | undefined;
+  `,
+    )
+    .get(id) as SemanticFTSRow | undefined;
   if (!row) return null;
   if (agentFilter && row.agent !== agentFilter) return null;
   const allowed = includeDormant
@@ -138,11 +167,21 @@ function loadFtsOnlySemantic(db: Database.Database, id: string, includeDormant: 
   };
 }
 
-function loadFtsOnlyProcedural(db: Database.Database, id: string, includeDormant: boolean, filters: FuseFilters | undefined, agentFilter?: string): RecallResult | null {
-  const row = db.prepare(`
+function loadFtsOnlyProcedural(
+  db: Database.Database,
+  id: string,
+  includeDormant: boolean,
+  filters: FuseFilters | undefined,
+  agentFilter?: string,
+): RecallResult | null {
+  const row = db
+    .prepare(
+      `
     SELECT id, content, agent, state, success_count, failure_count, created_at
     FROM procedures WHERE id = ?
-  `).get(id) as ProceduralFTSRow | undefined;
+  `,
+    )
+    .get(id) as ProceduralFTSRow | undefined;
   if (!row) return null;
   if (agentFilter && row.agent !== agentFilter) return null;
   const allowed = includeDormant
@@ -248,9 +287,12 @@ export function fuseResults(db: Database.Database, input: FuseInput): RecallResu
 
     let result: RecallResult | null = existing ?? null;
     if (!result) {
-      if (ranks.type === 'episodic') result = loadFtsOnlyEpisode(db, id, includePrivate, input.filters, input.agentFilter);
-      else if (ranks.type === 'semantic') result = loadFtsOnlySemantic(db, id, includeDormant, input.filters, input.agentFilter);
-      else if (ranks.type === 'procedural') result = loadFtsOnlyProcedural(db, id, includeDormant, input.filters, input.agentFilter);
+      if (ranks.type === 'episodic')
+        result = loadFtsOnlyEpisode(db, id, includePrivate, input.filters, input.agentFilter);
+      else if (ranks.type === 'semantic')
+        result = loadFtsOnlySemantic(db, id, includeDormant, input.filters, input.agentFilter);
+      else if (ranks.type === 'procedural')
+        result = loadFtsOnlyProcedural(db, id, includeDormant, input.filters, input.agentFilter);
       if (!result) continue;
       if (result.confidence < minConfidence) continue;
     }

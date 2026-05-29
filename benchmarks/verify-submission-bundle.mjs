@@ -69,7 +69,8 @@ export function verifyGuardBenchSubmissionBundle(options = {}) {
   }
   const listed = new Map((manifest.files ?? []).map(file => [file.path, file]));
   for (const file of REQUIRED_FILES) {
-    if (!listed.has(file)) failures.push(`submission-manifest.json: missing required file record ${file}`);
+    if (!listed.has(file))
+      failures.push(`submission-manifest.json: missing required file record ${file}`);
   }
   if (listed.has('submission-manifest.json')) {
     failures.push('submission-manifest.json: must not include a self-hash file record');
@@ -87,7 +88,9 @@ export function verifyGuardBenchSubmissionBundle(options = {}) {
     if (record.bytes !== actualBytes) failures.push(`${file}: byte length mismatch`);
   }
 
-  const actualFiles = walkFiles(dir).filter(file => file !== 'submission-manifest.json').sort();
+  const actualFiles = walkFiles(dir)
+    .filter(file => file !== 'submission-manifest.json')
+    .sort();
   const listedFiles = [...listed.keys()].sort();
   const actualSet = new Set(actualFiles);
   const listedSet = new Set(listedFiles);
@@ -95,7 +98,8 @@ export function verifyGuardBenchSubmissionBundle(options = {}) {
     if (!listedSet.has(file)) failures.push(`${file}: present in bundle but missing from manifest`);
   }
   for (const file of listedFiles) {
-    if (!actualSet.has(file)) failures.push(`${file}: listed in manifest but not present in bundle`);
+    if (!actualSet.has(file))
+      failures.push(`${file}: listed in manifest but not present in bundle`);
   }
 
   const artifactValidation = validateGuardBenchArtifacts({
@@ -151,7 +155,8 @@ async function main() {
   }
   const report = verifyGuardBenchSubmissionBundle(args);
   if (args.json) console.log(JSON.stringify(report, null, 2));
-  else if (report.ok) console.log(`GuardBench submission bundle verification passed: ${report.dir}`);
+  else if (report.ok)
+    console.log(`GuardBench submission bundle verification passed: ${report.dir}`);
   else {
     console.error('GuardBench submission bundle verification failed:');
     for (const failure of report.failures) console.error(`- ${failure}`);
