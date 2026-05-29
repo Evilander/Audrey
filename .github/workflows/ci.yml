@@ -34,6 +34,7 @@ jobs:
       - run: npm run build
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm run format:check
       - run: npm test
       - run: npm run bench:memory:check
       - run: npm run smoke:cli
@@ -98,6 +99,7 @@ jobs:
       - run: npm run build
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm run format:check
       - run: npm test
       - run: npm run bench:memory:check
       - run: npm run smoke:cli
