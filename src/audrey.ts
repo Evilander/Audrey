@@ -22,7 +22,6 @@ import type {
   RecallError,
   RecallResult,
   RecallResults,
-  ReembedCounts,
   ReflectMemory,
   ReflectResult,
   TruthResolution,
@@ -599,7 +598,7 @@ export class Audrey extends EventEmitter {
 
     let parsed: { memories?: unknown[] };
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(raw) as { memories?: unknown[] };
     } catch {
       return { encoded: 0, memories: [], skipped: 'invalid llm response' };
     }

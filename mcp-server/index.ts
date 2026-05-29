@@ -10,6 +10,9 @@ import { readStoredDimensions } from '../src/db.js';
 import { importSnapshotSchema } from '../src/import.js';
 import { isAudreyProfileEnabled, type ProfileDiagnostics } from '../src/profile.js';
 import type { AudreyConfig, EmbeddingProvider, IntrospectResult, MemoryStatusResult, RecallResults } from '../src/types.js';
+// Type-only import: erased at runtime, so the SDK is still loaded lazily via the
+// dynamic import inside main().
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   VERSION,
   SERVER_NAME,
@@ -292,7 +295,7 @@ async function dream(): Promise<void> {
   };
 
   const llm = resolveLLMProvider(process.env, process.env['AUDREY_LLM_PROVIDER']);
-  if (llm) config.llm = llm as AudreyConfig['llm'];
+  if (llm) config.llm = llm;
 
   const audrey = new Audrey(config);
   try {
@@ -490,7 +493,7 @@ async function reflect(): Promise<void> {
   };
 
   const llm = resolveLLMProvider(process.env, process.env['AUDREY_LLM_PROVIDER']);
-  if (llm) config.llm = llm as AudreyConfig['llm'];
+  if (llm) config.llm = llm;
 
   const audrey = new Audrey(config);
   try {
@@ -877,7 +880,7 @@ function asJsonRecord(value: unknown): JsonRecord {
 }
 
 function cloneHookRows(value: unknown): unknown[] {
-  return Array.isArray(value) ? [...value] : [];
+  return Array.isArray(value) ? [...(value as unknown[])] : [];
 }
 
 function hookCommandSet(settings: JsonRecord): Set<string> {
@@ -992,7 +995,9 @@ export function applyClaudeCodeHookConfig(options: {
       existing = JSON.parse(existingText);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Cannot merge Audrey hooks into invalid JSON at ${settingsPath}: ${message}`);
+      throw new Error(`Cannot merge Audrey hooks into invalid JSON at ${settingsPath}: ${message}`, {
+        cause: err,
+      });
     }
   }
   const settings = mergeClaudeCodeHookSettings(existing);
@@ -1701,8 +1706,7 @@ export function registerShutdownHandlers(
   return (message?: string, exitCode = 0) => shutdown(message, exitCode);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function registerDreamTool(server: any, audrey: Audrey): void {
+export function registerDreamTool(server: McpServer, audrey: Audrey): void {
   server.tool(
     'memory_dream',
     {
@@ -1729,8 +1733,7 @@ export function registerDreamTool(server: any, audrey: Audrey): void {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function registerHostResources(server: any, audrey: Audrey): void {
+export function registerHostResources(server: McpServer, audrey: Audrey): void {
   server.registerResource(
     'audrey-status',
     'audrey://status',
@@ -1794,8 +1797,7 @@ export function registerHostResources(server: any, audrey: Audrey): void {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function registerHostPrompts(server: any): void {
+export function registerHostPrompts(server: McpServer): void {
   server.registerPrompt(
     'audrey-session-briefing',
     {
@@ -1998,7 +2000,7 @@ async function main(): Promise<void> {
   server.tool('memory_import', memoryImportToolSchema, async ({ snapshot }) => {
     try {
       requireAdminTools();
-      await audrey.import(snapshot as Parameters<typeof audrey.import>[0]);
+      await audrey.import(snapshot);
       return toolResult({ imported: true, stats: audrey.introspect() });
     } catch (err) {
       return toolError(err);
@@ -2435,7 +2437,7 @@ function parseObserveToolArgs(argv: string[]): {
     else if (token === '--metadata-json') out.metadataJson = next();
     else if (token === '--retain-details') out.retainDetails = true;
   }
-  return out as ReturnType<typeof parseObserveToolArgs>;
+  return out;
 }
 
 async function observeToolCli(): Promise<void> {
@@ -2800,7 +2802,7 @@ function parseGuardAfterArgs(argv: string[]): {
     else if (token === '--error-summary') out.errorSummary = next();
     else if (token === '--cwd') out.cwd = next();
   }
-  return out as ReturnType<typeof parseGuardAfterArgs>;
+  return out;
 }
 
 async function readOptionalJsonFromStdin(command: string): Promise<Record<string, unknown> | null> {
@@ -2901,7 +2903,7 @@ function parsePromoteArgs(argv: string[]): {
     else if (token === '--project-dir') out.projectDir = next();
     else if (token === '--json') out.json = true;
   }
-  return out as ReturnType<typeof parsePromoteArgs>;
+  return out;
 }
 
 async function promoteCli(): Promise<void> {

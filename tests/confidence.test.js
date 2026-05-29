@@ -6,9 +6,6 @@ import {
   recencyDecay,
   retrievalReinforcement,
   salienceModifier,
-  DEFAULT_WEIGHTS,
-  DEFAULT_SOURCE_RELIABILITY,
-  DEFAULT_HALF_LIVES,
 } from '../dist/src/confidence.js';
 
 describe('sourceReliability', () => {

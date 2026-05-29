@@ -19,8 +19,8 @@ export class MockEmbeddingProvider implements EmbeddingProvider {
     for (let i = 0; i < this.dimensions; i++) {
       vector[i] = (hash[i % hash.length]! / 255) * 2 - 1;
     }
-    const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v! * v!, 0));
-    return vector.map(v => v! / magnitude);
+    const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0));
+    return vector.map(v => v / magnitude);
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
@@ -130,6 +130,16 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
+// Minimal structural type for the transformers.js feature-extraction pipeline.
+// The full type from @huggingface/transformers is heavy and version-coupled; we
+// only ever call the pipeline and read `.data` (single input) or `.tolist()`
+// (batched) off the returned tensor. The cast at the assignment site is the one
+// trust boundary with the untyped library import.
+type FeatureExtractionPipeline = (
+  input: string | string[],
+  options: { pooling: 'mean'; normalize: boolean },
+) => Promise<{ data: Float32Array; tolist(): number[][] }>;
+
 export class LocalEmbeddingProvider implements EmbeddingProvider {
   model: string;
   dimensions: number;
@@ -138,7 +148,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
   device: string;
   batchSize: number;
   pipelineFactory: ((task: string, model: string, options?: Record<string, unknown>) => Promise<unknown>) | null;
-  _pipeline: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  _pipeline: FeatureExtractionPipeline | null;
   _readyPromise: Promise<void> | null;
   _actualDevice: string | null;
 
@@ -171,16 +181,16 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
         const verbose = process.env.AUDREY_ONNX_VERBOSE === '1';
         const sessionOptions = verbose ? undefined : { logSeverityLevel: 3 };
         try {
-          this._pipeline = await pipeline('feature-extraction', this.model, {
-            dtype: 'fp32', device: this.device as 'gpu' | 'cpu',
+          this._pipeline = (await pipeline('feature-extraction', this.model, {
+            dtype: 'fp32', device: this.device,
             ...(sessionOptions ? { session_options: sessionOptions } : {}),
-          } as Parameters<typeof pipeline>[2]);
+          })) as FeatureExtractionPipeline;
           this._actualDevice = this.device;
         } catch {
-          this._pipeline = await pipeline('feature-extraction', this.model, {
+          this._pipeline = (await pipeline('feature-extraction', this.model, {
             dtype: 'fp32', device: 'cpu',
             ...(sessionOptions ? { session_options: sessionOptions } : {}),
-          } as Parameters<typeof pipeline>[2]);
+          })) as FeatureExtractionPipeline;
           this._actualDevice = 'cpu';
         }
       })();
@@ -190,8 +200,8 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
 
   async embed(text: string): Promise<number[]> {
     await this.ready();
-    const output = await this._pipeline(text, { pooling: 'mean', normalize: true });
-    return Array.from(output.data as Float32Array);
+    const output = await this._pipeline!(text, { pooling: 'mean', normalize: true });
+    return Array.from(output.data);
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
@@ -200,8 +210,8 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
     const results: number[][] = [];
     for (let i = 0; i < texts.length; i += this.batchSize) {
       const chunk = texts.slice(i, i + this.batchSize);
-      const output = await this._pipeline(chunk, { pooling: 'mean', normalize: true });
-      results.push(...(output.tolist() as number[][]));
+      const output = await this._pipeline!(chunk, { pooling: 'mean', normalize: true });
+      results.push(...output.tolist());
     }
     return results;
   }
@@ -307,6 +317,6 @@ export function createEmbeddingProvider(config: EmbeddingConfig): EmbeddingProvi
     case 'gemini':
       return new GeminiEmbeddingProvider(config);
     default:
-      throw new Error(`Unknown embedding provider: ${(config as EmbeddingConfig).provider}. Valid: mock, openai, local, gemini`);
+      throw new Error(`Unknown embedding provider: ${(config as { provider: string }).provider}. Valid: mock, openai, local, gemini`);
   }
 }

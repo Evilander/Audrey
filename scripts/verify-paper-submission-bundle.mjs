@@ -94,7 +94,7 @@ export function verifyPaperSubmissionBundle(options = {}) {
   const checkSourceFreshness = options.checkSourceFreshness !== false;
   const manifestPath = join(dir, 'paper-submission-manifest.json');
   const failures = [];
-  let manifest = null;
+  let manifest;
 
   try {
     manifest = readJson(manifestPath);

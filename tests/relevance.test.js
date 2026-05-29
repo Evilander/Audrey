@@ -42,7 +42,6 @@ describe.skip('implicit relevance feedback', () => {
   });
 
   it('markUsed updates last_used_at', () => {
-    const before = audrey.db.prepare('SELECT last_used_at FROM episodes WHERE id = ?').get(memoryId);
     // May already be set from previous test
     audrey.markUsed(memoryId);
     const after = audrey.db.prepare('SELECT last_used_at FROM episodes WHERE id = ?').get(memoryId);

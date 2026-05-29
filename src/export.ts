@@ -7,27 +7,6 @@ import { safeJsonParse } from './utils.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8')) as { version: string };
 
-interface ExportedEpisode {
-  id: string;
-  content: string;
-  source: string;
-  agent: string;
-  source_reliability: number;
-  salience: number;
-  context: unknown;
-  affect: unknown;
-  tags: unknown;
-  causal_trigger: string | null;
-  causal_consequence: string | null;
-  created_at: string;
-  embedding_model: string | null;
-  embedding_version: string | null;
-  supersedes: string | null;
-  superseded_by: string | null;
-  consolidated: number;
-  private: number;
-}
-
 interface EpisodeExportRow {
   id: string;
   content: string;

@@ -10,9 +10,6 @@ import { existsSync, rmSync } from 'node:fs';
 const TEST_DIR = './test-forget-data';
 
 function insertSemantic(db, embedding, id, content, state = 'active') {
-  const vec = embedding.embedSync
-    ? embedding.embedSync(content)
-    : null;
   return (async () => {
     const vector = await embedding.embed(content);
     const buf = embedding.vectorToBuffer(vector);

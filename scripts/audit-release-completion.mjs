@@ -3,7 +3,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyExternalGuardBenchEvidence } from '../benchmarks/verify-external-evidence.mjs';
 import { verifyBrowserLaunchResults } from './verify-browser-launch-results.mjs';

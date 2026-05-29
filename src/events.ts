@@ -18,13 +18,19 @@ export type EventType =
   | 'SubagentStop'
   | 'Observation';
 
+// A known EventType, or any other string for forward-compatibility. The
+// `string & {}` keeps the EventType literals visible to autocomplete instead of
+// collapsing the whole union down to `string` (callers such as `validate` and
+// `promote` record extension event types like `Validate` and `Promotion`).
+export type EventTypeLike = EventType | (string & {});
+
 export type EventOutcome = 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown';
 export type RedactionState = 'unreviewed' | 'redacted' | 'clean' | 'quarantined';
 
 export interface MemoryEvent {
   id: string;
   session_id: string | null;
-  event_type: EventType | string;
+  event_type: EventTypeLike;
   source: string;
   actor_agent: string | null;
   tool_name: string | null;
@@ -42,7 +48,7 @@ export interface MemoryEvent {
 export interface EventInsert {
   id?: string;
   sessionId?: string | null;
-  eventType: EventType | string;
+  eventType: EventTypeLike;
   source: string;
   actorAgent?: string | null;
   toolName?: string | null;

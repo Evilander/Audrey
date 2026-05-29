@@ -54,7 +54,7 @@ Options:
 
 function assertTextNeedles(needles, shouldExist, failures) {
   for (const needle of needles) {
-    let text = '';
+    let text;
     try {
       text = readText(needle.path);
     } catch (error) {

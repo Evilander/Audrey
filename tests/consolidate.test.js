@@ -91,7 +91,7 @@ describe('runConsolidation', () => {
     const result = await runConsolidation(db, embedding, {
       minClusterSize: 3,
       similarityThreshold: 0.99,
-      extractPrinciple: (episodes) => ({ content: 'This happens repeatedly', type: 'semantic' }),
+      extractPrinciple: () => ({ content: 'This happens repeatedly', type: 'semantic' }),
     });
 
     expect(result.principlesExtracted).toBe(1);
@@ -242,7 +242,7 @@ describe('runConsolidation with LLM', () => {
     await encodeEpisode(db, embedding, { content: 'same thing', source: 'tool-result' });
     await encodeEpisode(db, embedding, { content: 'same thing', source: 'told-by-user' });
 
-    const result = await runConsolidation(db, embedding, {
+    await runConsolidation(db, embedding, {
       minClusterSize: 3,
       similarityThreshold: 0.99,
       llmProvider: llm,
@@ -288,7 +288,7 @@ describe('runConsolidation with LLM', () => {
     await encodeEpisode(db, embedding, { content: 'same thing', source: 'tool-result' });
     await encodeEpisode(db, embedding, { content: 'same thing', source: 'told-by-user' });
 
-    const result = await runConsolidation(db, embedding, {
+    await runConsolidation(db, embedding, {
       minClusterSize: 3,
       similarityThreshold: 0.99,
     });

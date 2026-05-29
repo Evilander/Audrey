@@ -64,7 +64,13 @@ function renderFrontmatterLine(key: string, value: unknown, indent: number): str
       .join('\n');
     return `${pad}${key}:\n${nested}`;
   }
-  return `${pad}${key}: ${String(value)}`;
+  if (typeof value === 'bigint') {
+    return `${pad}${key}: ${value.toString()}`;
+  }
+  // Frontmatter values are always null, string, number, boolean, bigint, array,
+  // or object — all handled above. Anything else (symbol/function) is not
+  // expected here; serialize defensively rather than risk an '[object Object]'.
+  return `${pad}${key}: ${JSON.stringify(value)}`;
 }
 
 function quoteString(value: string): string {

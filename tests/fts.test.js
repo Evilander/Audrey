@@ -47,7 +47,7 @@ describe('FTS5 full-text search', () => {
   });
 
   it('hybrid recall finds more relevant results than vector alone', async () => {
-    const vectorOnly = await audrey.recall('VACUUM ANALYZE', { retrieval: 'vector', limit: 5 });
+    await audrey.recall('VACUUM ANALYZE', { retrieval: 'vector', limit: 5 });
     const hybrid = await audrey.recall('VACUUM ANALYZE', { retrieval: 'hybrid', limit: 5 });
     // Hybrid should find the PostgreSQL memory via keyword match even if vector similarity is low
     const hybridHasPostgres = hybrid.some(r => r.content.includes('VACUUM'));
