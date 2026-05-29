@@ -15,6 +15,14 @@
   </p>
 </div>
 
+## In Plain English
+
+AI coding assistants are brilliant but forgetful. They'll happily rerun the same broken command they ran yesterday, forget the rules your team agreed on last week, and treat every new session like it's day one.
+
+Audrey is the memory they're missing. It quietly keeps track of what worked, what failed, and what you told it — then checks that memory **before** the agent does something, so it can say "hold on, this exact command failed last time, and here's what fixed it" instead of repeating the mistake. Everything lives in one local file on your machine: no cloud, no account, and nothing about your code ever leaves your computer.
+
+That's the whole idea. The rest of this README is the detail.
+
 ## Why Audrey Exists
 
 Agents forget the exact mistakes they made yesterday. They repeat broken commands, lose project-specific rules, miss contradictions, and treat every new session like a cold start.
