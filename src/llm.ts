@@ -26,7 +26,7 @@ export class MockLLMProvider implements LLMProvider {
   modelVersion: string;
 
   constructor({ responses = {} }: Partial<LLMConfig> = {}) {
-    this.responses = (responses ?? {});
+    this.responses = responses ?? {};
     this.modelName = 'mock-llm';
     this.modelVersion = '1.0.0';
   }
@@ -60,7 +60,12 @@ export class AnthropicLLMProvider implements LLMProvider {
   modelName: string;
   modelVersion: string;
 
-  constructor({ apiKey, model = 'claude-sonnet-4-6', maxTokens = 1024, timeout = 30000 }: Partial<LLMConfig> & { timeout?: number } = {}) {
+  constructor({
+    apiKey,
+    model = 'claude-sonnet-4-6',
+    maxTokens = 1024,
+    timeout = 30000,
+  }: Partial<LLMConfig> & { timeout?: number } = {}) {
     this.apiKey = apiKey || process.env.ANTHROPIC_API_KEY;
     this.model = model ?? 'claude-sonnet-4-6';
     this.maxTokens = maxTokens ?? 1024;
@@ -69,7 +74,10 @@ export class AnthropicLLMProvider implements LLMProvider {
     this.modelVersion = 'latest';
   }
 
-  async complete(messages: ChatMessage[], options: LLMCompletionOptions = {}): Promise<LLMCompletionResult> {
+  async complete(
+    messages: ChatMessage[],
+    options: LLMCompletionOptions = {},
+  ): Promise<LLMCompletionResult> {
     requireApiKey(this.apiKey, 'Anthropic LLM', 'ANTHROPIC_API_KEY');
     const systemMsg = messages.find(m => m.role === 'system')?.content;
     const nonSystemMsgs = messages.filter(m => m.role !== 'system');
@@ -99,7 +107,7 @@ export class AnthropicLLMProvider implements LLMProvider {
         throw new Error(`Anthropic API error: ${await describeHttpError(response)}`);
       }
 
-      const data = await response.json() as { content?: { text?: string }[] };
+      const data = (await response.json()) as { content?: { text?: string }[] };
       const text = data.content?.[0]?.text || '';
       return { content: text };
     } finally {
@@ -125,7 +133,12 @@ export class OpenAILLMProvider implements LLMProvider {
   modelName: string;
   modelVersion: string;
 
-  constructor({ apiKey, model = 'gpt-4o', maxTokens = 1024, timeout = 30000 }: Partial<LLMConfig> & { timeout?: number } = {}) {
+  constructor({
+    apiKey,
+    model = 'gpt-4o',
+    maxTokens = 1024,
+    timeout = 30000,
+  }: Partial<LLMConfig> & { timeout?: number } = {}) {
     this.apiKey = apiKey || process.env.OPENAI_API_KEY;
     this.model = model ?? 'gpt-4o';
     this.maxTokens = maxTokens ?? 1024;
@@ -134,7 +147,10 @@ export class OpenAILLMProvider implements LLMProvider {
     this.modelVersion = 'latest';
   }
 
-  async complete(messages: ChatMessage[], options: LLMCompletionOptions = {}): Promise<LLMCompletionResult> {
+  async complete(
+    messages: ChatMessage[],
+    options: LLMCompletionOptions = {},
+  ): Promise<LLMCompletionResult> {
     requireApiKey(this.apiKey, 'OpenAI LLM', 'OPENAI_API_KEY');
     const body = {
       model: this.model,
@@ -148,7 +164,7 @@ export class OpenAILLMProvider implements LLMProvider {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
@@ -159,7 +175,7 @@ export class OpenAILLMProvider implements LLMProvider {
         throw new Error(`OpenAI API error: ${await describeHttpError(response)}`);
       }
 
-      const data = await response.json() as { choices?: { message?: { content?: string } }[] };
+      const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
       const text = data.choices?.[0]?.message?.content || '';
       return { content: text };
     } finally {
@@ -186,6 +202,8 @@ export function createLLMProvider(config: LLMConfig): LLMProvider {
     case 'openai':
       return new OpenAILLMProvider(config);
     default:
-      throw new Error(`Unknown LLM provider: ${(config as { provider: string }).provider}. Valid: mock, anthropic, openai`);
+      throw new Error(
+        `Unknown LLM provider: ${(config as { provider: string }).provider}. Valid: mock, anthropic, openai`,
+      );
   }
 }

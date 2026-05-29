@@ -29,9 +29,15 @@ describe('clusterEpisodes', () => {
   });
 
   it('skips already-consolidated episodes', async () => {
-    const id = await encodeEpisode(db, embedding, { content: 'Already seen', source: 'direct-observation' });
+    const id = await encodeEpisode(db, embedding, {
+      content: 'Already seen',
+      source: 'direct-observation',
+    });
     db.prepare('UPDATE episodes SET consolidated = 1 WHERE id = ?').run(id);
-    const clusters = clusterEpisodes(db, embedding, { similarityThreshold: 0.0, minClusterSize: 1 });
+    const clusters = clusterEpisodes(db, embedding, {
+      similarityThreshold: 0.0,
+      minClusterSize: 1,
+    });
     const hasConsolidated = clusters.flat().some(ep => ep.id === id);
     expect(hasConsolidated).toBe(false);
   });
@@ -40,15 +46,27 @@ describe('clusterEpisodes', () => {
     await encodeEpisode(db, embedding, { content: 'same event', source: 'direct-observation' });
     await encodeEpisode(db, embedding, { content: 'same event', source: 'tool-result' });
     await encodeEpisode(db, embedding, { content: 'same event', source: 'told-by-user' });
-    const clusters = clusterEpisodes(db, embedding, { similarityThreshold: 0.99, minClusterSize: 3 });
+    const clusters = clusterEpisodes(db, embedding, {
+      similarityThreshold: 0.99,
+      minClusterSize: 3,
+    });
     expect(clusters.length).toBe(1);
     expect(clusters[0].length).toBe(3);
   });
 
   it('does not cluster dissimilar episodes', async () => {
-    await encodeEpisode(db, embedding, { content: 'alpha bravo charlie', source: 'direct-observation' });
-    await encodeEpisode(db, embedding, { content: 'delta echo foxtrot', source: 'direct-observation' });
-    const clusters = clusterEpisodes(db, embedding, { similarityThreshold: 0.99, minClusterSize: 2 });
+    await encodeEpisode(db, embedding, {
+      content: 'alpha bravo charlie',
+      source: 'direct-observation',
+    });
+    await encodeEpisode(db, embedding, {
+      content: 'delta echo foxtrot',
+      source: 'direct-observation',
+    });
+    const clusters = clusterEpisodes(db, embedding, {
+      similarityThreshold: 0.99,
+      minClusterSize: 2,
+    });
     expect(clusters.length).toBe(0);
   });
 });
@@ -113,7 +131,9 @@ describe('runConsolidation', () => {
       extractPrinciple: () => ({ content: 'Principle', type: 'semantic' }),
     });
 
-    const unconsolidated = db.prepare('SELECT COUNT(*) as count FROM episodes WHERE consolidated = 0').get();
+    const unconsolidated = db
+      .prepare('SELECT COUNT(*) as count FROM episodes WHERE consolidated = 0')
+      .get();
     expect(unconsolidated.count).toBe(0);
   });
 
@@ -121,7 +141,10 @@ describe('runConsolidation', () => {
     await encodeEpisode(db, embedding, { content: 'test', source: 'direct-observation' });
 
     await runConsolidation(db, embedding, { minClusterSize: 1, similarityThreshold: 0.5 });
-    const run2 = await runConsolidation(db, embedding, { minClusterSize: 1, similarityThreshold: 0.5 });
+    const run2 = await runConsolidation(db, embedding, {
+      minClusterSize: 1,
+      similarityThreshold: 0.5,
+    });
     expect(run2.episodesEvaluated).toBe(0);
   });
 
@@ -135,7 +158,9 @@ describe('runConsolidation', () => {
       similarityThreshold: 0.99,
     });
 
-    const metrics = db.prepare('SELECT * FROM consolidation_metrics WHERE run_id = ?').all(result.runId);
+    const metrics = db
+      .prepare('SELECT * FROM consolidation_metrics WHERE run_id = ?')
+      .all(result.runId);
     expect(metrics.length).toBeGreaterThanOrEqual(1);
     expect(metrics[0]).toHaveProperty('min_cluster_size');
     expect(metrics[0]).toHaveProperty('similarity_threshold');
@@ -269,9 +294,21 @@ describe('runConsolidation with LLM', () => {
   });
 
   it('consolidated semantic inherits max salience from source episodes', async () => {
-    await encodeEpisode(db, embedding, { content: 'same thing', source: 'direct-observation', salience: 0.3 });
-    await encodeEpisode(db, embedding, { content: 'same thing', source: 'tool-result', salience: 0.9 });
-    await encodeEpisode(db, embedding, { content: 'same thing', source: 'told-by-user', salience: 0.6 });
+    await encodeEpisode(db, embedding, {
+      content: 'same thing',
+      source: 'direct-observation',
+      salience: 0.3,
+    });
+    await encodeEpisode(db, embedding, {
+      content: 'same thing',
+      source: 'tool-result',
+      salience: 0.9,
+    });
+    await encodeEpisode(db, embedding, {
+      content: 'same thing',
+      source: 'told-by-user',
+      salience: 0.6,
+    });
 
     await runConsolidation(db, embedding, {
       minClusterSize: 3,

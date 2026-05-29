@@ -50,8 +50,10 @@ describe('import', () => {
   });
 
   it('preserves episode agent identity', async () => {
-    if (existsSync('./test-import-agent-src')) rmSync('./test-import-agent-src', { recursive: true, force: true });
-    if (existsSync('./test-import-agent-dest')) rmSync('./test-import-agent-dest', { recursive: true, force: true });
+    if (existsSync('./test-import-agent-src'))
+      rmSync('./test-import-agent-src', { recursive: true, force: true });
+    if (existsSync('./test-import-agent-dest'))
+      rmSync('./test-import-agent-dest', { recursive: true, force: true });
     const agentSource = new Audrey({
       dataDir: './test-import-agent-src',
       agent: 'agent-alpha',
@@ -66,7 +68,9 @@ describe('import', () => {
     });
     await agentDest.import(snapshot);
 
-    const ep = agentDest.db.prepare("SELECT agent FROM episodes WHERE content = 'Agent-owned memory'").get();
+    const ep = agentDest.db
+      .prepare("SELECT agent FROM episodes WHERE content = 'Agent-owned memory'")
+      .get();
     expect(ep.agent).toBe('agent-alpha');
 
     agentSource.close();
@@ -76,14 +80,19 @@ describe('import', () => {
   });
 
   it('preserves consolidated memory agent identity', async () => {
-    if (existsSync('./test-import-consolidated-agent-src')) rmSync('./test-import-consolidated-agent-src', { recursive: true, force: true });
-    if (existsSync('./test-import-consolidated-agent-dest')) rmSync('./test-import-consolidated-agent-dest', { recursive: true, force: true });
+    if (existsSync('./test-import-consolidated-agent-src'))
+      rmSync('./test-import-consolidated-agent-src', { recursive: true, force: true });
+    if (existsSync('./test-import-consolidated-agent-dest'))
+      rmSync('./test-import-consolidated-agent-dest', { recursive: true, force: true });
     const agentSource = new Audrey({
       dataDir: './test-import-consolidated-agent-src',
       agent: 'agent-alpha',
       embedding: { provider: 'mock', dimensions: 8 },
     });
-    await agentSource.encode({ content: 'Consolidated agent marker', source: 'direct-observation' });
+    await agentSource.encode({
+      content: 'Consolidated agent marker',
+      source: 'direct-observation',
+    });
     await agentSource.encode({ content: 'Consolidated agent marker', source: 'tool-result' });
     await agentSource.encode({ content: 'Consolidated agent marker', source: 'told-by-user' });
     await agentSource.consolidate({
@@ -99,7 +108,9 @@ describe('import', () => {
     });
     await agentDest.import(snapshot);
 
-    const sem = agentDest.db.prepare("SELECT agent FROM semantics WHERE content = 'Agent-owned consolidated semantic'").get();
+    const sem = agentDest.db
+      .prepare("SELECT agent FROM semantics WHERE content = 'Agent-owned consolidated semantic'")
+      .get();
     expect(sem.agent).toBe('agent-alpha');
 
     agentSource.close();
@@ -167,7 +178,9 @@ describe('import', () => {
     });
     await ctxDest.import(snapshot);
 
-    const ep = ctxDest.db.prepare("SELECT context, affect FROM episodes WHERE content = 'Frustrating auth bug'").get();
+    const ep = ctxDest.db
+      .prepare("SELECT context, affect FROM episodes WHERE content = 'Frustrating auth bug'")
+      .get();
     expect(JSON.parse(ep.context)).toEqual({ task: 'debugging', domain: 'auth' });
     expect(JSON.parse(ep.affect)).toEqual({ valence: -0.5, arousal: 0.8, label: 'frustration' });
 
@@ -196,7 +209,9 @@ describe('import', () => {
     const stats = dest.introspect();
     expect(stats.semantic).toBeGreaterThanOrEqual(1);
 
-    const importedSem = dest.db.prepare('SELECT interference_count, salience FROM semantics LIMIT 1').get();
+    const importedSem = dest.db
+      .prepare('SELECT interference_count, salience FROM semantics LIMIT 1')
+      .get();
     if (importedSem) {
       expect(importedSem.interference_count).toBeDefined();
       expect(importedSem.salience).toBeDefined();

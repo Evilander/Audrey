@@ -21,7 +21,7 @@ export function affectSimilarity(a: Partial<Affect> | null, b: Partial<Affect> |
   if (!a || !b) return 0;
   if (a.valence === undefined || b.valence === undefined) return 0;
   const valenceDist = Math.abs(a.valence - b.valence);
-  const valenceSim = 1.0 - (valenceDist / 2.0);
+  const valenceSim = 1.0 - valenceDist / 2.0;
   if (a.arousal === undefined || b.arousal === undefined) return valenceSim;
   const arousalSim = 1.0 - Math.abs(a.arousal - b.arousal);
   // Valence is primary (70%), arousal secondary (30%) per Bower 1981
@@ -36,7 +36,7 @@ export function moodCongruenceModifier(
   if (!encodingAffect || !retrievalMood) return 1.0;
   const similarity = affectSimilarity(encodingAffect, retrievalMood);
   if (similarity === 0) return 1.0;
-  return 1.0 + (weight * similarity);
+  return 1.0 + weight * similarity;
 }
 
 export async function detectResonance(
@@ -51,11 +51,13 @@ export async function detectResonance(
   const { content, affect } = params;
   if (!enabled || !affect || affect.valence === undefined) return [];
 
-  const buffer = embedding?.buffer ?? embeddingProvider.vectorToBuffer(
-    embedding?.vector ?? await embeddingProvider.embed(content)
-  );
+  const buffer =
+    embedding?.buffer ??
+    embeddingProvider.vectorToBuffer(embedding?.vector ?? (await embeddingProvider.embed(content)));
 
-  const matches = db.prepare(`
+  const matches = db
+    .prepare(
+      `
     SELECT e.*, (1.0 - v.distance) AS similarity
     FROM vec_episodes v
     JOIN episodes e ON e.id = v.id
@@ -63,13 +65,25 @@ export async function detectResonance(
       AND k = ?
       AND e.id != ?
       AND e.superseded_by IS NULL
-  `).all(buffer, k, episodeId) as Array<{ id: string; content: string; affect: string; similarity: number; created_at: string }>;
+  `,
+    )
+    .all(buffer, k, episodeId) as Array<{
+    id: string;
+    content: string;
+    affect: string;
+    similarity: number;
+    created_at: string;
+  }>;
 
   const resonances: ResonanceResult[] = [];
   for (const match of matches) {
     if (match.similarity < threshold) continue;
     let priorAffect: Partial<Affect>;
-    try { priorAffect = JSON.parse(match.affect || '{}') as Partial<Affect>; } catch { continue; }
+    try {
+      priorAffect = JSON.parse(match.affect || '{}') as Partial<Affect>;
+    } catch {
+      continue;
+    }
     if (priorAffect.valence === undefined) continue;
 
     const emotionalSimilarity = affectSimilarity(affect, priorAffect);

@@ -116,14 +116,16 @@ export function verifyPaperSubmissionBundle(options = {}) {
 
   const listed = new Map((manifest.files ?? []).map(file => [file.path, file]));
   for (const file of REQUIRED_FILES) {
-    if (!listed.has(file)) failures.push(`paper-submission-manifest.json: missing required file record ${file}`);
+    if (!listed.has(file))
+      failures.push(`paper-submission-manifest.json: missing required file record ${file}`);
   }
   const compileReport = listed.has('docs/paper/output/arxiv-compile-report.json')
     ? readJson(join(dir, 'docs/paper/output/arxiv-compile-report.json'))
     : null;
   if (compileReport?.status === 'passed') {
     for (const file of PASSED_COMPILE_FILES) {
-      if (!listed.has(file)) failures.push(`paper-submission-manifest.json: missing compile-proof file record ${file}`);
+      if (!listed.has(file))
+        failures.push(`paper-submission-manifest.json: missing compile-proof file record ${file}`);
     }
   }
   if (listed.has('paper-submission-manifest.json')) {
@@ -152,7 +154,9 @@ export function verifyPaperSubmissionBundle(options = {}) {
     }
   }
 
-  const actualFiles = walkFiles(dir).filter(file => file !== 'paper-submission-manifest.json').sort();
+  const actualFiles = walkFiles(dir)
+    .filter(file => file !== 'paper-submission-manifest.json')
+    .sort();
   const listedFiles = [...listed.keys()].sort();
   const actualSet = new Set(actualFiles);
   const listedSet = new Set(listedFiles);
@@ -160,17 +164,24 @@ export function verifyPaperSubmissionBundle(options = {}) {
     if (!listedSet.has(file)) failures.push(`${file}: present in bundle but missing from manifest`);
   }
   for (const file of listedFiles) {
-    if (!actualSet.has(file)) failures.push(`${file}: listed in manifest but not present in bundle`);
+    if (!actualSet.has(file))
+      failures.push(`${file}: listed in manifest but not present in bundle`);
   }
   for (const file of scanFilesForLocalPaths(dir, actualFiles)) {
     failures.push(`${file}: contains a local absolute path`);
   }
-  if (manifest.claimVerification?.ok !== true) failures.push('paper-submission-manifest.json: claimVerification is not ok');
-  if (manifest.publicationPackVerification?.ok !== true) failures.push('paper-submission-manifest.json: publicationPackVerification is not ok');
-  if (manifest.guardBenchSnapshot?.passed !== 10) failures.push('paper-submission-manifest.json: GuardBench passed count is not 10');
-  if (manifest.guardBenchSnapshot?.scenarios !== 10) failures.push('paper-submission-manifest.json: GuardBench scenario count is not 10');
-  if (manifest.guardBenchSnapshot?.redactionLeaks !== 0) failures.push('paper-submission-manifest.json: GuardBench decision redaction leaks are not 0');
-  if (manifest.guardBenchSnapshot?.artifactLeaks !== 0) failures.push('paper-submission-manifest.json: GuardBench artifact leaks are not 0');
+  if (manifest.claimVerification?.ok !== true)
+    failures.push('paper-submission-manifest.json: claimVerification is not ok');
+  if (manifest.publicationPackVerification?.ok !== true)
+    failures.push('paper-submission-manifest.json: publicationPackVerification is not ok');
+  if (manifest.guardBenchSnapshot?.passed !== 10)
+    failures.push('paper-submission-manifest.json: GuardBench passed count is not 10');
+  if (manifest.guardBenchSnapshot?.scenarios !== 10)
+    failures.push('paper-submission-manifest.json: GuardBench scenario count is not 10');
+  if (manifest.guardBenchSnapshot?.redactionLeaks !== 0)
+    failures.push('paper-submission-manifest.json: GuardBench decision redaction leaks are not 0');
+  if (manifest.guardBenchSnapshot?.artifactLeaks !== 0)
+    failures.push('paper-submission-manifest.json: GuardBench artifact leaks are not 0');
 
   return {
     ok: failures.length === 0,

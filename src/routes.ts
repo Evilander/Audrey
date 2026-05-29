@@ -20,9 +20,22 @@ import { VERSION } from '../mcp-server/config.js';
 // `includePrivate:true` or swap `confidenceConfig` weights — both bypass
 // privacy/integrity controls. Whitelist only, never blacklist.
 const SAFE_RECALL_KEYS = new Set([
-  'minConfidence', 'min_confidence', 'types', 'limit',
-  'includeProvenance', 'include_provenance', 'includeDormant', 'include_dormant',
-  'tags', 'sources', 'after', 'before', 'context', 'mood', 'retrieval', 'scope',
+  'minConfidence',
+  'min_confidence',
+  'types',
+  'limit',
+  'includeProvenance',
+  'include_provenance',
+  'includeDormant',
+  'include_dormant',
+  'tags',
+  'sources',
+  'after',
+  'before',
+  'context',
+  'mood',
+  'retrieval',
+  'scope',
 ]);
 
 function recallResponse(results: RecallResults): {
@@ -182,9 +195,10 @@ function preflightOptionsFromBody(body: RouteBody): PreflightOptions {
     limit: body.limit,
     budgetChars: body.budget_chars ?? body.budgetChars,
     mode: body.mode,
-    recentFailureWindowHours: body.failure_window_hours
-      ?? body.recent_failure_window_hours
-      ?? body.recentFailureWindowHours,
+    recentFailureWindowHours:
+      body.failure_window_hours ??
+      body.recent_failure_window_hours ??
+      body.recentFailureWindowHours,
     recentChangeWindowHours: body.recent_change_window_hours ?? body.recentChangeWindowHours,
     includeCapsule: body.include_capsule ?? body.includeCapsule,
     includeStatus: body.include_status ?? body.includeStatus,
@@ -202,9 +216,13 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   const allowAdminTools = adminToolsEnabled(options);
 
   function adminDisabledResponse(c: Context) {
-    return c.json({
-      error: 'Admin memory routes are disabled. Set AUDREY_ENABLE_ADMIN_TOOLS=1 to enable export, import, and forget.',
-    }, 403);
+    return c.json(
+      {
+        error:
+          'Admin memory routes are disabled. Set AUDREY_ENABLE_ADMIN_TOOLS=1 to enable export, import, and forget.',
+      },
+      403,
+    );
   }
 
   // Health check - no auth required.
@@ -212,7 +230,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   //   status  / healthy - original TS-era field names (tests/http-api.test.js)
   //   ok      / version - Python SDK HealthResponse contract
   //                       (python/audrey_memory/types.py)
-  app.get('/health', (c) => {
+  app.get('/health', c => {
     try {
       const status = audrey.memoryStatus();
       return c.json({
@@ -222,12 +240,15 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         version: VERSION,
       });
     } catch {
-      return c.json({
-        status: 'error',
-        ok: false,
-        healthy: false,
-        version: VERSION,
-      }, 500);
+      return c.json(
+        {
+          status: 'error',
+          ok: false,
+          healthy: false,
+          version: VERSION,
+        },
+        500,
+      );
     }
   });
 
@@ -261,7 +282,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   }
 
   // POST /v1/encode
-  app.post('/v1/encode', async (c) => {
+  app.post('/v1/encode', async c => {
     try {
       const body = await c.req.json<RouteBody>();
       const id = await audrey.encode({
@@ -274,7 +295,12 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         affect: body.affect,
         private: body.private,
       });
-      return c.json({ id, content: body.content, source: body.source, private: body.private ?? false });
+      return c.json({
+        id,
+        content: body.content,
+        source: body.source,
+        private: body.private ?? false,
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, 400);
@@ -282,7 +308,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/recall
-  app.post('/v1/recall', async (c) => {
+  app.post('/v1/recall', async c => {
     try {
       const body = await c.req.json<RouteBody>();
       const { query, ...rest } = body;
@@ -303,24 +329,27 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   // POST /v1/validate — closed-loop feedback. Agents tell Audrey how a
   // recalled memory played out (used | helpful | wrong) and Audrey nudges
   // salience + retrieval bookkeeping accordingly.
-  app.post('/v1/validate', async (c) => {
+  app.post('/v1/validate', async c => {
     try {
       const body = await c.req.json<RouteBody>();
       const id = typeof body.id === 'string' ? body.id : null;
       if (!id) return c.json({ error: 'id is required' }, 400);
-      const outcome = body.outcome === 'used' || body.outcome === 'helpful' || body.outcome === 'wrong'
-        ? body.outcome
-        : 'used';
-      const preflightEventId = typeof body.preflight_event_id === 'string'
-        ? body.preflight_event_id
-        : typeof body.preflightEventId === 'string'
-          ? body.preflightEventId
-          : undefined;
-      const actionKey = typeof body.action_key === 'string'
-        ? body.action_key
-        : typeof body.actionKey === 'string'
-          ? body.actionKey
-          : undefined;
+      const outcome =
+        body.outcome === 'used' || body.outcome === 'helpful' || body.outcome === 'wrong'
+          ? body.outcome
+          : 'used';
+      const preflightEventId =
+        typeof body.preflight_event_id === 'string'
+          ? body.preflight_event_id
+          : typeof body.preflightEventId === 'string'
+            ? body.preflightEventId
+            : undefined;
+      const actionKey =
+        typeof body.action_key === 'string'
+          ? body.action_key
+          : typeof body.actionKey === 'string'
+            ? body.actionKey
+            : undefined;
       const evidenceIds = Array.isArray(body.evidence_ids)
         ? body.evidence_ids.filter((value: unknown): value is string => typeof value === 'string')
         : Array.isArray(body.evidenceIds)
@@ -331,15 +360,16 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       return c.json({ ok: true, ...result });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      const code = err instanceof Error && 'code' in err && typeof (err as { code: unknown }).code === 'string'
-        ? (err as { code: string }).code
-        : undefined;
+      const code =
+        err instanceof Error && 'code' in err && typeof (err as { code: unknown }).code === 'string'
+          ? (err as { code: string }).code
+          : undefined;
       return c.json(code ? { error: message, code } : { error: message }, 400);
     }
   });
 
   // Legacy alias for the Python client's mark_used() — defaults outcome to "used".
-  app.post('/v1/mark-used', async (c) => {
+  app.post('/v1/mark-used', async c => {
     try {
       const body = await c.req.json<RouteBody>();
       const id = typeof body.id === 'string' ? body.id : null;
@@ -354,7 +384,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/capsule
-  app.post('/v1/capsule', async (c) => {
+  app.post('/v1/capsule', async c => {
     try {
       const body = await c.req.json<RouteBody>();
       if (typeof body.query !== 'string' || body.query.trim().length === 0) {
@@ -378,7 +408,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/preflight
-  app.post('/v1/preflight', async (c) => {
+  app.post('/v1/preflight', async c => {
     try {
       const body = await c.req.json<RouteBody>();
       const action = actionFromBody(body);
@@ -395,7 +425,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/reflexes
-  app.post('/v1/reflexes', async (c) => {
+  app.post('/v1/reflexes', async c => {
     try {
       const body = await c.req.json<RouteBody>();
       const action = actionFromBody(body);
@@ -415,7 +445,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/guard/before
-  app.post('/v1/guard/before', async (c) => {
+  app.post('/v1/guard/before', async c => {
     try {
       const body = await c.req.json<RouteBody>();
       const action = actionFromBody(body);
@@ -435,7 +465,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/guard/after
-  app.post('/v1/guard/after', async (c) => {
+  app.post('/v1/guard/after', async c => {
     try {
       const body = await c.req.json<RouteBody>();
       const receiptId = body.receipt_id ?? body.receiptId;
@@ -468,7 +498,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/consolidate
-  app.post('/v1/consolidate', async (c) => {
+  app.post('/v1/consolidate', async c => {
     try {
       const body = await c.req
         .json<Partial<ConsolidationOptions>>()
@@ -482,7 +512,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/dream
-  app.post('/v1/dream', async (c) => {
+  app.post('/v1/dream', async c => {
     try {
       const body = await c.req.json<DreamRequestBody>().catch((): DreamRequestBody => ({}));
       const result = await audrey.dream(body);
@@ -493,7 +523,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
-  app.get('/v1/introspect', (c) => {
+  app.get('/v1/introspect', c => {
     try {
       const result = audrey.introspect();
       return c.json(result);
@@ -506,7 +536,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   // GET /v1/impact — closed-loop visibility surface. Mirrors `audrey impact`
   // and Audrey.impact(). Bounds windowDays (1..365) and limit (1..100) so
   // unbounded inputs can't drag the report into a multi-second SQL scan.
-  app.get('/v1/impact', (c) => {
+  app.get('/v1/impact', c => {
     try {
       const windowRaw = c.req.query('windowDays') ?? c.req.query('window_days');
       const limitRaw = c.req.query('limit');
@@ -526,7 +556,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/resolve-truth
-  app.post('/v1/resolve-truth', async (c) => {
+  app.post('/v1/resolve-truth', async c => {
     try {
       const body = await c.req.json<RouteBody>();
       const result = await audrey.resolveTruth(body.contradiction_id as string);
@@ -537,7 +567,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
-  app.get('/v1/export', (c) => {
+  app.get('/v1/export', c => {
     if (!allowAdminTools) return adminDisabledResponse(c);
     try {
       const snapshot = audrey.export();
@@ -549,7 +579,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/import
-  app.post('/v1/import', async (c) => {
+  app.post('/v1/import', async c => {
     if (!allowAdminTools) return adminDisabledResponse(c);
     try {
       const body = await c.req.json<RouteBody>();
@@ -562,7 +592,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/forget
-  app.post('/v1/forget', async (c) => {
+  app.post('/v1/forget', async c => {
     if (!allowAdminTools) return adminDisabledResponse(c);
     try {
       const body = await c.req.json<RouteBody>();
@@ -596,7 +626,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/decay
-  app.post('/v1/decay', async (c) => {
+  app.post('/v1/decay', async c => {
     try {
       const body = await c.req.json<DecayRequestBody>().catch((): DecayRequestBody => ({}));
       const result = audrey.decay({
@@ -610,7 +640,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
     }
   });
 
-  app.get('/v1/status', (c) => {
+  app.get('/v1/status', c => {
     try {
       const result = audrey.memoryStatus();
       return c.json(result);
@@ -621,7 +651,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/reflect
-  app.post('/v1/reflect', async (c) => {
+  app.post('/v1/reflect', async c => {
     try {
       const body = await c.req.json<RouteBody>();
       const result = await audrey.reflect(body.turns as { role: string; content: string }[]);
@@ -633,7 +663,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // POST /v1/greeting
-  app.post('/v1/greeting', async (c) => {
+  app.post('/v1/greeting', async c => {
     try {
       const body = await c.req.json<GreetingRequestBody>().catch((): GreetingRequestBody => ({}));
       const result = await audrey.greeting({ context: body.context });

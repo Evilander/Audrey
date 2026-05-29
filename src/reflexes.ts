@@ -46,13 +46,9 @@ export interface MemoryReflexReport {
 }
 
 function reflexId(warning: PreflightWarning, action: string, tool?: string): string {
-  const input = [
-    warning.type,
-    warning.evidence_id ?? '',
-    warning.message,
-    action,
-    tool ?? '',
-  ].join('\n');
+  const input = [warning.type, warning.evidence_id ?? '', warning.message, action, tool ?? ''].join(
+    '\n',
+  );
   return `reflex_${createHash('sha256').update(input).digest('hex').slice(0, 12)}`;
 }
 
@@ -114,19 +110,21 @@ export function buildReflexReportFromPreflight(
   preflight: MemoryPreflight,
   options: Pick<ReflexOptions, 'includePreflight'> = {},
 ): MemoryReflexReport {
-  const reflexes = preflight.warnings.map((warning): MemoryReflex => ({
-    id: reflexId(warning, preflight.action, preflight.tool),
-    trigger: triggerFor(warning, preflight.action, preflight.tool),
-    response_type: responseType(warning, preflight.decision),
-    severity: warning.severity,
-    source: warning.type,
-    response: responseFor(warning),
-    reason: warning.reason,
-    ...(warning.evidence_id ? { evidence_id: warning.evidence_id } : {}),
-    action: preflight.action,
-    ...(preflight.tool ? { tool: preflight.tool } : {}),
-    ...(preflight.cwd ? { cwd: preflight.cwd } : {}),
-  }));
+  const reflexes = preflight.warnings.map(
+    (warning): MemoryReflex => ({
+      id: reflexId(warning, preflight.action, preflight.tool),
+      trigger: triggerFor(warning, preflight.action, preflight.tool),
+      response_type: responseType(warning, preflight.decision),
+      severity: warning.severity,
+      source: warning.type,
+      response: responseFor(warning),
+      reason: warning.reason,
+      ...(warning.evidence_id ? { evidence_id: warning.evidence_id } : {}),
+      action: preflight.action,
+      ...(preflight.tool ? { tool: preflight.tool } : {}),
+      ...(preflight.cwd ? { cwd: preflight.cwd } : {}),
+    }),
+  );
 
   return {
     action: preflight.action,

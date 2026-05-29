@@ -1,7 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildExternalGuardBenchRun, writeExternalRunMetadata } from './run-external-guardbench.mjs';
+import {
+  buildExternalGuardBenchRun,
+  writeExternalRunMetadata,
+} from './run-external-guardbench.mjs';
 import { validateAdapterRegistry } from './validate-adapter-registry.mjs';
 import { validateSchema } from './validate-guardbench-artifacts.mjs';
 import { publicCommand, publicPath } from './public-paths.mjs';
@@ -70,9 +73,11 @@ export async function buildExternalAdapterDryRunMatrix(options = {}) {
   const outRoot = resolve(options.outRoot ?? DEFAULT_OUT_ROOT);
   const registryValidation = await validateAdapterRegistry({ registry: registryPath });
   const registry = readJson(registryPath);
-  const adapters = registry.adapters.filter(adapter =>
-    adapter.status === 'external-system'
-    && (options.includeCredentialFree || adapter.credentialMode === 'runtime-env'));
+  const adapters = registry.adapters.filter(
+    adapter =>
+      adapter.status === 'external-system' &&
+      (options.includeCredentialFree || adapter.credentialMode === 'runtime-env'),
+  );
   const rows = [];
   const failures = [];
 
@@ -81,12 +86,15 @@ export async function buildExternalAdapterDryRunMatrix(options = {}) {
   }
 
   for (const adapter of adapters) {
-    const run = buildExternalGuardBenchRun({
-      adapter: adapter.id,
-      outDir: join(outRoot, adapter.id),
-      check: true,
-      json: true,
-    }, options.env ?? process.env);
+    const run = buildExternalGuardBenchRun(
+      {
+        adapter: adapter.id,
+        outDir: join(outRoot, adapter.id),
+        check: true,
+        json: true,
+      },
+      options.env ?? process.env,
+    );
     const metadata = {
       suite: 'GuardBench external adapter run',
       startedAt: new Date().toISOString(),
@@ -126,7 +134,9 @@ export async function buildExternalAdapterDryRunMatrix(options = {}) {
   };
   const schemaFailures = validateExternalAdapterDryRunMatrix(matrix, options);
   if (schemaFailures.length > 0) {
-    throw new Error(`GuardBench external adapter dry-run schema validation failed: ${schemaFailures.join('; ')}`);
+    throw new Error(
+      `GuardBench external adapter dry-run schema validation failed: ${schemaFailures.join('; ')}`,
+    );
   }
   return matrix;
 }
@@ -143,7 +153,9 @@ async function main() {
   if (args.json) {
     console.log(JSON.stringify(matrix, null, 2));
   } else if (matrix.ok) {
-    console.log(`GuardBench external adapter dry-run matrix passed: ${matrix.adapters.length} adapter(s)`);
+    console.log(
+      `GuardBench external adapter dry-run matrix passed: ${matrix.adapters.length} adapter(s)`,
+    );
     for (const row of matrix.adapters) {
       const missing = row.missingEnv.length ? `missing ${row.missingEnv.join(', ')}` : 'ready';
       console.log(`- ${row.id}: ${missing}; metadata ${row.metadataPath}`);

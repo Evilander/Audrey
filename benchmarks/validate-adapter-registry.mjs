@@ -69,11 +69,18 @@ export async function validateAdapterRegistry(options = {}) {
       failures.push(`Adapter ${adapter.id} has credentialMode=none but declares requiredEnv`);
     }
     if (adapter.credentialMode === 'runtime-env' && adapter.requiredEnv.length === 0) {
-      failures.push(`Adapter ${adapter.id} has credentialMode=runtime-env but declares no requiredEnv`);
+      failures.push(
+        `Adapter ${adapter.id} has credentialMode=runtime-env but declares no requiredEnv`,
+      );
     }
     for (const [commandName, command] of Object.entries(adapter.commands ?? {})) {
-      if ((commandName === 'moduleValidate' || commandName === 'selfTest') && !command.includes(adapter.path)) {
-        failures.push(`Adapter ${adapter.id} command ${commandName} does not reference ${adapter.path}`);
+      if (
+        (commandName === 'moduleValidate' || commandName === 'selfTest') &&
+        !command.includes(adapter.path)
+      ) {
+        failures.push(
+          `Adapter ${adapter.id} command ${commandName} does not reference ${adapter.path}`,
+        );
       }
     }
     if (!existsSync(resolve(adapter.path))) {
@@ -89,10 +96,14 @@ export async function validateAdapterRegistry(options = {}) {
       failures: report.failures,
     });
     if (!report.ok) {
-      failures.push(`Adapter ${adapter.id} failed module validation: ${report.failures.join('; ')}`);
+      failures.push(
+        `Adapter ${adapter.id} failed module validation: ${report.failures.join('; ')}`,
+      );
     }
     if (report.adapter?.name && report.adapter.name !== adapter.name) {
-      failures.push(`Adapter ${adapter.id} registry name ${adapter.name} does not match module name ${report.adapter.name}`);
+      failures.push(
+        `Adapter ${adapter.id} registry name ${adapter.name} does not match module name ${report.adapter.name}`,
+      );
     }
   }
 

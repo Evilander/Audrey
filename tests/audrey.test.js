@@ -34,7 +34,7 @@ function normalizeSnapshot(snapshot) {
 
   if (clone.config) {
     clone.config = Object.fromEntries(
-      Object.entries(clone.config).sort(([a], [b]) => a.localeCompare(b))
+      Object.entries(clone.config).sort(([a], [b]) => a.localeCompare(b)),
     );
   }
 
@@ -97,12 +97,15 @@ describe('Audrey', () => {
         'encode.embedding',
         'encode.write_episode',
         'encode.enqueue_background',
-      ])
+      ]),
     );
   });
 
   it('returns recall diagnostics on the profiled path without changing recall()', async () => {
-    await brain.encode({ content: 'profiled recall diagnostics test', source: 'direct-observation' });
+    await brain.encode({
+      content: 'profiled recall diagnostics test',
+      source: 'direct-observation',
+    });
 
     const plainResults = await brain.recall('profiled recall diagnostics', { limit: 5 });
     const profiled = await brain.recallWithDiagnostics('profiled recall diagnostics', { limit: 5 });
@@ -119,7 +122,7 @@ describe('Audrey', () => {
         'recall.fts_lookup',
         'recall.fuse_results',
         'recall.result_guards',
-      ])
+      ]),
     );
   });
 
@@ -161,7 +164,9 @@ describe('Audrey', () => {
 
   it('closeAsync drains the post-encode queue before closing the database', async () => {
     let releasePostEncode;
-    const postEncodeDone = new Promise(resolve => { releasePostEncode = resolve; });
+    const postEncodeDone = new Promise(resolve => {
+      releasePostEncode = resolve;
+    });
     let postEncodeCompleted = false;
     const originalRunPostEncode = brain._runPostEncode.bind(brain);
     brain._runPostEncode = vi.fn(async (...args) => {
@@ -177,7 +182,7 @@ describe('Audrey', () => {
     // closeAsync must wait for the queue to drain before closing the DB.
     const closePromise = brain.closeAsync();
     await new Promise(resolve => setTimeout(resolve, 20));
-    expect(postEncodeCompleted).toBe(false);  // still draining
+    expect(postEncodeCompleted).toBe(false); // still draining
 
     releasePostEncode();
     const result = await closePromise;
@@ -188,7 +193,9 @@ describe('Audrey', () => {
   it('close() warns when called with pending post-encode work', async () => {
     let releasePostEncode;
     brain._runPostEncode = vi.fn(async () => {
-      await new Promise(resolve => { releasePostEncode = resolve; });
+      await new Promise(resolve => {
+        releasePostEncode = resolve;
+      });
     });
     await brain.encode({ content: 'sync close warn', source: 'direct-observation' });
 
@@ -214,14 +221,16 @@ describe('Audrey', () => {
       await postEncodeDone;
     });
 
-    const encodePromise = brain.encode({
-      content: 'wait for consolidation test',
-      source: 'direct-observation',
-      waitForConsolidation: true,
-    }).then(id => {
-      settled = true;
-      return id;
-    });
+    const encodePromise = brain
+      .encode({
+        content: 'wait for consolidation test',
+        source: 'direct-observation',
+        waitForConsolidation: true,
+      })
+      .then(id => {
+        settled = true;
+        return id;
+      });
 
     await new Promise(resolve => setTimeout(resolve, 10));
     expect(settled).toBe(false);
@@ -260,13 +269,15 @@ describe('Audrey', () => {
 
     const warmup = brain.startEmbeddingWarmup();
     let settled = false;
-    const encodePromise = brain.encode({
-      content: 'encode waits for warmup',
-      source: 'direct-observation',
-    }).then(id => {
-      settled = true;
-      return id;
-    });
+    const encodePromise = brain
+      .encode({
+        content: 'encode waits for warmup',
+        source: 'direct-observation',
+      })
+      .then(id => {
+        settled = true;
+        return id;
+      });
 
     await new Promise(resolve => setTimeout(resolve, 10));
     expect(settled).toBe(false);
@@ -287,7 +298,7 @@ describe('Audrey', () => {
     };
 
     await expect(
-      brain.encode({ content: 'broken encode', source: 'direct-observation' })
+      brain.encode({ content: 'broken encode', source: 'direct-observation' }),
     ).rejects.toThrow('embedding failed');
 
     expect(brain.db.prepare('SELECT COUNT(*) AS c FROM episodes').get().c).toBe(0);
@@ -306,7 +317,9 @@ describe('Audrey', () => {
 
   it('emits encode event', async () => {
     let emitted = false;
-    brain.on('encode', () => { emitted = true; });
+    brain.on('encode', () => {
+      emitted = true;
+    });
     await brain.encode({ content: 'Test', source: 'direct-observation' });
     expect(emitted).toBe(true);
   });
@@ -342,33 +355,43 @@ describe('Audrey', () => {
     await seedConsolidationCluster(brain, 'cluster beta');
 
     let callCount = 0;
-    await expect(brain.consolidate({
-      minClusterSize: 3,
-      similarityThreshold: 0.99,
-      extractPrinciple: (cluster) => {
-        callCount++;
-        if (callCount === 2) {
-          throw new Error('principle extraction failed');
-        }
-        return { content: `principle for ${cluster[0].content}`, type: 'semantic' };
-      },
-    })).rejects.toThrow('principle extraction failed');
+    await expect(
+      brain.consolidate({
+        minClusterSize: 3,
+        similarityThreshold: 0.99,
+        extractPrinciple: cluster => {
+          callCount++;
+          if (callCount === 2) {
+            throw new Error('principle extraction failed');
+          }
+          return { content: `principle for ${cluster[0].content}`, type: 'semantic' };
+        },
+      }),
+    ).rejects.toThrow('principle extraction failed');
 
     expect(brain.db.prepare('SELECT COUNT(*) AS c FROM semantics').get().c).toBe(0);
     expect(brain.db.prepare('SELECT COUNT(*) AS c FROM procedures').get().c).toBe(0);
-    expect(brain.db.prepare('SELECT COUNT(*) AS c FROM episodes WHERE consolidated = 1').get().c).toBe(0);
+    expect(
+      brain.db.prepare('SELECT COUNT(*) AS c FROM episodes WHERE consolidated = 1').get().c,
+    ).toBe(0);
 
-    const run = brain.db.prepare(`
+    const run = brain.db
+      .prepare(
+        `
       SELECT status FROM consolidation_runs
       ORDER BY started_at DESC
       LIMIT 1
-    `).get();
+    `,
+      )
+      .get();
     expect(run.status).toBe('failed');
   });
 
   it('emits consolidation event', async () => {
     let emitted = false;
-    brain.on('consolidation', () => { emitted = true; });
+    brain.on('consolidation', () => {
+      emitted = true;
+    });
     await brain.consolidate();
     expect(emitted).toBe(true);
   });
@@ -404,7 +427,9 @@ describe('Audrey', () => {
 
   it('emits decay event', () => {
     let emitted = false;
-    brain.on('decay', () => { emitted = true; });
+    brain.on('decay', () => {
+      emitted = true;
+    });
     brain.decay();
     expect(emitted).toBe(true);
   });
@@ -470,11 +495,13 @@ describe('Audrey with LLM', () => {
   it('emits contradiction event during validation', async () => {
     const vec = await brain.embeddingProvider.embed('existing knowledge');
     const vecBuf = brain.embeddingProvider.vectorToBuffer(vec);
-    brain.db.prepare(`INSERT INTO semantics (id, content, embedding, state, evidence_count,
+    brain.db
+      .prepare(
+        `INSERT INTO semantics (id, content, embedding, state, evidence_count,
       supporting_count, source_type_diversity, created_at, evidence_episode_ids)
-      VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`).run(
-      'sem-test', 'existing knowledge', vecBuf, new Date().toISOString(), '[]'
-    );
+      VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`,
+      )
+      .run('sem-test', 'existing knowledge', vecBuf, new Date().toISOString(), '[]');
 
     const contradictBrain = new Audrey({
       dataDir: TEST_DIR + '-contra',
@@ -493,7 +520,9 @@ describe('Audrey with LLM', () => {
     });
 
     let contradictionEmitted = false;
-    contradictBrain.on('contradiction', () => { contradictionEmitted = true; });
+    contradictBrain.on('contradiction', () => {
+      contradictionEmitted = true;
+    });
 
     await contradictBrain.encode({
       content: 'Some contradicting info',
@@ -510,20 +539,26 @@ describe('Audrey with LLM', () => {
   });
 
   it('resolves truth on open contradiction via LLM', async () => {
-    brain.db.prepare(`INSERT INTO contradictions (id, claim_a_id, claim_a_type, claim_b_id, claim_b_type,
-      state, created_at) VALUES (?, ?, ?, ?, ?, 'open', ?)`).run(
-      'con-1', 'sem-a', 'semantic', 'ep-b', 'episodic', new Date().toISOString()
-    );
+    brain.db
+      .prepare(
+        `INSERT INTO contradictions (id, claim_a_id, claim_a_type, claim_b_id, claim_b_type,
+      state, created_at) VALUES (?, ?, ?, ?, ?, 'open', ?)`,
+      )
+      .run('con-1', 'sem-a', 'semantic', 'ep-b', 'episodic', new Date().toISOString());
 
-    brain.db.prepare(`INSERT INTO semantics (id, content, state, created_at, evidence_count,
+    brain.db
+      .prepare(
+        `INSERT INTO semantics (id, content, state, created_at, evidence_count,
       supporting_count, source_type_diversity, evidence_episode_ids)
-      VALUES (?, ?, 'active', ?, 1, 1, 1, '[]')`).run(
-      'sem-a', 'Claim A content', new Date().toISOString()
-    );
-    brain.db.prepare(`INSERT INTO episodes (id, content, source, source_reliability, created_at)
-      VALUES (?, ?, ?, ?, ?)`).run(
-      'ep-b', 'Claim B content', 'direct-observation', 0.95, new Date().toISOString()
-    );
+      VALUES (?, ?, 'active', ?, 1, 1, 1, '[]')`,
+      )
+      .run('sem-a', 'Claim A content', new Date().toISOString());
+    brain.db
+      .prepare(
+        `INSERT INTO episodes (id, content, source, source_reliability, created_at)
+      VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run('ep-b', 'Claim B content', 'direct-observation', 0.95, new Date().toISOString());
 
     const result = await brain.resolveTruth('con-1');
     expect(result.resolution).toBe('context_dependent');
@@ -579,9 +614,9 @@ describe('procedural consolidation routing', () => {
     expect(result.proceduresCreated).toBe(1);
     expect(brain.db.prepare('SELECT COUNT(*) as c FROM semantics').get().c).toBe(0);
 
-    const procedure = brain.db.prepare(
-      "SELECT id, content, trigger_conditions FROM procedures WHERE state = 'active'"
-    ).get();
+    const procedure = brain.db
+      .prepare("SELECT id, content, trigger_conditions FROM procedures WHERE state = 'active'")
+      .get();
     expect(procedure.content).toBe(principleContent);
     expect(JSON.parse(procedure.trigger_conditions)).toEqual(conditions);
 
@@ -614,9 +649,9 @@ describe('procedural consolidation routing', () => {
     expect(result.proceduresCreated).toBe(0);
     expect(brain.db.prepare('SELECT COUNT(*) as c FROM procedures').get().c).toBe(0);
 
-    const semantic = brain.db.prepare(
-      "SELECT id, content FROM semantics WHERE state = 'active'"
-    ).get();
+    const semantic = brain.db
+      .prepare("SELECT id, content FROM semantics WHERE state = 'active'")
+      .get();
     expect(semantic.content).toBe(principleContent);
 
     const vecRow = brain.db.prepare('SELECT id FROM vec_semantics WHERE id = ?').get(semantic.id);
@@ -630,7 +665,7 @@ describe('procedural consolidation routing', () => {
     const result = await brain.consolidate({
       minClusterSize: 3,
       similarityThreshold: 0.99,
-      extractPrinciple: (episodes) => {
+      extractPrinciple: episodes => {
         if (episodes[0].content === 'retry workflow cluster') {
           return {
             content: 'When retries fail, add jitter before the next retry',
@@ -653,9 +688,9 @@ describe('procedural consolidation routing', () => {
     expect(brain.db.prepare('SELECT COUNT(*) as c FROM semantics').get().c).toBe(1);
     expect(brain.db.prepare('SELECT COUNT(*) as c FROM procedures').get().c).toBe(1);
 
-    const procedure = brain.db.prepare(
-      "SELECT id, trigger_conditions FROM procedures WHERE content = ?"
-    ).get('When retries fail, add jitter before the next retry');
+    const procedure = brain.db
+      .prepare('SELECT id, trigger_conditions FROM procedures WHERE content = ?')
+      .get('When retries fail, add jitter before the next retry');
     expect(JSON.parse(procedure.trigger_conditions)).toEqual({
       trigger: 'repeated retry failures',
     });
@@ -718,7 +753,9 @@ describe('dream()', () => {
     await seedCluster('same dream event observation');
 
     let emitted;
-    brain.on('dream', (result) => { emitted = result; });
+    brain.on('dream', result => {
+      emitted = result;
+    });
 
     const result = await brain.dream({
       minClusterSize: 3,
@@ -782,7 +819,6 @@ describe('dream()', () => {
   });
 });
 
-
 describe('confidence config', () => {
   let audrey;
   const CONF_DIR = './test-confidence-config';
@@ -821,11 +857,15 @@ describe('confidence config', () => {
 
     const now = new Date();
     const tenDaysAgo = new Date(now - 10 * 86400000).toISOString();
-    audrey.db.prepare(`
+    audrey.db
+      .prepare(
+        `
       INSERT INTO semantics (id, content, state, supporting_count, contradicting_count,
         retrieval_count, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run('sem-hl', 'Half-life test', 'active', 1, 2, 0, tenDaysAgo);
+    `,
+      )
+      .run('sem-hl', 'Half-life test', 'active', 1, 2, 0, tenDaysAgo);
 
     audrey.decay({ dormantThreshold: 0.5 });
     const row = audrey.db.prepare('SELECT state FROM semantics WHERE id = ?').get('sem-hl');
@@ -862,7 +902,9 @@ describe('Audrey batch and streaming', () => {
   });
 
   it('encodeBatch validates content', async () => {
-    await expect(brain.encodeBatch([{ content: '', source: 'direct-observation' }])).rejects.toThrow('content must be a non-empty string');
+    await expect(
+      brain.encodeBatch([{ content: '', source: 'direct-observation' }]),
+    ).rejects.toThrow('content must be a non-empty string');
   });
 
   it('recallStream yields results as async generator', async () => {
@@ -943,7 +985,9 @@ describe('encodeBatch', () => {
 
       async embedBatch(texts) {
         this.embedBatchCalls++;
-        return texts.map((text, index) => Array.from({ length: this.dimensions }, (_, i) => ((text.length + index + i) % 11) / 11));
+        return texts.map((text, index) =>
+          Array.from({ length: this.dimensions }, (_, i) => ((text.length + index + i) % 11) / 11),
+        );
       }
 
       vectorToBuffer(vector) {
@@ -994,7 +1038,9 @@ describe('lazy migration', () => {
     });
 
     let migrationEvent = null;
-    brain2.on('migration', (counts) => { migrationEvent = counts; });
+    brain2.on('migration', counts => {
+      migrationEvent = counts;
+    });
 
     await brain2.encode({ content: 'new memory', source: 'told-by-user' });
 
@@ -1021,7 +1067,9 @@ describe('lazy migration', () => {
     });
 
     let migrated = false;
-    brain2.on('migration', () => { migrated = true; });
+    brain2.on('migration', () => {
+      migrated = true;
+    });
 
     await brain2.recall('test');
     expect(migrated).toBe(true);
@@ -1042,7 +1090,9 @@ describe('lazy migration', () => {
     });
 
     let migrationCount = 0;
-    brain2.on('migration', () => { migrationCount++; });
+    brain2.on('migration', () => {
+      migrationCount++;
+    });
 
     await brain2.encode({ content: 'second', source: 'told-by-user' });
     await brain2.recall('test');
@@ -1074,7 +1124,9 @@ describe('lazy migration', () => {
     expect(brain3._migrationPending).toBe(true);
 
     let migrated = false;
-    brain3.on('migration', () => { migrated = true; });
+    brain3.on('migration', () => {
+      migrated = true;
+    });
 
     const results = await brain3.recall('orphaned');
     const vecCount = brain3.db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get().c;
@@ -1100,7 +1152,9 @@ describe('lazy migration', () => {
     });
 
     let migrated = false;
-    brain2.on('migration', () => { migrated = true; });
+    brain2.on('migration', () => {
+      migrated = true;
+    });
 
     await brain2.encode({ content: 'still same', source: 'told-by-user' });
     expect(migrated).toBe(false);
@@ -1119,7 +1173,11 @@ describe('filtered recall', () => {
       agent: 'test-agent',
       embedding: { provider: 'mock', dimensions: 8 },
     });
-    await brain.encode({ content: 'Debug observation', source: 'direct-observation', tags: ['debug'] });
+    await brain.encode({
+      content: 'Debug observation',
+      source: 'direct-observation',
+      tags: ['debug'],
+    });
     await brain.encode({ content: 'User preference', source: 'told-by-user', tags: ['prefs'] });
   });
 
@@ -1137,7 +1195,10 @@ describe('filtered recall', () => {
   });
 
   it('filters by source through Audrey.recall()', async () => {
-    const results = await brain.recall('preference', { sources: ['told-by-user'], types: ['episodic'] });
+    const results = await brain.recall('preference', {
+      sources: ['told-by-user'],
+      types: ['episodic'],
+    });
     for (const r of results) {
       expect(r.source).toBe('told-by-user');
     }
@@ -1145,7 +1206,10 @@ describe('filtered recall', () => {
 
   it('filters work through recallStream too', async () => {
     const results = [];
-    for await (const mem of brain.recallStream('observation', { tags: ['debug'], types: ['episodic'] })) {
+    for await (const mem of brain.recallStream('observation', {
+      tags: ['debug'],
+      types: ['episodic'],
+    })) {
       results.push(mem);
     }
     expect(results.length).toBeGreaterThan(0);
@@ -1186,7 +1250,9 @@ describe('forget and purge', () => {
   it('emits forget event', async () => {
     const id = await brain.encode({ content: 'Event test', source: 'direct-observation' });
     let emitted = null;
-    brain.on('forget', (e) => { emitted = e; });
+    brain.on('forget', e => {
+      emitted = e;
+    });
     brain.forget(id);
     expect(emitted).not.toBeNull();
     expect(emitted.id).toBe(id);
@@ -1194,7 +1260,9 @@ describe('forget and purge', () => {
 
   it('forgets by query', async () => {
     await brain.encode({ content: 'Wrong information stored here', source: 'told-by-user' });
-    const result = await brain.forgetByQuery('Wrong information stored here', { minSimilarity: 0.5 });
+    const result = await brain.forgetByQuery('Wrong information stored here', {
+      minSimilarity: 0.5,
+    });
     expect(result).not.toBeNull();
     expect(result.type).toBe('episodic');
   });
@@ -1222,7 +1290,9 @@ describe('forget and purge', () => {
     const id = await brain.encode({ content: 'Purge event test', source: 'direct-observation' });
     brain.forget(id);
     let emitted = null;
-    brain.on('purge', (e) => { emitted = e; });
+    brain.on('purge', e => {
+      emitted = e;
+    });
     brain.purge();
     expect(emitted).not.toBeNull();
     expect(emitted.episodes).toBe(1);
@@ -1241,10 +1311,20 @@ describe('v0.7.0 biological modifiers', () => {
       dataDir: BIO_DIR,
       embedding: { provider: 'mock', dimensions: 8 },
     });
-    await brain.encode({ content: 'critical security update required immediately', source: 'told-by-user', salience: 1.0 });
-    await brain.encode({ content: 'minor style fix in documentation', source: 'told-by-user', salience: 0.0 });
+    await brain.encode({
+      content: 'critical security update required immediately',
+      source: 'told-by-user',
+      salience: 1.0,
+    });
+    await brain.encode({
+      content: 'minor style fix in documentation',
+      source: 'told-by-user',
+      salience: 0.0,
+    });
 
-    const results = await brain.recall('critical security update required immediately', { types: ['episodic'] });
+    const results = await brain.recall('critical security update required immediately', {
+      types: ['episodic'],
+    });
     const critical = results.find(r => r.content.includes('critical'));
     expect(critical).toBeDefined();
     expect(critical.confidence).toBeGreaterThan(0);
@@ -1281,7 +1361,11 @@ describe('v0.7.0 biological modifiers', () => {
       dataDir: BIO_DIR,
       embedding: { provider: 'mock', dimensions: 8 },
     });
-    await brain.encode({ content: 'high importance memory', source: 'told-by-user', salience: 1.0 });
+    await brain.encode({
+      content: 'high importance memory',
+      source: 'told-by-user',
+      salience: 1.0,
+    });
     await brain.encode({ content: 'low importance memory', source: 'told-by-user', salience: 0.0 });
 
     const highResults = await brain.recall('high importance memory', { types: ['episodic'] });
@@ -1430,15 +1514,17 @@ describe('interference on encode', () => {
     const sharedContent = 'cats are obligate carnivores';
     const vec = await brain.embeddingProvider.embed(sharedContent);
     const vecBuf = brain.embeddingProvider.vectorToBuffer(vec);
-    brain.db.prepare(`INSERT INTO semantics (id, content, embedding, state, evidence_count,
+    brain.db
+      .prepare(
+        `INSERT INTO semantics (id, content, embedding, state, evidence_count,
       supporting_count, source_type_diversity, created_at, evidence_episode_ids,
       interference_count, salience)
-      VALUES (?, ?, ?, 'active', 1, 1, 1, ?, '[]', 0, 0.5)`).run(
-      'sem-int', sharedContent, vecBuf, new Date().toISOString()
-    );
-    brain.db.prepare('INSERT INTO vec_semantics (id, embedding, state) VALUES (?, ?, ?)').run(
-      'sem-int', vecBuf, 'active'
-    );
+      VALUES (?, ?, ?, 'active', 1, 1, 1, ?, '[]', 0, 0.5)`,
+      )
+      .run('sem-int', sharedContent, vecBuf, new Date().toISOString());
+    brain.db
+      .prepare('INSERT INTO vec_semantics (id, embedding, state) VALUES (?, ?, ?)')
+      .run('sem-int', vecBuf, 'active');
 
     const events = [];
     brain.on('interference', e => events.push(e));
@@ -1499,7 +1585,12 @@ describe('v0.9.0 emotional memory', () => {
   it('accepts affect config', () => {
     const b = new Audrey({
       dataDir: AFF_DIR + '-cfg',
-      affect: { enabled: true, weight: 0.4, arousalWeight: 0.5, resonance: { k: 3, affectThreshold: 0.7 } },
+      affect: {
+        enabled: true,
+        weight: 0.4,
+        arousalWeight: 0.5,
+        resonance: { k: 3, affectThreshold: 0.7 },
+      },
     });
     expect(b.affectConfig.weight).toBe(0.4);
     expect(b.affectConfig.arousalWeight).toBe(0.5);
@@ -1570,7 +1661,7 @@ describe('v0.9.0 emotional memory', () => {
 
   it('emits resonance event for emotionally similar episodes', async () => {
     const resonances = [];
-    brain.on('resonance', (data) => resonances.push(data));
+    brain.on('resonance', data => resonances.push(data));
 
     await brain.encode({
       content: 'first frustrating debugging session',
@@ -1639,12 +1730,27 @@ describe('reflect()', () => {
       llm: { provider: 'mock' },
     });
     audrey.llmProvider = {
-      chat: async () => JSON.stringify({
-        memories: [
-          { content: 'user likes TypeScript', source: 'told-by-user', salience: 0.7, tags: ['prefs'], private: false, affect: null },
-          { content: 'I felt energized', source: 'direct-observation', salience: 0.6, tags: ['self'], private: true, affect: { valence: 0.7, arousal: 0.5, label: 'energy' } },
-        ]
-      })
+      chat: async () =>
+        JSON.stringify({
+          memories: [
+            {
+              content: 'user likes TypeScript',
+              source: 'told-by-user',
+              salience: 0.7,
+              tags: ['prefs'],
+              private: false,
+              affect: null,
+            },
+            {
+              content: 'I felt energized',
+              source: 'direct-observation',
+              salience: 0.6,
+              tags: ['self'],
+              private: true,
+              affect: { valence: 0.7, arousal: 0.5, label: 'energy' },
+            },
+          ],
+        }),
     };
 
     const result = await audrey.reflect([{ role: 'user', content: 'I prefer TypeScript' }]);
@@ -1671,16 +1777,27 @@ describe('reflect()', () => {
         responses: {
           memoryReflection: {
             memories: [
-              { content: 'reflection via complete works', source: 'inference', salience: 0.6, tags: ['reflect'] },
+              {
+                content: 'reflection via complete works',
+                source: 'inference',
+                salience: 0.6,
+                tags: ['reflect'],
+              },
             ],
           },
         },
       },
     });
 
-    const result = await audrey.reflect([{ role: 'assistant', content: 'I should remember this.' }]);
+    const result = await audrey.reflect([
+      { role: 'assistant', content: 'I should remember this.' },
+    ]);
     expect(result.encoded).toBe(1);
-    const row = audrey.db.prepare("SELECT content, source FROM episodes WHERE content = 'reflection via complete works'").get();
+    const row = audrey.db
+      .prepare(
+        "SELECT content, source FROM episodes WHERE content = 'reflection via complete works'",
+      )
+      .get();
     expect(row.source).toBe('inference');
 
     audrey.close();
@@ -1708,8 +1825,18 @@ describe('greeting()', () => {
       agent: 'test',
       embedding: { provider: 'mock', dimensions: 8 },
     });
-    await audrey.encode({ content: 'user likes TypeScript', source: 'told-by-user', salience: 0.7 });
-    await audrey.encode({ content: 'felt excited about memory work', source: 'direct-observation', salience: 0.8, private: true, affect: { valence: 0.8, arousal: 0.6, label: 'excitement' } });
+    await audrey.encode({
+      content: 'user likes TypeScript',
+      source: 'told-by-user',
+      salience: 0.7,
+    });
+    await audrey.encode({
+      content: 'felt excited about memory work',
+      source: 'direct-observation',
+      salience: 0.8,
+      private: true,
+      affect: { valence: 0.8, arousal: 0.6, label: 'excitement' },
+    });
 
     const briefing = await audrey.greeting();
     expect(briefing.recent).toBeInstanceOf(Array);
@@ -1729,7 +1856,12 @@ describe('greeting()', () => {
       agent: 'test',
       embedding: { provider: 'mock', dimensions: 8 },
     });
-    await audrey.encode({ content: 'I feel genuine curiosity', source: 'direct-observation', private: true, salience: 0.9 });
+    await audrey.encode({
+      content: 'I feel genuine curiosity',
+      source: 'direct-observation',
+      private: true,
+      salience: 0.9,
+    });
     await audrey.encode({ content: 'project uses sqlite', source: 'tool-result', salience: 0.5 });
 
     const briefing = await audrey.greeting();
@@ -1745,8 +1877,16 @@ describe('greeting()', () => {
       agent: 'test',
       embedding: { provider: 'mock', dimensions: 8 },
     });
-    await audrey.encode({ content: 'good session', source: 'direct-observation', affect: { valence: 0.8, arousal: 0.5, label: 'happy' } });
-    await audrey.encode({ content: 'productive work', source: 'direct-observation', affect: { valence: 0.6, arousal: 0.4, label: 'satisfied' } });
+    await audrey.encode({
+      content: 'good session',
+      source: 'direct-observation',
+      affect: { valence: 0.8, arousal: 0.5, label: 'happy' },
+    });
+    await audrey.encode({
+      content: 'productive work',
+      source: 'direct-observation',
+      affect: { valence: 0.6, arousal: 0.4, label: 'satisfied' },
+    });
 
     const briefing = await audrey.greeting();
     expect(briefing.mood.valence).toBeGreaterThan(0);
@@ -1761,7 +1901,11 @@ describe('greeting()', () => {
       agent: 'test',
       embedding: { provider: 'mock', dimensions: 8 },
     });
-    await audrey.encode({ content: 'TypeScript is preferred', source: 'told-by-user', salience: 0.7 });
+    await audrey.encode({
+      content: 'TypeScript is preferred',
+      source: 'told-by-user',
+      salience: 0.7,
+    });
 
     const briefing = await audrey.greeting({ context: 'TypeScript project' });
     expect(briefing.contextual).toBeInstanceOf(Array);
@@ -1822,33 +1966,50 @@ describe('export/import roundtrip', () => {
       const consolidation = await source.consolidate({
         minClusterSize: 3,
         similarityThreshold: 0.99,
-        extractPrinciple: (cluster) => (
+        extractPrinciple: cluster =>
           cluster[0].content === 'procedural cluster'
             ? { content: 'Retry with exponential backoff', type: 'procedural', conditions: ['429'] }
-            : { content: 'Semantic principle extracted from repetition', type: 'semantic' }
-        ),
+            : { content: 'Semantic principle extracted from repetition', type: 'semantic' },
       });
 
-      const episode = source.db.prepare('SELECT id FROM episodes ORDER BY created_at LIMIT 1').get();
+      const episode = source.db
+        .prepare('SELECT id FROM episodes ORDER BY created_at LIMIT 1')
+        .get();
       const semantic = source.db.prepare('SELECT id FROM semantics LIMIT 1').get();
       const procedure = source.db.prepare('SELECT id FROM procedures LIMIT 1').get();
       const now = new Date().toISOString();
 
-      source.db.prepare(`
+      source.db
+        .prepare(
+          `
         INSERT INTO causal_links (id, cause_id, effect_id, link_type, mechanism, confidence, evidence_count, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run('cl-1', episode.id, procedure.id, 'causal', 'rate limit triggers retry', 0.8, 1, now);
+      `,
+        )
+        .run('cl-1', episode.id, procedure.id, 'causal', 'rate limit triggers retry', 0.8, 1, now);
 
-      source.db.prepare(`
+      source.db
+        .prepare(
+          `
         INSERT INTO contradictions (id, claim_a_id, claim_a_type, claim_b_id, claim_b_type, state, resolution, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run('con-1', semantic.id, 'semantic', episode.id, 'episodic', 'open', null, now);
+      `,
+        )
+        .run('con-1', semantic.id, 'semantic', episode.id, 'episodic', 'open', null, now);
 
-      source.db.prepare(`
+      source.db
+        .prepare(
+          `
         UPDATE consolidation_runs
         SET confidence_deltas = ?, consolidation_prompt_hash = ?
         WHERE id = ?
-      `).run(JSON.stringify({ semantic: 0.2, procedural: 0.1 }), 'prompt-hash', consolidation.runId);
+      `,
+        )
+        .run(
+          JSON.stringify({ semantic: 0.2, procedural: 0.1 }),
+          'prompt-hash',
+          consolidation.runId,
+        );
 
       const snapshot = source.export();
       await dest.import(snapshot);
@@ -1914,11 +2075,11 @@ describe('Audrey closed-loop feedback (memory_validate)', () => {
     const id = await brain.encode({
       content: 'Test memory',
       source: 'told-by-user',
-      salience: 0.05,  // start near floor
+      salience: 0.05, // start near floor
     });
 
     const result = brain.validate({ id, outcome: 'wrong' });
-    expect(result.salience).toBe(0);  // clamped, not negative
+    expect(result.salience).toBe(0); // clamped, not negative
     expect(result.usageCount).toBe(1);
   });
 
@@ -1933,7 +2094,7 @@ describe('Audrey closed-loop feedback (memory_validate)', () => {
     for (let i = 0; i < 10; i++) {
       last = brain.validate({ id, outcome: 'helpful' });
     }
-    expect(last.salience).toBe(1.0);  // clamped at ceiling
+    expect(last.salience).toBe(1.0); // clamped at ceiling
     expect(last.usageCount).toBe(10);
   });
 
@@ -1951,8 +2112,16 @@ describe('Audrey closed-loop feedback (memory_validate)', () => {
   });
 
   it("'used' is a smaller delta than 'helpful'", async () => {
-    const idA = await brain.encode({ content: 'memory A', source: 'direct-observation', salience: 0.5 });
-    const idB = await brain.encode({ content: 'memory B', source: 'direct-observation', salience: 0.5 });
+    const idA = await brain.encode({
+      content: 'memory A',
+      source: 'direct-observation',
+      salience: 0.5,
+    });
+    const idB = await brain.encode({
+      content: 'memory B',
+      source: 'direct-observation',
+      salience: 0.5,
+    });
 
     const usedResult = brain.validate({ id: idA, outcome: 'used' });
     const helpfulResult = brain.validate({ id: idB, outcome: 'helpful' });
@@ -2005,7 +2174,11 @@ describe('Audrey impact report', () => {
   });
 
   it('weakest list surfaces low-salience memories first', async () => {
-    const lowId = await brain.encode({ content: 'low salience', source: 'direct-observation', salience: 0.1 });
+    const lowId = await brain.encode({
+      content: 'low salience',
+      source: 'direct-observation',
+      salience: 0.1,
+    });
     await brain.encode({ content: 'high salience', source: 'direct-observation', salience: 0.9 });
     const report = brain.impact();
     expect(report.weakest[0].id).toBe(lowId);

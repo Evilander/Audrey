@@ -28,8 +28,14 @@ describe('multi-agent memory', () => {
   });
 
   it('encodes memories with agent identity', async () => {
-    const idA = await audreyA.encode({ content: 'Alpha remembers the deployment', source: 'direct-observation' });
-    const idB = await audreyB.encode({ content: 'Beta remembers the incident', source: 'direct-observation' });
+    const idA = await audreyA.encode({
+      content: 'Alpha remembers the deployment',
+      source: 'direct-observation',
+    });
+    const idB = await audreyB.encode({
+      content: 'Beta remembers the incident',
+      source: 'direct-observation',
+    });
     expect(idA).toBeDefined();
     expect(idB).toBeDefined();
   });
@@ -90,10 +96,16 @@ describe('multi-agent memory', () => {
   });
 
   it('keeps consolidated memories scoped to the consolidating agent', async () => {
-    await audreyA.encode({ content: 'Alpha-only consolidation marker', source: 'direct-observation' });
+    await audreyA.encode({
+      content: 'Alpha-only consolidation marker',
+      source: 'direct-observation',
+    });
     await audreyA.encode({ content: 'Alpha-only consolidation marker', source: 'tool-result' });
     await audreyA.encode({ content: 'Alpha-only consolidation marker', source: 'told-by-user' });
-    await audreyB.encode({ content: 'Beta-only consolidation marker', source: 'direct-observation' });
+    await audreyB.encode({
+      content: 'Beta-only consolidation marker',
+      source: 'direct-observation',
+    });
     await audreyB.encode({ content: 'Beta-only consolidation marker', source: 'tool-result' });
     await audreyB.encode({ content: 'Beta-only consolidation marker', source: 'told-by-user' });
 
@@ -108,11 +120,15 @@ describe('multi-agent memory', () => {
       extractPrinciple: () => ({ content: 'Beta-owned semantic principle', type: 'semantic' }),
     });
 
-    const rows = audreyA.db.prepare(`
+    const rows = audreyA.db
+      .prepare(
+        `
       SELECT content, agent FROM semantics
       WHERE content IN ('Alpha-owned semantic principle', 'Beta-owned semantic principle')
       ORDER BY content
-    `).all();
+    `,
+      )
+      .all();
 
     expect(rows).toEqual([
       { content: 'Alpha-owned semantic principle', agent: 'agent-alpha' },

@@ -3,18 +3,24 @@ import type { ConsolidationRunRow } from './types.js';
 import { safeJsonParse } from './utils.js';
 
 export function getConsolidationHistory(db: Database.Database): ConsolidationRunRow[] {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT id, checkpoint_cursor, input_episode_ids, output_memory_ids,
            started_at, completed_at, status
     FROM consolidation_runs ORDER BY started_at DESC
-  `).all() as ConsolidationRunRow[];
+  `,
+    )
+    .all() as ConsolidationRunRow[];
 }
 
 export function rollbackConsolidation(
   db: Database.Database,
   runId: string,
 ): { rolledBackMemories: number; restoredEpisodes: number } {
-  const run = db.prepare('SELECT * FROM consolidation_runs WHERE id = ?').get(runId) as ConsolidationRunRow | undefined;
+  const run = db.prepare('SELECT * FROM consolidation_runs WHERE id = ?').get(runId) as
+    | ConsolidationRunRow
+    | undefined;
   if (!run) throw new Error(`Consolidation run not found: ${runId}`);
   if (run.status === 'rolled_back') throw new Error(`Run already rolled back: ${runId}`);
 

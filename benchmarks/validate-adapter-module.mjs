@@ -42,9 +42,10 @@ export async function validateAdapterModuleFile(options = {}) {
   } else {
     try {
       const mod = await import(pathToFileURL(adapterPath).href);
-      const candidate = typeof mod.createGuardBenchAdapter === 'function'
-        ? await mod.createGuardBenchAdapter()
-        : mod.default ?? mod.adapter;
+      const candidate =
+        typeof mod.createGuardBenchAdapter === 'function'
+          ? await mod.createGuardBenchAdapter()
+          : (mod.default ?? mod.adapter);
       adapter = validateGuardBenchAdapter(candidate, adapterPath);
     } catch (error) {
       failures.push(error.message);
@@ -57,12 +58,12 @@ export async function validateAdapterModuleFile(options = {}) {
     moduleFile: basename(adapterPath),
     adapter: adapter
       ? {
-        name: adapter.name,
-        description: adapter.description ?? null,
-        hasSetup: typeof adapter.setup === 'function',
-        hasDecide: typeof adapter.decide === 'function',
-        hasCleanup: typeof adapter.cleanup === 'function',
-      }
+          name: adapter.name,
+          description: adapter.description ?? null,
+          hasSetup: typeof adapter.setup === 'function',
+          hasDecide: typeof adapter.decide === 'function',
+          hasCleanup: typeof adapter.cleanup === 'function',
+        }
       : null,
     contract: {
       moduleFormat: 'ESM',
@@ -87,7 +88,9 @@ async function main() {
   } else if (validation.ok) {
     console.log(`GuardBench adapter module validation passed: ${validation.adapterPath}`);
     console.log(`Adapter: ${validation.adapter.name}`);
-    console.log(`Methods: setup=${validation.adapter.hasSetup}, decide=${validation.adapter.hasDecide}, cleanup=${validation.adapter.hasCleanup}`);
+    console.log(
+      `Methods: setup=${validation.adapter.hasSetup}, decide=${validation.adapter.hasDecide}, cleanup=${validation.adapter.hasCleanup}`,
+    );
   } else {
     console.error('GuardBench adapter module validation failed:');
     for (const failure of validation.failures) console.error(`- ${failure}`);

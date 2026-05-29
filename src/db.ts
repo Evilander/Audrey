@@ -219,11 +219,24 @@ export function dropVec0Tables(db: Database.Database): void {
   db.exec('DROP TABLE IF EXISTS vec_procedures');
 }
 
-function migrateTable(db: Database.Database, { source, target, selectCols, insertCols, placeholders, transform, dimensions }: MigrateTableOptions): void {
+function migrateTable(
+  db: Database.Database,
+  {
+    source,
+    target,
+    selectCols,
+    insertCols,
+    placeholders,
+    transform,
+    dimensions,
+  }: MigrateTableOptions,
+): void {
   const count = (db.prepare(`SELECT COUNT(*) as c FROM ${target}`).get() as CountRow).c;
   if (count > 0) return;
 
-  const rows = db.prepare(`SELECT ${selectCols} FROM ${source} WHERE embedding IS NOT NULL`).all() as MigrationRow[];
+  const rows = db
+    .prepare(`SELECT ${selectCols} FROM ${source} WHERE embedding IS NOT NULL`)
+    .all() as MigrationRow[];
   if (rows.length === 0) return;
 
   const expectedBytes = dimensions ? dimensions * 4 : null;
@@ -244,7 +257,7 @@ function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): voi
     selectCols: 'id, embedding, source, consolidated',
     insertCols: 'id, embedding, source, consolidated',
     placeholders: '?, ?, ?, ?',
-    transform: (row) => [row.id, row.embedding, row.source, BigInt(row.consolidated ?? 0)],
+    transform: row => [row.id, row.embedding, row.source, BigInt(row.consolidated ?? 0)],
     dimensions,
   });
 
@@ -254,7 +267,7 @@ function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): voi
     selectCols: 'id, embedding, state',
     insertCols: 'id, embedding, state',
     placeholders: '?, ?, ?',
-    transform: (row) => [row.id, row.embedding, row.state],
+    transform: row => [row.id, row.embedding, row.state],
     dimensions,
   });
 
@@ -264,7 +277,7 @@ function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): voi
     selectCols: 'id, embedding, state',
     insertCols: 'id, embedding, state',
     placeholders: '?, ?, ?',
-    transform: (row) => [row.id, row.embedding, row.state],
+    transform: row => [row.id, row.embedding, row.state],
     dimensions,
   });
 }
@@ -291,9 +304,15 @@ function getEmbeddingSyncCounts(db: Database.Database): EmbeddingSyncCounts {
     // vec tables may not exist yet
   }
 
-  const episodes = (db.prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL').get() as CountRow).c;
-  const semantics = (db.prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL').get() as CountRow).c;
-  const procedures = (db.prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL').get() as CountRow).c;
+  const episodes = (
+    db.prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL').get() as CountRow
+  ).c;
+  const semantics = (
+    db.prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL').get() as CountRow
+  ).c;
+  const procedures = (
+    db.prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL').get() as CountRow
+  ).c;
 
   return {
     episodes,
@@ -305,7 +324,12 @@ function getEmbeddingSyncCounts(db: Database.Database): EmbeddingSyncCounts {
   };
 }
 
-function addColumnIfMissing(db: Database.Database, table: string, column: string, definition: string): void {
+function addColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+): void {
   const columns = db.pragma(`table_info(${table})`) as PragmaColumn[];
   const exists = columns.some(col => col.name === column);
   if (!exists) {
@@ -316,42 +340,91 @@ function addColumnIfMissing(db: Database.Database, table: string, column: string
 const SCHEMA_VERSION = 11;
 
 const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
-  { version: 1, up(db) { addColumnIfMissing(db, 'episodes', 'context', "TEXT DEFAULT '{}'"); } },
-  { version: 2, up(db) { addColumnIfMissing(db, 'episodes', 'affect', "TEXT DEFAULT '{}'"); } },
-  { version: 3, up(db) { addColumnIfMissing(db, 'semantics', 'interference_count', 'INTEGER DEFAULT 0'); } },
-  { version: 4, up(db) { addColumnIfMissing(db, 'semantics', 'salience', 'REAL DEFAULT 0.5'); } },
-  { version: 5, up(db) { addColumnIfMissing(db, 'procedures', 'interference_count', 'INTEGER DEFAULT 0'); } },
-  { version: 6, up(db) { addColumnIfMissing(db, 'procedures', 'salience', 'REAL DEFAULT 0.5'); } },
-  { version: 7, up(db) { addColumnIfMissing(db, 'episodes', 'private', 'INTEGER DEFAULT 0'); } },
-  { version: 8, up(db) {
-    addColumnIfMissing(db, 'episodes', 'agent', "TEXT DEFAULT 'default'");
-    addColumnIfMissing(db, 'semantics', 'agent', "TEXT DEFAULT 'default'");
-    addColumnIfMissing(db, 'procedures', 'agent', "TEXT DEFAULT 'default'");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent)");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_semantics_agent ON semantics(agent)");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_procedures_agent ON procedures(agent)");
-  }},
-  { version: 9, up(db) {
-    createFTSTables(db);
-    backfillFTS(db);
-  }},
-  { version: 10, up(db) {
-    addColumnIfMissing(db, 'episodes', 'usage_count', 'INTEGER DEFAULT 0');
-    addColumnIfMissing(db, 'episodes', 'last_used_at', 'TEXT');
-    addColumnIfMissing(db, 'semantics', 'usage_count', 'INTEGER DEFAULT 0');
-    addColumnIfMissing(db, 'semantics', 'last_used_at', 'TEXT');
-    addColumnIfMissing(db, 'procedures', 'usage_count', 'INTEGER DEFAULT 0');
-    addColumnIfMissing(db, 'procedures', 'last_used_at', 'TEXT');
-  }},
-  { version: 11, up(_db) {
-    // memory_events table and its indexes are created via the top-level
-    // SCHEMA block, which is idempotent (CREATE TABLE IF NOT EXISTS). Running
-    // this migration simply advances schema_version to 11 for existing DBs.
-  }},
+  {
+    version: 1,
+    up(db) {
+      addColumnIfMissing(db, 'episodes', 'context', "TEXT DEFAULT '{}'");
+    },
+  },
+  {
+    version: 2,
+    up(db) {
+      addColumnIfMissing(db, 'episodes', 'affect', "TEXT DEFAULT '{}'");
+    },
+  },
+  {
+    version: 3,
+    up(db) {
+      addColumnIfMissing(db, 'semantics', 'interference_count', 'INTEGER DEFAULT 0');
+    },
+  },
+  {
+    version: 4,
+    up(db) {
+      addColumnIfMissing(db, 'semantics', 'salience', 'REAL DEFAULT 0.5');
+    },
+  },
+  {
+    version: 5,
+    up(db) {
+      addColumnIfMissing(db, 'procedures', 'interference_count', 'INTEGER DEFAULT 0');
+    },
+  },
+  {
+    version: 6,
+    up(db) {
+      addColumnIfMissing(db, 'procedures', 'salience', 'REAL DEFAULT 0.5');
+    },
+  },
+  {
+    version: 7,
+    up(db) {
+      addColumnIfMissing(db, 'episodes', 'private', 'INTEGER DEFAULT 0');
+    },
+  },
+  {
+    version: 8,
+    up(db) {
+      addColumnIfMissing(db, 'episodes', 'agent', "TEXT DEFAULT 'default'");
+      addColumnIfMissing(db, 'semantics', 'agent', "TEXT DEFAULT 'default'");
+      addColumnIfMissing(db, 'procedures', 'agent', "TEXT DEFAULT 'default'");
+      db.exec('CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_semantics_agent ON semantics(agent)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_procedures_agent ON procedures(agent)');
+    },
+  },
+  {
+    version: 9,
+    up(db) {
+      createFTSTables(db);
+      backfillFTS(db);
+    },
+  },
+  {
+    version: 10,
+    up(db) {
+      addColumnIfMissing(db, 'episodes', 'usage_count', 'INTEGER DEFAULT 0');
+      addColumnIfMissing(db, 'episodes', 'last_used_at', 'TEXT');
+      addColumnIfMissing(db, 'semantics', 'usage_count', 'INTEGER DEFAULT 0');
+      addColumnIfMissing(db, 'semantics', 'last_used_at', 'TEXT');
+      addColumnIfMissing(db, 'procedures', 'usage_count', 'INTEGER DEFAULT 0');
+      addColumnIfMissing(db, 'procedures', 'last_used_at', 'TEXT');
+    },
+  },
+  {
+    version: 11,
+    up(_db) {
+      // memory_events table and its indexes are created via the top-level
+      // SCHEMA block, which is idempotent (CREATE TABLE IF NOT EXISTS). Running
+      // this migration simply advances schema_version to 11 for existing DBs.
+    },
+  },
 ];
 
 function runMigrations(db: Database.Database): void {
-  const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get() as ConfigRow | undefined;
+  const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get() as
+    | ConfigRow
+    | undefined;
   const currentVersion = row ? Number(row.value) : 0;
 
   if (currentVersion >= SCHEMA_VERSION) return;
@@ -363,7 +436,7 @@ function runMigrations(db: Database.Database): void {
 
   db.prepare(
     `INSERT INTO audrey_config (key, value) VALUES ('schema_version', ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   ).run(String(SCHEMA_VERSION));
 }
 
@@ -393,7 +466,9 @@ export function createDatabase(
   runMigrations(db);
 
   if (dimensions == null) {
-    const stored = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as ConfigRow | undefined;
+    const stored = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as
+      | ConfigRow
+      | undefined;
     if (stored) {
       dimensions = parseInt(stored.value, 10);
     }
@@ -406,23 +481,23 @@ export function createDatabase(
 
     sqliteVec.load(db);
 
-    const existing = db.prepare(
-      "SELECT value FROM audrey_config WHERE key = 'dimensions'"
-    ).get() as ConfigRow | undefined;
+    const existing = db
+      .prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'")
+      .get() as ConfigRow | undefined;
 
     if (existing) {
       const storedDims = parseInt(existing.value, 10);
       if (storedDims !== dimensions) {
         dropVec0Tables(db);
-        db.prepare(
-          "UPDATE audrey_config SET value = ? WHERE key = 'dimensions'"
-        ).run(String(dimensions));
+        db.prepare("UPDATE audrey_config SET value = ? WHERE key = 'dimensions'").run(
+          String(dimensions),
+        );
         migrated = true;
       }
     } else {
-      db.prepare(
-        "INSERT INTO audrey_config (key, value) VALUES ('dimensions', ?)"
-      ).run(String(dimensions));
+      db.prepare("INSERT INTO audrey_config (key, value) VALUES ('dimensions', ?)").run(
+        String(dimensions),
+      );
     }
 
     createVec0Tables(db, dimensions);
@@ -431,9 +506,9 @@ export function createDatabase(
       migrateEmbeddingsToVec0(db, dimensions);
       const sync = getEmbeddingSyncCounts(db);
       if (
-        sync.episodes !== sync.vecEpisodes
-        || sync.semantics !== sync.vecSemantics
-        || sync.procedures !== sync.vecProcedures
+        sync.episodes !== sync.vecEpisodes ||
+        sync.semantics !== sync.vecSemantics ||
+        sync.procedures !== sync.vecProcedures
       ) {
         migrated = true;
       }
@@ -448,7 +523,9 @@ export function readStoredDimensions(dataDir: string): number | null {
   if (!existsSync(dbPath)) return null;
   const db = new Database(dbPath, { readonly: true });
   try {
-    const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as ConfigRow | undefined;
+    const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as
+      | ConfigRow
+      | undefined;
     return row ? parseInt(row.value, 10) : null;
   } catch (err: unknown) {
     if (err instanceof Error && err.message?.includes('no such table')) return null;

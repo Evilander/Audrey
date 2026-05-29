@@ -104,7 +104,10 @@ describe('CLI surface', () => {
   });
 
   it('unknown subcommand exits 2 with help on stderr', () => {
-    const r = spawnSync(process.execPath, [cli, 'definitelynotacommand'], { encoding: 'utf8', timeout: 10000 });
+    const r = spawnSync(process.execPath, [cli, 'definitelynotacommand'], {
+      encoding: 'utf8',
+      timeout: 10000,
+    });
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("unknown command 'definitelynotacommand'");
     expect(r.stdout).toContain('Usage: audrey');
@@ -203,11 +206,17 @@ describe('CLI surface', () => {
 describe('MCP CLI: buildAudreyConfig', () => {
   const envBackup = {};
   const envKeys = [
-    'AUDREY_DATA_DIR', 'AUDREY_AGENT', 'AUDREY_EMBEDDING_PROVIDER',
-    'AUDREY_EMBEDDING_DIMENSIONS', 'AUDREY_LLM_PROVIDER',
+    'AUDREY_DATA_DIR',
+    'AUDREY_AGENT',
+    'AUDREY_EMBEDDING_PROVIDER',
+    'AUDREY_EMBEDDING_DIMENSIONS',
+    'AUDREY_LLM_PROVIDER',
     'AUDREY_ENABLE_ADMIN_TOOLS',
-    'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'AUDREY_DEVICE',
-    'GOOGLE_API_KEY', 'GEMINI_API_KEY',
+    'OPENAI_API_KEY',
+    'ANTHROPIC_API_KEY',
+    'AUDREY_DEVICE',
+    'GOOGLE_API_KEY',
+    'GEMINI_API_KEY',
   ];
 
   beforeEach(() => {
@@ -426,43 +435,60 @@ describe('MCP CLI: install guidance', () => {
     const parsed = JSON.parse(text);
     expect(parsed.hooks.PreToolUse[0].matcher).toBe('.*');
     expect(parsed.hooks.PreToolUse[0].hooks[0].command).toContain('guard --hook --fail-on-warn');
-    expect(parsed.hooks.PostToolUse[0].hooks[0].command).toContain('observe-tool --event PostToolUse');
-    expect(parsed.hooks.PostToolUseFailure[0].hooks[0].command).toContain('observe-tool --event PostToolUseFailure');
+    expect(parsed.hooks.PostToolUse[0].hooks[0].command).toContain(
+      'observe-tool --event PostToolUse',
+    );
+    expect(parsed.hooks.PostToolUseFailure[0].hooks[0].command).toContain(
+      'observe-tool --event PostToolUseFailure',
+    );
   });
 
   it('merges Claude Code hooks without removing unrelated settings', () => {
-    const merged = mergeClaudeCodeHookSettings({
-      permissions: { allow: ['Bash(npm test)'] },
-      hooks: {
-        PreToolUse: [
-          {
-            matcher: 'Bash',
-            hooks: [{ type: 'command', command: 'existing-check' }],
-          },
-        ],
+    const merged = mergeClaudeCodeHookSettings(
+      {
+        permissions: { allow: ['Bash(npm test)'] },
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: 'Bash',
+              hooks: [{ type: 'command', command: 'existing-check' }],
+            },
+          ],
+        },
       },
-    }, JSON.parse(formatClaudeCodeHookConfig('B:/audrey/dist/mcp-server/index.js')));
+      JSON.parse(formatClaudeCodeHookConfig('B:/audrey/dist/mcp-server/index.js')),
+    );
 
     expect(merged.permissions).toEqual({ allow: ['Bash(npm test)'] });
     expect(merged.hooks.PreToolUse.some(group => group.matcher === 'Bash')).toBe(true);
     expect(merged.hooks.PreToolUse.some(group => group.matcher === '.*')).toBe(true);
-    expect(merged.hooks.PostToolUse[0].hooks[0].command).toContain('observe-tool --event PostToolUse');
+    expect(merged.hooks.PostToolUse[0].hooks[0].command).toContain(
+      'observe-tool --event PostToolUse',
+    );
   });
 
   it('applies Claude Code hooks with a backup and is idempotent', () => {
     const settingsDir = `${TEST_DIR}/claude-hooks/.claude`;
     const settingsPath = `${settingsDir}/settings.local.json`;
     mkdirSync(settingsDir, { recursive: true });
-    writeFileSync(settingsPath, JSON.stringify({
-      hooks: {
-        PreToolUse: [
-          {
-            matcher: 'Bash',
-            hooks: [{ type: 'command', command: 'existing-check' }],
+    writeFileSync(
+      settingsPath,
+      JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: 'Bash',
+                hooks: [{ type: 'command', command: 'existing-check' }],
+              },
+            ],
           },
-        ],
-      },
-    }, null, 2), 'utf-8');
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
 
     const first = applyClaudeCodeHookConfig({
       settingsPath,
@@ -513,23 +539,29 @@ describe('MCP CLI: demo command', () => {
 describe('MCP validation hardening', () => {
   it('memory_encode rejects empty or whitespace-only content', () => {
     const schema = z.object(memoryEncodeToolSchema);
-    expect(schema.safeParse({
-      content: '',
-      source: 'direct-observation',
-    }).success).toBe(false);
-    expect(schema.safeParse({
-      content: '   ',
-      source: 'direct-observation',
-    }).success).toBe(false);
+    expect(
+      schema.safeParse({
+        content: '',
+        source: 'direct-observation',
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        content: '   ',
+        source: 'direct-observation',
+      }).success,
+    ).toBe(false);
   });
 
   it('memory_encode rejects content above the maximum length', () => {
     const schema = z.object(memoryEncodeToolSchema);
     const content = 'x'.repeat(MAX_MEMORY_CONTENT_LENGTH + 1);
-    expect(schema.safeParse({
-      content,
-      source: 'direct-observation',
-    }).success).toBe(false);
+    expect(
+      schema.safeParse({
+        content,
+        source: 'direct-observation',
+      }).success,
+    ).toBe(false);
   });
 
   it('memory_recall enforces limit bounds', () => {
@@ -549,107 +581,125 @@ describe('MCP validation hardening', () => {
 
   it('memory_encode accepts wait_for_consolidation', () => {
     const schema = z.object(memoryEncodeToolSchema);
-    expect(schema.safeParse({
-      content: 'wait for post encode work',
-      source: 'direct-observation',
-      wait_for_consolidation: true,
-    }).success).toBe(true);
+    expect(
+      schema.safeParse({
+        content: 'wait for post encode work',
+        source: 'direct-observation',
+        wait_for_consolidation: true,
+      }).success,
+    ).toBe(true);
   });
 
   it('memory_preflight rejects empty actions and accepts strict risk checks', () => {
     const schema = z.object(memoryPreflightToolSchema);
     expect(schema.safeParse({ action: '', tool: 'Bash' }).success).toBe(false);
-    expect(schema.safeParse({
-      action: 'run npm test',
-      tool: 'npm test',
-      strict: true,
-      failure_window_hours: 24,
-      record_event: true,
-      include_capsule: false,
-    }).success).toBe(true);
+    expect(
+      schema.safeParse({
+        action: 'run npm test',
+        tool: 'npm test',
+        strict: true,
+        failure_window_hours: 24,
+        record_event: true,
+        include_capsule: false,
+      }).success,
+    ).toBe(true);
   });
 
   it('memory_guard_before rejects empty actions and accepts preflight-style strict options', () => {
     const schema = z.object(memoryGuardBeforeToolSchema);
     expect(memoryGuardBeforeToolSchema).not.toHaveProperty('record_event');
     expect(schema.safeParse({ action: '', tool: 'Bash' }).success).toBe(false);
-    expect(schema.safeParse({
-      action: 'run npm test',
-      tool: 'npm test',
-      session_id: 'session-1',
-      cwd: '/tmp/audrey',
-      files: ['package.json'],
-      strict: true,
-      limit: 8,
-      budget_chars: 1000,
-      mode: 'conservative',
-      failure_window_hours: 24,
-      include_status: true,
-      include_capsule: false,
-      scope: 'shared',
-    }).success).toBe(true);
+    expect(
+      schema.safeParse({
+        action: 'run npm test',
+        tool: 'npm test',
+        session_id: 'session-1',
+        cwd: '/tmp/audrey',
+        files: ['package.json'],
+        strict: true,
+        limit: 8,
+        budget_chars: 1000,
+        mode: 'conservative',
+        failure_window_hours: 24,
+        include_status: true,
+        include_capsule: false,
+        scope: 'shared',
+      }).success,
+    ).toBe(true);
   });
 
   it('memory_guard_after accepts observe-tool outcomes with evidence feedback', () => {
     const schema = z.object(memoryGuardAfterToolSchema);
-    expect(schema.safeParse({
-      receipt_id: 'receipt-1',
-      tool: 'Bash',
-      session_id: 'session-1',
-      input: { command: 'npm test' },
-      output: { exitCode: 0 },
-      outcome: 'succeeded',
-      error_summary: 'none',
-      cwd: '/tmp/audrey',
-      files: ['package.json'],
-      metadata: { task: 'guard' },
-      retain_details: true,
-      evidence_feedback: {
-        'ep-1': 'used',
-        'sem-1': 'helpful',
-        'proc-1': 'wrong',
-      },
-    }).success).toBe(true);
-    expect(schema.safeParse({
-      receipt_id: 'receipt-1',
-      outcome: 'maybe',
-    }).success).toBe(false);
+    expect(
+      schema.safeParse({
+        receipt_id: 'receipt-1',
+        tool: 'Bash',
+        session_id: 'session-1',
+        input: { command: 'npm test' },
+        output: { exitCode: 0 },
+        outcome: 'succeeded',
+        error_summary: 'none',
+        cwd: '/tmp/audrey',
+        files: ['package.json'],
+        metadata: { task: 'guard' },
+        retain_details: true,
+        evidence_feedback: {
+          'ep-1': 'used',
+          'sem-1': 'helpful',
+          'proc-1': 'wrong',
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      schema.safeParse({
+        receipt_id: 'receipt-1',
+        outcome: 'maybe',
+      }).success,
+    ).toBe(false);
   });
 
   it('memory_reflexes accepts preflight inputs plus include_preflight', () => {
     const schema = z.object(memoryReflexesToolSchema);
     expect(schema.safeParse({ action: '', tool: 'Bash' }).success).toBe(false);
-    expect(schema.safeParse({
-      action: 'deploy Audrey',
-      tool: 'deploy',
-      strict: true,
-      include_preflight: true,
-      include_capsule: false,
-    }).success).toBe(true);
+    expect(
+      schema.safeParse({
+        action: 'deploy Audrey',
+        tool: 'deploy',
+        strict: true,
+        include_preflight: true,
+        include_capsule: false,
+      }).success,
+    ).toBe(true);
   });
 
   it('memory_import accepts consolidationMetrics snapshots', () => {
     const schema = z.object(memoryImportToolSchema);
-    expect(schema.safeParse({
-      snapshot: {
-        version: '0.15.0',
-        episodes: [],
-        consolidationMetrics: [{
-          id: 'metric-1',
-          run_id: 'run-1',
-          min_cluster_size: 2,
-          similarity_threshold: 0.7,
-          episodes_evaluated: 4,
-          clusters_found: 1,
-          principles_extracted: 1,
-          created_at: '2026-04-30T00:00:00.000Z',
-        }],
-      },
-    }).success).toBe(true);
+    expect(
+      schema.safeParse({
+        snapshot: {
+          version: '0.15.0',
+          episodes: [],
+          consolidationMetrics: [
+            {
+              id: 'metric-1',
+              run_id: 'run-1',
+              min_cluster_size: 2,
+              similarity_threshold: 0.7,
+              episodes_evaluated: 4,
+              clusters_found: 1,
+              principles_extracted: 1,
+              created_at: '2026-04-30T00:00:00.000Z',
+            },
+          ],
+        },
+      }).success,
+    ).toBe(true);
   });
 
   it('memory_forget rejects both id and query together', () => {
-    expect(() => validateForgetSelection('ep-1', 'query')).toThrow('Provide exactly one of id or query');
+    expect(() => validateForgetSelection('ep-1', 'query')).toThrow(
+      'Provide exactly one of id or query',
+    );
   });
 
   it('initializes async embedding providers for the dream CLI path', async () => {
@@ -663,28 +713,25 @@ describe('MCP validation hardening', () => {
   });
 
   it('exports memory_forget schema fields', () => {
-    expect(Object.keys(memoryForgetToolSchema)).toEqual([
-      'id',
-      'query',
-      'min_similarity',
-      'purge',
-    ]);
+    expect(Object.keys(memoryForgetToolSchema)).toEqual(['id', 'query', 'min_similarity', 'purge']);
   });
 
   it('memory_validate accepts the closed-loop outcome enum', () => {
     const schema = z.object(memoryValidateToolSchema);
     expect(schema.safeParse({ id: 'mem_1', outcome: 'helpful' }).success).toBe(true);
-    expect(schema.safeParse({
-      id: 'mem_1',
-      outcome: 'helpful',
-      preflight_event_id: '01guardevent',
-      action_key: 'a'.repeat(64),
-      evidence_ids: ['mem_1', 'risk_2'],
-    }).success).toBe(true);
+    expect(
+      schema.safeParse({
+        id: 'mem_1',
+        outcome: 'helpful',
+        preflight_event_id: '01guardevent',
+        action_key: 'a'.repeat(64),
+        evidence_ids: ['mem_1', 'risk_2'],
+      }).success,
+    ).toBe(true);
     expect(schema.safeParse({ id: 'mem_1', outcome: 'used' }).success).toBe(true);
     expect(schema.safeParse({ id: 'mem_1', outcome: 'wrong' }).success).toBe(true);
     expect(schema.safeParse({ id: 'mem_1', outcome: 'maybe' }).success).toBe(false);
-    expect(schema.safeParse({ outcome: 'helpful' }).success).toBe(false);  // id required
+    expect(schema.safeParse({ outcome: 'helpful' }).success).toBe(false); // id required
   });
 });
 
@@ -795,7 +842,9 @@ describe('MCP lifecycle hardening', () => {
     const fakeProcess = new EventEmitter();
     fakeProcess.exit = vi.fn();
     const audrey = {
-      drainPostEncodeQueue: vi.fn().mockResolvedValue({ drained: false, pendingIds: ['ep-a', 'ep-b'] }),
+      drainPostEncodeQueue: vi
+        .fn()
+        .mockResolvedValue({ drained: false, pendingIds: ['ep-a', 'ep-b'] }),
       close: vi.fn(),
     };
     const logger = vi.fn();
@@ -849,9 +898,7 @@ describe('MCP status automation', () => {
 
     await audrey.encode({ content: 'health drift episode', source: 'direct-observation' });
     audrey.db.exec('DELETE FROM vec_episodes');
-    audrey.db.prepare(
-      "UPDATE audrey_config SET value = ? WHERE key = 'dimensions'"
-    ).run('16');
+    audrey.db.prepare("UPDATE audrey_config SET value = ? WHERE key = 'dimensions'").run('16');
     audrey.close();
 
     const lines = [];
@@ -889,7 +936,9 @@ describe('MCP doctor automation', () => {
     expect(report.entrypoint).toBe(MCP_ENTRYPOINT);
     expect(report.ok).toBe(true);
     expect(report.status.exists).toBe(false);
-    expect(report.checks.some(check => check.name === 'host-config-generation' && check.ok)).toBe(true);
+    expect(report.checks.some(check => check.name === 'host-config-generation' && check.ok)).toBe(
+      true,
+    );
   });
 
   it('formats doctor output with a clear verdict and next steps', () => {
@@ -916,9 +965,7 @@ describe('MCP doctor automation', () => {
 
     await audrey.encode({ content: 'doctor health drift episode', source: 'direct-observation' });
     audrey.db.exec('DELETE FROM vec_episodes');
-    audrey.db.prepare(
-      "UPDATE audrey_config SET value = ? WHERE key = 'dimensions'"
-    ).run('16');
+    audrey.db.prepare("UPDATE audrey_config SET value = ? WHERE key = 'dimensions'").run('16');
     audrey.close();
 
     const lines = [];
@@ -977,14 +1024,14 @@ describe('MCP tool: memory_encode', () => {
   });
 
   it('rejects empty content', async () => {
-    await expect(
-      audrey.encode({ content: '', source: 'direct-observation' })
-    ).rejects.toThrow('content must be a non-empty string');
+    await expect(audrey.encode({ content: '', source: 'direct-observation' })).rejects.toThrow(
+      'content must be a non-empty string',
+    );
   });
 
   it('rejects invalid source type', async () => {
     await expect(
-      audrey.encode({ content: 'valid content', source: 'made-up-source' })
+      audrey.encode({ content: 'valid content', source: 'made-up-source' }),
     ).rejects.toThrow('Unknown source type');
   });
 
@@ -1053,7 +1100,9 @@ describe('MCP tool: memory_recall', () => {
 
     expect(Array.isArray(payload.results)).toBe(true);
     expect(payload.partial_failure).toBe(true);
-    expect(payload.errors.some(error => error.type === 'fts' && error.stage === 'recall.fts_lookup')).toBe(true);
+    expect(
+      payload.errors.some(error => error.type === 'fts' && error.stage === 'recall.fts_lookup'),
+    ).toBe(true);
   });
 });
 
@@ -1235,22 +1284,34 @@ describe('MCP tool: memory_resolve_truth', () => {
 
   it('resolves a contradiction with mock LLM', async () => {
     // Set up contradiction manually
-    audrey.db.prepare(`
+    audrey.db
+      .prepare(
+        `
       INSERT INTO semantics (id, content, state, created_at, evidence_count,
         supporting_count, source_type_diversity, evidence_episode_ids)
       VALUES (?, ?, 'active', ?, 1, 1, 1, '[]')
-    `).run('sem-x', 'Claim X content', new Date().toISOString());
+    `,
+      )
+      .run('sem-x', 'Claim X content', new Date().toISOString());
 
-    audrey.db.prepare(`
+    audrey.db
+      .prepare(
+        `
       INSERT INTO episodes (id, content, source, source_reliability, created_at)
       VALUES (?, ?, ?, ?, ?)
-    `).run('ep-y', 'Claim Y content', 'direct-observation', 0.95, new Date().toISOString());
+    `,
+      )
+      .run('ep-y', 'Claim Y content', 'direct-observation', 0.95, new Date().toISOString());
 
-    audrey.db.prepare(`
+    audrey.db
+      .prepare(
+        `
       INSERT INTO contradictions (id, claim_a_id, claim_a_type, claim_b_id, claim_b_type,
         state, created_at)
       VALUES (?, ?, ?, ?, ?, 'open', ?)
-    `).run('con-test', 'sem-x', 'semantic', 'ep-y', 'episodic', new Date().toISOString());
+    `,
+      )
+      .run('con-test', 'sem-x', 'semantic', 'ep-y', 'episodic', new Date().toISOString());
 
     const result = await audrey.resolveTruth('con-test');
     expect(result.resolution).toBe('context_dependent');
@@ -1269,7 +1330,9 @@ describe('MCP tool: memory_resolve_truth', () => {
     });
 
     try {
-      await expect(noLlm.resolveTruth('any-id')).rejects.toThrow('resolveTruth requires an LLM provider');
+      await expect(noLlm.resolveTruth('any-id')).rejects.toThrow(
+        'resolveTruth requires an LLM provider',
+      );
     } finally {
       noLlm.close();
       if (existsSync(TEST_DIR + '-nollm')) rmSync(TEST_DIR + '-nollm', { recursive: true });
@@ -1291,9 +1354,21 @@ describe('MCP tool: memory_recall filters', () => {
       agent: 'mcp-test',
       embedding: { provider: 'mock', dimensions: 8 },
     });
-    await audrey.encode({ content: 'Debug log from server', source: 'direct-observation', tags: ['debug', 'server'] });
-    await audrey.encode({ content: 'User likes dark mode', source: 'told-by-user', tags: ['prefs'] });
-    await audrey.encode({ content: 'API returned 500', source: 'tool-result', tags: ['debug', 'api'] });
+    await audrey.encode({
+      content: 'Debug log from server',
+      source: 'direct-observation',
+      tags: ['debug', 'server'],
+    });
+    await audrey.encode({
+      content: 'User likes dark mode',
+      source: 'told-by-user',
+      tags: ['prefs'],
+    });
+    await audrey.encode({
+      content: 'API returned 500',
+      source: 'tool-result',
+      tags: ['debug', 'api'],
+    });
   });
 
   afterEach(() => {
@@ -1310,7 +1385,10 @@ describe('MCP tool: memory_recall filters', () => {
   });
 
   it('filters by sources', async () => {
-    const results = await audrey.recall('observation', { sources: ['told-by-user'], types: ['episodic'] });
+    const results = await audrey.recall('observation', {
+      sources: ['told-by-user'],
+      types: ['episodic'],
+    });
     for (const r of results) {
       expect(r.source).toBe('told-by-user');
     }

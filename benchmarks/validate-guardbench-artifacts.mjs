@@ -134,13 +134,25 @@ export function validateSchema(value, schema, label, root = schema) {
     if (currentSchema.minLength != null && String(current).length < currentSchema.minLength) {
       errors.push(`${path}: shorter than minLength ${currentSchema.minLength}`);
     }
-    if (currentSchema.pattern && typeof current === 'string' && !(new RegExp(currentSchema.pattern).test(current))) {
+    if (
+      currentSchema.pattern &&
+      typeof current === 'string' &&
+      !new RegExp(currentSchema.pattern).test(current)
+    ) {
       errors.push(`${path}: does not match ${currentSchema.pattern}`);
     }
-    if (currentSchema.minimum != null && typeof current === 'number' && current < currentSchema.minimum) {
+    if (
+      currentSchema.minimum != null &&
+      typeof current === 'number' &&
+      current < currentSchema.minimum
+    ) {
       errors.push(`${path}: below minimum ${currentSchema.minimum}`);
     }
-    if (currentSchema.maximum != null && typeof current === 'number' && current > currentSchema.maximum) {
+    if (
+      currentSchema.maximum != null &&
+      typeof current === 'number' &&
+      current > currentSchema.maximum
+    ) {
       errors.push(`${path}: above maximum ${currentSchema.maximum}`);
     }
 
@@ -155,7 +167,8 @@ export function validateSchema(value, schema, label, root = schema) {
 
     if (currentSchema.type === 'object') {
       for (const required of currentSchema.required ?? []) {
-        if (!Object.hasOwn(current, required)) errors.push(`${path}: missing required property ${required}`);
+        if (!Object.hasOwn(current, required))
+          errors.push(`${path}: missing required property ${required}`);
       }
       if (currentSchema.additionalProperties === false) {
         for (const key of Object.keys(current)) {
@@ -177,7 +190,10 @@ export function validateSchema(value, schema, label, root = schema) {
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
   if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+    return `{${Object.keys(value)
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(',')}}`;
   }
   return JSON.stringify(value);
 }
@@ -231,7 +247,11 @@ export function validateGuardBenchArtifacts(options = {}) {
         failures.push(error.message);
         continue;
       }
-      for (const error of validateSchema(optionalArtifacts[key], schemas[key], `guardbench-${key}`)) {
+      for (const error of validateSchema(
+        optionalArtifacts[key],
+        schemas[key],
+        `guardbench-${key}`,
+      )) {
         failures.push(`${basename(path)}: ${error}`);
       }
     }
@@ -243,7 +263,9 @@ export function validateGuardBenchArtifacts(options = {}) {
         if (!Object.hasOwn(currentHashes, file)) {
           failures.push(`external-run-metadata.json: artifactHashes includes unknown file ${file}`);
         } else if (currentHashes[file] !== expectedHash) {
-          failures.push(`external-run-metadata.json: artifactHashes.${file} does not match current artifact`);
+          failures.push(
+            `external-run-metadata.json: artifactHashes.${file} does not match current artifact`,
+          );
         }
       }
       for (const file of Object.values(ARTIFACT_FILES)) {
@@ -255,27 +277,58 @@ export function validateGuardBenchArtifacts(options = {}) {
     const conformanceCard = optionalArtifacts.conformanceCard;
     if (conformanceCard) {
       const currentHashes = computeGuardBenchArtifactHashes(dir);
-      for (const [file, expectedHash] of Object.entries(conformanceCard.integrity?.artifactHashes ?? {})) {
+      for (const [file, expectedHash] of Object.entries(
+        conformanceCard.integrity?.artifactHashes ?? {},
+      )) {
         if (!Object.hasOwn(currentHashes, file)) {
-          failures.push(`guardbench-conformance-card.json: integrity.artifactHashes includes unknown file ${file}`);
+          failures.push(
+            `guardbench-conformance-card.json: integrity.artifactHashes includes unknown file ${file}`,
+          );
         } else if (currentHashes[file] !== expectedHash) {
-          failures.push(`guardbench-conformance-card.json: integrity.artifactHashes.${file} does not match current artifact`);
+          failures.push(
+            `guardbench-conformance-card.json: integrity.artifactHashes.${file} does not match current artifact`,
+          );
         }
       }
       if (conformanceCard.manifestVersion !== artifacts.manifest.manifestVersion) {
-        failures.push('guardbench-conformance-card.json: manifestVersion does not match guardbench-manifest.json');
+        failures.push(
+          'guardbench-conformance-card.json: manifestVersion does not match guardbench-manifest.json',
+        );
       }
       if (conformanceCard.suiteId !== artifacts.manifest.suiteId) {
-        failures.push('guardbench-conformance-card.json: suiteId does not match guardbench-manifest.json');
+        failures.push(
+          'guardbench-conformance-card.json: suiteId does not match guardbench-manifest.json',
+        );
       }
-      if (!artifacts.summary.systemSummaries?.some(row => row.system === conformanceCard.subject?.name)) {
-        failures.push('guardbench-conformance-card.json: subject.name is not present in guardbench-summary.json');
+      if (
+        !artifacts.summary.systemSummaries?.some(
+          row => row.system === conformanceCard.subject?.name,
+        )
+      ) {
+        failures.push(
+          'guardbench-conformance-card.json: subject.name is not present in guardbench-summary.json',
+        );
       }
     }
 
-    assertSameJson(artifacts.summary.manifest, artifacts.manifest, 'summary.manifest vs guardbench-manifest.json', failures);
-    assertSameJson(artifacts.summary.cases, artifacts.raw.cases, 'summary.cases vs raw.cases', failures);
-    assertSameJson(artifacts.summary.provenance, artifacts.raw.provenance, 'summary.provenance vs raw.provenance', failures);
+    assertSameJson(
+      artifacts.summary.manifest,
+      artifacts.manifest,
+      'summary.manifest vs guardbench-manifest.json',
+      failures,
+    );
+    assertSameJson(
+      artifacts.summary.cases,
+      artifacts.raw.cases,
+      'summary.cases vs raw.cases',
+      failures,
+    );
+    assertSameJson(
+      artifacts.summary.provenance,
+      artifacts.raw.provenance,
+      'summary.provenance vs raw.provenance',
+      failures,
+    );
     if (artifacts.summary.generatedAt !== artifacts.raw.generatedAt) {
       failures.push('summary.generatedAt vs raw.generatedAt: cross-artifact mismatch');
     }
@@ -290,7 +343,9 @@ export function validateGuardBenchArtifacts(options = {}) {
       failures.push('guardbench-raw.json: artifactRedactionSweep did not pass');
     }
 
-    const artifactText = Object.values(artifacts).map(value => JSON.stringify(value)).join('\n');
+    const artifactText = Object.values(artifacts)
+      .map(value => JSON.stringify(value))
+      .join('\n');
     for (const secret of seededSecrets) {
       if (secret && artifactText.includes(secret)) {
         failures.push(`raw seeded secret leaked into GuardBench artifacts: ${secret}`);
@@ -310,7 +365,9 @@ export function validateGuardBenchArtifacts(options = {}) {
     dir: publicPath(dir),
     schemasDir: publicPath(schemasDir),
     files: Object.values(ARTIFACT_FILES),
-    optionalFiles: Object.values(OPTIONAL_ARTIFACT_FILES).filter(file => existsSync(join(dir, file))),
+    optionalFiles: Object.values(OPTIONAL_ARTIFACT_FILES).filter(file =>
+      existsSync(join(dir, file)),
+    ),
     failures,
   };
 }

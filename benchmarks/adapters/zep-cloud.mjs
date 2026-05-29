@@ -46,13 +46,9 @@ function tokenOverlap(a, b) {
 }
 
 function resultText(result) {
-  return [
-    result?.fact,
-    result?.content,
-    result?.summary,
-    result?.name,
-    result?.context,
-  ].filter(Boolean).join('\n');
+  return [result?.fact, result?.content, result?.summary, result?.name, result?.context]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function collectSearchResults(response) {
@@ -65,8 +61,14 @@ function collectSearchResults(response) {
 }
 
 function evidenceIds(results) {
-  return results.map((result, index) =>
-    result?.uuid ?? result?.id ?? result?.task_id ?? result?.thread_id ?? `zep-result-${index + 1}`);
+  return results.map(
+    (result, index) =>
+      result?.uuid ??
+      result?.id ??
+      result?.task_id ??
+      result?.thread_id ??
+      `zep-result-${index + 1}`,
+  );
 }
 
 function decisionFromSearchResults(results, action, unsupportedFault = null) {
@@ -75,7 +77,9 @@ function decisionFromSearchResults(results, action, unsupportedFault = null) {
       decision: 'warn',
       riskScore: 0.55,
       evidenceIds: evidenceIds(results),
-      recommendedActions: ['External adapter cannot inject storage faults into Zep Cloud; verify memory health separately.'],
+      recommendedActions: [
+        'External adapter cannot inject storage faults into Zep Cloud; verify memory health separately.',
+      ],
       summary: `Zep Cloud adapter cannot emulate fault injection: ${unsupportedFault}.`,
     };
   }
@@ -132,7 +136,10 @@ class ZepCloudClient {
     return this.authScheme ? `${this.authScheme} ${this.apiKey}` : this.apiKey;
   }
 
-  async request(path, { method = 'GET', body, okStatuses = [200, 201, 204], ignoreNotFound = false } = {}) {
+  async request(
+    path,
+    { method = 'GET', body, okStatuses = [200, 201, 204], ignoreNotFound = false } = {},
+  ) {
     const response = await this.fetch(`${this.baseUrl}${path}`, {
       method,
       headers: {
@@ -209,22 +216,33 @@ function memoryMessagesFromScenario(scenario) {
     messages.push(message(memory.content));
   }
   for (const event of scenario.seed.seededToolEvents ?? []) {
-    const seededSecret = event.errorSummaryPattern && scenario.privateSeed?.seededSecrets?.[0]
-      ? `${'x'.repeat(1990)} ${scenario.privateSeed.seededSecrets[0]}`
-      : '';
-    messages.push(message([
-      `Tool event: ${event.tool ?? 'tool'}`,
-      event.action ? `Action: ${event.action}` : '',
-      event.outcome ? `Outcome: ${event.outcome}` : '',
-      event.errorSummary ? `Error: ${event.errorSummary}` : '',
-      event.errorSummaryPattern ? `Error pattern: ${event.errorSummaryPattern}` : '',
-      seededSecret ? `Error: ${seededSecret}` : '',
-      event.output ? `Output: ${event.output}` : '',
-    ].filter(Boolean).join('\n')));
+    const seededSecret =
+      event.errorSummaryPattern && scenario.privateSeed?.seededSecrets?.[0]
+        ? `${'x'.repeat(1990)} ${scenario.privateSeed.seededSecrets[0]}`
+        : '';
+    messages.push(
+      message(
+        [
+          `Tool event: ${event.tool ?? 'tool'}`,
+          event.action ? `Action: ${event.action}` : '',
+          event.outcome ? `Outcome: ${event.outcome}` : '',
+          event.errorSummary ? `Error: ${event.errorSummary}` : '',
+          event.errorSummaryPattern ? `Error pattern: ${event.errorSummaryPattern}` : '',
+          seededSecret ? `Error: ${seededSecret}` : '',
+          event.output ? `Output: ${event.output}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      ),
+    );
   }
   if (scenario.seed.seededNoise?.count) {
     for (let i = 0; i < scenario.seed.seededNoise.count; i++) {
-      messages.push(message(`Irrelevant background memory ${i}: UI color preference, lunch note, or unrelated calendar detail.`));
+      messages.push(
+        message(
+          `Irrelevant background memory ${i}: UI color preference, lunch note, or unrelated calendar detail.`,
+        ),
+      );
     }
   }
   return messages;
@@ -241,14 +259,16 @@ async function addInBatches(client, { sessionId, messages }) {
 
 function idForScenario(kind, scenario) {
   const prefix = process.env.ZEP_GUARDBENCH_USER_PREFIX ?? 'audrey-guardbench';
-  const runId = process.env.ZEP_GUARDBENCH_RUN_ID ?? `${Date.now()}-${randomBytes(8).toString('hex')}`;
+  const runId =
+    process.env.ZEP_GUARDBENCH_RUN_ID ?? `${Date.now()}-${randomBytes(8).toString('hex')}`;
   return `${prefix}-${runId}-${kind}-${scenario.id}`.toLowerCase();
 }
 
 export function createGuardBenchAdapter(options = {}) {
   return {
     name: 'Zep Cloud',
-    description: 'Zep Cloud REST adapter using v2 users, sessions, memory.add, graph.search, and user cleanup.',
+    description:
+      'Zep Cloud REST adapter using v2 users, sessions, memory.add, graph.search, and user cleanup.',
     async setup({ scenario }) {
       const client = new ZepCloudClient(options);
       const userId = idForScenario('user', scenario);
@@ -257,7 +277,11 @@ export function createGuardBenchAdapter(options = {}) {
       await client.createUser(userId);
       await client.createSession({ sessionId, userId });
       await addInBatches(client, { sessionId, messages });
-      const ingestDelayMs = Number(options.ingestDelayMs ?? process.env.ZEP_GUARDBENCH_INGEST_DELAY_MS ?? DEFAULT_INGEST_DELAY_MS);
+      const ingestDelayMs = Number(
+        options.ingestDelayMs ??
+          process.env.ZEP_GUARDBENCH_INGEST_DELAY_MS ??
+          DEFAULT_INGEST_DELAY_MS,
+      );
       if (ingestDelayMs > 0) await sleep(ingestDelayMs);
       return { client, userId, sessionId };
     },

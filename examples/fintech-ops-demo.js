@@ -11,7 +11,8 @@ async function demo() {
 
   console.log('--- Encoding payment-operations incidents ---');
   await brain.encode({
-    content: 'Processor X returned HTTP 429 when payout retries exceeded 120 requests per minute for marketplace merchants.',
+    content:
+      'Processor X returned HTTP 429 when payout retries exceeded 120 requests per minute for marketplace merchants.',
     source: 'direct-observation',
     salience: 0.9,
     tags: ['payments', 'payouts', 'rate-limit'],
@@ -19,7 +20,8 @@ async function demo() {
   });
 
   await brain.encode({
-    content: 'On-call notes show payout incident volume drops after retry batches are capped at 50 merchants per worker.',
+    content:
+      'On-call notes show payout incident volume drops after retry batches are capped at 50 merchants per worker.',
     source: 'tool-result',
     salience: 0.8,
     tags: ['payments', 'payouts', 'ops'],
@@ -27,7 +29,8 @@ async function demo() {
   });
 
   await brain.encode({
-    content: 'Risk operations requested automatic escalation when payout failures affect more than three merchants in the same hour.',
+    content:
+      'Risk operations requested automatic escalation when payout failures affect more than three merchants in the same hour.',
     source: 'told-by-user',
     salience: 0.7,
     tags: ['payments', 'escalation', 'risk'],
@@ -39,9 +42,13 @@ async function demo() {
     minClusterSize: 3,
     similarityThreshold: -0.3,
     extractPrinciple: () => ({
-      content: 'When payout retries spike, cap retry batches and escalate once multiple merchants are affected in the same hour.',
+      content:
+        'When payout retries spike, cap retry batches and escalate once multiple merchants are affected in the same hour.',
       type: 'procedural',
-      conditions: ['payout failures > 3 merchants per hour', 'processor returns 429 or throttling errors'],
+      conditions: [
+        'payout failures > 3 merchants per hour',
+        'processor returns 429 or throttling errors',
+      ],
     }),
   });
 

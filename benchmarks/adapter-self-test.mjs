@@ -116,7 +116,9 @@ export async function runGuardBenchAdapterSelfTest(options = {}) {
   };
   const schemaErrors = validateAdapterSelfTestReport(selfTest);
   if (schemaErrors.length > 0) {
-    throw new Error(`GuardBench adapter self-test schema validation failed: ${schemaErrors.join('; ')}`);
+    throw new Error(
+      `GuardBench adapter self-test schema validation failed: ${schemaErrors.join('; ')}`,
+    );
   }
 
   if (options.out && options.write !== false) {
@@ -146,7 +148,9 @@ async function main() {
     console.log(JSON.stringify(result, null, 2));
   } else if (result.ok) {
     console.log(`GuardBench adapter self-test passed: ${result.adapter.name}`);
-    console.log(`Contract rows: ${result.conformance.scenarios}/${result.conformance.expectedScenarios}`);
+    console.log(
+      `Contract rows: ${result.conformance.scenarios}/${result.conformance.expectedScenarios}`,
+    );
     console.log(`Full-contract score: ${(result.score.fullContractPassRate * 100).toFixed(1)}%`);
     console.log(`Decision accuracy: ${(result.score.decisionAccuracy * 100).toFixed(1)}%`);
     if (result.outPath) console.log(`Self-test report: ${result.outPath}`);

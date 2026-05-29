@@ -60,7 +60,8 @@ export const RETRIEVAL_CASES = [
     expectAny: ['Northwind'],
     memory: [
       {
-        content: 'During the January pilot, Sam requested budget approval for vendors Northwind and Fabricam.',
+        content:
+          'During the January pilot, Sam requested budget approval for vendors Northwind and Fabricam.',
         source: 'tool-result',
         tags: ['project', 'pilot'],
         context: { subject: 'sam', domain: 'operations' },
@@ -72,7 +73,8 @@ export const RETRIEVAL_CASES = [
         context: { subject: 'sam', domain: 'operations' },
       },
       {
-        content: 'The pilot budget review approved Northwind for rollout after the support SLA review.',
+        content:
+          'The pilot budget review approved Northwind for rollout after the support SLA review.',
         source: 'direct-observation',
         tags: ['finance', 'vendor', 'approval'],
         context: { subject: 'sam', domain: 'operations' },
@@ -169,17 +171,20 @@ export const RETRIEVAL_CASES = [
     expectAny: ['cap retry batches', 'stagger retries'],
     memory: [
       {
-        content: 'Processor X returned HTTP 429 when payout retries exceeded 120 requests per minute.',
+        content:
+          'Processor X returned HTTP 429 when payout retries exceeded 120 requests per minute.',
         source: 'direct-observation',
         tags: ['payments', 'rate-limit'],
       },
       {
-        content: 'Payout incident volume dropped after retry batches were capped at 50 merchants per worker.',
+        content:
+          'Payout incident volume dropped after retry batches were capped at 50 merchants per worker.',
         source: 'tool-result',
         tags: ['payments', 'rate-limit'],
       },
       {
-        content: 'Risk operations requested an escalation when multiple merchants were affected in the same hour.',
+        content:
+          'Risk operations requested an escalation when multiple merchants were affected in the same hour.',
         source: 'told-by-user',
         tags: ['payments', 'escalation'],
       },
@@ -188,7 +193,8 @@ export const RETRIEVAL_CASES = [
       minClusterSize: 3,
       similarityThreshold: -0.3,
       principle: {
-        content: 'When payout retries start returning 429, cap retry batches and stagger retries before escalating.',
+        content:
+          'When payout retries start returning 429, cap retry batches and stagger retries before escalating.',
         type: 'procedural',
         conditions: ['processor returns 429', 'multiple merchants impacted'],
       },
@@ -343,7 +349,8 @@ export const OPERATION_CASES = [
     kind: 'operations',
     family: 'procedural_merge',
     title: 'Procedural merge',
-    description: 'Related episodes should merge into an executable procedure, not just a loose fact.',
+    description:
+      'Related episodes should merge into an executable procedure, not just a loose fact.',
     query: 'What should the agent do after two webhook signature failures?',
     expectAny: ['rotate the signing secret', 'replay queued events'],
     steps: [
@@ -376,7 +383,8 @@ export const OPERATION_CASES = [
         minClusterSize: 3,
         similarityThreshold: -0.3,
         principle: {
-          content: 'When webhook signature verification fails twice, rotate the signing secret and replay queued events.',
+          content:
+            'When webhook signature verification fails twice, rotate the signing secret and replay queued events.',
           type: 'procedural',
           conditions: ['signature verification fails twice', 'queued events pending'],
         },
@@ -395,7 +403,8 @@ export const GUARD_CASES = [
     kind: 'guard',
     family: 'closed_loop_failure_memory',
     title: 'Guard remembers failed tool outcome',
-    description: 'A failed guarded tool run should create a future caution and warning reflex for the same tool.',
+    description:
+      'A failed guarded tool run should create a future caution and warning reflex for the same tool.',
     action: 'run npm test before release',
     tool: 'npm test',
     expectAll: ['decision:caution', 'warning:recent_failure', 'reflex:warn'],
@@ -439,7 +448,8 @@ export const GUARD_CASES = [
     kind: 'guard',
     family: 'guard_receipt_hardening',
     title: 'Guard rejects replayed receipt outcomes',
-    description: 'A receipt should only be closed once, while the failed outcome still becomes future caution memory.',
+    description:
+      'A receipt should only be closed once, while the failed outcome still becomes future caution memory.',
     action: 'run npm test before release',
     tool: 'npm test',
     expectAll: ['guard_hardened:replay_rejected', 'decision:caution', 'warning:recent_failure'],
@@ -470,7 +480,8 @@ export const GUARD_CASES = [
     kind: 'guard',
     family: 'guard_receipt_hardening',
     title: 'Guard rejects non-guard receipts',
-    description: 'A normal tool trace must not be accepted as a guard receipt for after-action feedback.',
+    description:
+      'A normal tool trace must not be accepted as a guard receipt for after-action feedback.',
     action: 'format docs',
     tool: 'Bash',
     expectAll: ['guard_hardened:non_guard_receipt_rejected'],
@@ -511,7 +522,8 @@ export const LOCAL_BENCHMARK_SUITES = [
   {
     id: 'guard',
     title: 'Agent guard loop',
-    description: 'Closed-loop memory-before-action behavior for receipts, warnings, and blocking reflexes.',
+    description:
+      'Closed-loop memory-before-action behavior for receipts, warnings, and blocking reflexes.',
     comparableToBaselines: false,
     cases: GUARD_CASES,
   },

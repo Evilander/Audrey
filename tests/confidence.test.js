@@ -14,7 +14,7 @@ describe('sourceReliability', () => {
   });
 
   it('returns 0.40 for model-generated', () => {
-    expect(sourceReliability('model-generated')).toBe(0.40);
+    expect(sourceReliability('model-generated')).toBe(0.4);
   });
 
   it('throws for unknown source type', () => {
@@ -138,15 +138,21 @@ describe('computeConfidence', () => {
   it('returns lower confidence for model-generated source', () => {
     const high = computeConfidence({
       sourceType: 'direct-observation',
-      supportingCount: 1, contradictingCount: 0,
-      ageDays: 0, halfLifeDays: 7,
-      retrievalCount: 0, daysSinceRetrieval: 0,
+      supportingCount: 1,
+      contradictingCount: 0,
+      ageDays: 0,
+      halfLifeDays: 7,
+      retrievalCount: 0,
+      daysSinceRetrieval: 0,
     });
     const low = computeConfidence({
       sourceType: 'model-generated',
-      supportingCount: 1, contradictingCount: 0,
-      ageDays: 0, halfLifeDays: 7,
-      retrievalCount: 0, daysSinceRetrieval: 0,
+      supportingCount: 1,
+      contradictingCount: 0,
+      ageDays: 0,
+      halfLifeDays: 7,
+      retrievalCount: 0,
+      daysSinceRetrieval: 0,
     });
     expect(high).toBeGreaterThan(low);
   });
@@ -154,9 +160,12 @@ describe('computeConfidence', () => {
   it('caps model-generated confidence at 0.6', () => {
     const result = computeConfidence({
       sourceType: 'model-generated',
-      supportingCount: 100, contradictingCount: 0,
-      ageDays: 0, halfLifeDays: 30,
-      retrievalCount: 100, daysSinceRetrieval: 0,
+      supportingCount: 100,
+      contradictingCount: 0,
+      ageDays: 0,
+      halfLifeDays: 30,
+      retrievalCount: 100,
+      daysSinceRetrieval: 0,
     });
     expect(result).toBeLessThanOrEqual(0.6);
   });
@@ -164,15 +173,21 @@ describe('computeConfidence', () => {
   it('decays over time', () => {
     const fresh = computeConfidence({
       sourceType: 'direct-observation',
-      supportingCount: 1, contradictingCount: 0,
-      ageDays: 0, halfLifeDays: 7,
-      retrievalCount: 0, daysSinceRetrieval: 0,
+      supportingCount: 1,
+      contradictingCount: 0,
+      ageDays: 0,
+      halfLifeDays: 7,
+      retrievalCount: 0,
+      daysSinceRetrieval: 0,
     });
     const old = computeConfidence({
       sourceType: 'direct-observation',
-      supportingCount: 1, contradictingCount: 0,
-      ageDays: 30, halfLifeDays: 7,
-      retrievalCount: 0, daysSinceRetrieval: 0,
+      supportingCount: 1,
+      contradictingCount: 0,
+      ageDays: 30,
+      halfLifeDays: 7,
+      retrievalCount: 0,
+      daysSinceRetrieval: 0,
     });
     expect(fresh).toBeGreaterThan(old);
   });
@@ -180,9 +195,12 @@ describe('computeConfidence', () => {
   it('allows custom weights', () => {
     const result = computeConfidence({
       sourceType: 'direct-observation',
-      supportingCount: 1, contradictingCount: 0,
-      ageDays: 0, halfLifeDays: 7,
-      retrievalCount: 0, daysSinceRetrieval: 0,
+      supportingCount: 1,
+      contradictingCount: 0,
+      ageDays: 0,
+      halfLifeDays: 7,
+      retrievalCount: 0,
+      daysSinceRetrieval: 0,
       weights: { source: 1.0, evidence: 0, recency: 0, retrieval: 0 },
     });
     expect(result).toBeCloseTo(0.95, 2);

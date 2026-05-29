@@ -115,7 +115,10 @@ describe('MemoryCapsule', () => {
 
   it('respects the token budget and marks truncated=true when overflow occurs', async () => {
     // Encode many similar memories to produce a lot of candidates.
-    const longText = 'An Audrey fact about Stripe payment processing that is deliberately long so each memory consumes many chars of the budget. '.repeat(6);
+    const longText =
+      'An Audrey fact about Stripe payment processing that is deliberately long so each memory consumes many chars of the budget. '.repeat(
+        6,
+      );
     for (let i = 0; i < 8; i++) {
       await audrey.encode({
         content: `${longText} — variant ${i}`,
@@ -133,8 +136,16 @@ describe('MemoryCapsule', () => {
   });
 
   it('every entry carries an explainability reason', async () => {
-    await audrey.encode({ content: 'Stripe API returns 429 when the rate limit is exceeded.', source: 'direct-observation', tags: ['stripe'] });
-    await audrey.encode({ content: 'Always back up the DB before running a destructive migration.', source: 'direct-observation', tags: ['must-follow', 'migration'] });
+    await audrey.encode({
+      content: 'Stripe API returns 429 when the rate limit is exceeded.',
+      source: 'direct-observation',
+      tags: ['stripe'],
+    });
+    await audrey.encode({
+      content: 'Always back up the DB before running a destructive migration.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'migration'],
+    });
     const capsule = await audrey.capsule('stripe migration');
     for (const entry of allEntries(capsule)) {
       expect(entry.reason).toBeTruthy();
@@ -149,13 +160,20 @@ describe('MemoryCapsule', () => {
       outcome: 'failed',
       errorSummary: 'failed again',
     });
-    const capsule = await audrey.capsule('test', { includeRisks: false, includeContradictions: false });
+    const capsule = await audrey.capsule('test', {
+      includeRisks: false,
+      includeContradictions: false,
+    });
     expect(capsule.sections.risks).toHaveLength(0);
     expect(capsule.sections.contradictions).toHaveLength(0);
   });
 
   it('evidence_ids collects every referenced memory id', async () => {
-    await audrey.encode({ content: 'Rule about rate limits', source: 'direct-observation', tags: ['must-follow'] });
+    await audrey.encode({
+      content: 'Rule about rate limits',
+      source: 'direct-observation',
+      tags: ['must-follow'],
+    });
     const capsule = await audrey.capsule('rate limits');
     expect(capsule.evidence_ids.length).toBeGreaterThan(0);
     expect(capsule.sections.must_follow[0]).toBeDefined();

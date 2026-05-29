@@ -1,17 +1,22 @@
-import type { ConfidenceWeights, HalfLives, SourceReliabilityMap, ComputeConfidenceParams } from './types.js';
+import type {
+  ConfidenceWeights,
+  HalfLives,
+  SourceReliabilityMap,
+  ComputeConfidenceParams,
+} from './types.js';
 
 export const DEFAULT_SOURCE_RELIABILITY: SourceReliabilityMap = {
   'direct-observation': 0.95,
-  'told-by-user': 0.90,
+  'told-by-user': 0.9,
   'tool-result': 0.85,
-  'inference': 0.60,
-  'model-generated': 0.40,
+  inference: 0.6,
+  'model-generated': 0.4,
 };
 
 export const DEFAULT_WEIGHTS: ConfidenceWeights = {
-  source: 0.30,
+  source: 0.3,
   evidence: 0.35,
-  recency: 0.20,
+  recency: 0.2,
   retrieval: 0.15,
 };
 
@@ -23,11 +28,16 @@ export const DEFAULT_HALF_LIVES: HalfLives = {
 
 export const MODEL_GENERATED_CONFIDENCE_CAP: number = 0.6;
 
-export function sourceReliability(sourceType: string, customReliability?: SourceReliabilityMap): number {
+export function sourceReliability(
+  sourceType: string,
+  customReliability?: SourceReliabilityMap,
+): number {
   const table = customReliability || DEFAULT_SOURCE_RELIABILITY;
   const value = table[sourceType];
   if (value === undefined) {
-    throw new Error(`Unknown source type: ${sourceType}. Valid types: ${Object.keys(table).join(', ')}`);
+    throw new Error(
+      `Unknown source type: ${sourceType}. Valid types: ${Object.keys(table).join(', ')}`,
+    );
   }
   return value;
 }

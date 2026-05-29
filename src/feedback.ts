@@ -38,7 +38,7 @@ interface RowSnapshot {
 const SALIENCE_DELTA = {
   used: 0.02,
   helpful: 0.05,
-  wrong: -0.10,
+  wrong: -0.1,
 } as const;
 
 const RETRIEVAL_BUMP = {
@@ -78,7 +78,9 @@ function findRow(db: Database.Database, id: string): { type: MemoryType; row: Ro
       hasChallenge ? 'challenge_count' : 'NULL AS challenge_count',
       hasState ? 'state' : 'NULL AS state',
     ].join(', ');
-    const row = db.prepare(`SELECT ${cols} FROM ${name} WHERE id = ?`).get(id) as RowSnapshot | undefined;
+    const row = db.prepare(`SELECT ${cols} FROM ${name} WHERE id = ?`).get(id) as
+      | RowSnapshot
+      | undefined;
     if (row) return { type, row };
   }
   return null;
@@ -94,7 +96,10 @@ function findRow(db: Database.Database, id: string): { type: MemoryType; row: Ro
  *
  * Returns `null` if no memory matches the id.
  */
-export function applyFeedback(db: Database.Database, input: MemoryValidateInput): MemoryValidateResult | null {
+export function applyFeedback(
+  db: Database.Database,
+  input: MemoryValidateInput,
+): MemoryValidateResult | null {
   const located = findRow(db, input.id);
   if (!located) return null;
 
@@ -112,7 +117,7 @@ export function applyFeedback(db: Database.Database, input: MemoryValidateInput)
   // and salience move.
   if (tableName === 'episodes') {
     db.prepare(
-      `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ? WHERE id = ?`
+      `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ? WHERE id = ?`,
     ).run(newSalience, newUsageCount, nowISO, input.id);
   } else if (tableName === 'semantics') {
     const newRetrieval = (row.retrieval_count ?? 0) + RETRIEVAL_BUMP[input.outcome];
@@ -120,11 +125,19 @@ export function applyFeedback(db: Database.Database, input: MemoryValidateInput)
     const lastReinforced = RETRIEVAL_BUMP[input.outcome] > 0 ? nowISO : null;
     if (lastReinforced) {
       db.prepare(
-        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, last_reinforced_at = ?, challenge_count = ? WHERE id = ?`
-      ).run(newSalience, newUsageCount, nowISO, newRetrieval, lastReinforced, newChallenge, input.id);
+        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, last_reinforced_at = ?, challenge_count = ? WHERE id = ?`,
+      ).run(
+        newSalience,
+        newUsageCount,
+        nowISO,
+        newRetrieval,
+        lastReinforced,
+        newChallenge,
+        input.id,
+      );
     } else {
       db.prepare(
-        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, challenge_count = ? WHERE id = ?`
+        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, challenge_count = ? WHERE id = ?`,
       ).run(newSalience, newUsageCount, nowISO, newRetrieval, newChallenge, input.id);
     }
   } else {
@@ -132,11 +145,11 @@ export function applyFeedback(db: Database.Database, input: MemoryValidateInput)
     const lastReinforced = RETRIEVAL_BUMP[input.outcome] > 0 ? nowISO : null;
     if (lastReinforced) {
       db.prepare(
-        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, last_reinforced_at = ? WHERE id = ?`
+        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, last_reinforced_at = ? WHERE id = ?`,
       ).run(newSalience, newUsageCount, nowISO, newRetrieval, lastReinforced, input.id);
     } else {
       db.prepare(
-        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ? WHERE id = ?`
+        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ? WHERE id = ?`,
       ).run(newSalience, newUsageCount, nowISO, newRetrieval, input.id);
     }
   }

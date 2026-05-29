@@ -37,9 +37,12 @@ function pathForReport(path) {
 }
 
 function commandExists(command) {
-  const result = process.platform === 'win32'
-    ? spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', 'where', command], { encoding: 'utf-8' })
-    : spawnSync('sh', ['-lc', `command -v ${command}`], { encoding: 'utf-8' });
+  const result =
+    process.platform === 'win32'
+      ? spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', 'where', command], {
+          encoding: 'utf-8',
+        })
+      : spawnSync('sh', ['-lc', `command -v ${command}`], { encoding: 'utf-8' });
   return result.status === 0;
 }
 
@@ -47,16 +50,17 @@ function compilerPlan(exists = commandExists) {
   if (exists('tectonic')) {
     return {
       name: 'tectonic',
-      stages: [
-        { command: 'tectonic', args: ['--keep-logs', '--keep-intermediates', MAIN_TEX] },
-      ],
+      stages: [{ command: 'tectonic', args: ['--keep-logs', '--keep-intermediates', MAIN_TEX] }],
     };
   }
   if (exists('latexmk')) {
     return {
       name: 'latexmk',
       stages: [
-        { command: 'latexmk', args: ['-pdf', '-interaction=nonstopmode', '-halt-on-error', MAIN_TEX] },
+        {
+          command: 'latexmk',
+          args: ['-pdf', '-interaction=nonstopmode', '-halt-on-error', MAIN_TEX],
+        },
       ],
     };
   }
@@ -78,7 +82,18 @@ function compilerPlan(exists = commandExists) {
       stages: [
         {
           command: 'uvx',
-          args: ['tecto', '-X', 'compile', '--bundle', '__TECTONIC_BUNDLE_URL__', '--keep-logs', '--keep-intermediates', '--reruns', '2', MAIN_TEX],
+          args: [
+            'tecto',
+            '-X',
+            'compile',
+            '--bundle',
+            '__TECTONIC_BUNDLE_URL__',
+            '--keep-logs',
+            '--keep-intermediates',
+            '--reruns',
+            '2',
+            MAIN_TEX,
+          ],
         },
       ],
     };
@@ -164,7 +179,14 @@ async function startTectonicBundleProxy(bundleUrl = TECTONIC_BUNDLE_URL) {
       if (request.headers.range) headers.range = request.headers.range;
       const upstream = await fetch(remoteUrl, { headers });
       response.statusCode = upstream.status;
-      for (const header of ['accept-ranges', 'content-length', 'content-range', 'content-type', 'etag', 'last-modified']) {
+      for (const header of [
+        'accept-ranges',
+        'content-length',
+        'content-range',
+        'content-type',
+        'etag',
+        'last-modified',
+      ]) {
         const value = upstream.headers.get(header);
         if (value) response.setHeader(header, value);
       }
@@ -196,7 +218,7 @@ async function startTectonicBundleProxy(bundleUrl = TECTONIC_BUNDLE_URL) {
 function stageWithBundle(stage, bundleUrl) {
   return {
     command: stage.command,
-    args: stage.args.map(arg => arg === '__TECTONIC_BUNDLE_URL__' ? bundleUrl : arg),
+    args: stage.args.map(arg => (arg === '__TECTONIC_BUNDLE_URL__' ? bundleUrl : arg)),
   };
 }
 
@@ -210,7 +232,12 @@ function runStage(stage, cwd) {
       child.kill();
       if (!settled) {
         settled = true;
-        resolveRun({ status: 1, signal: 'TIMEOUT', stdout, stderr: `${stderr}\nTimed out after 120000ms`.trim() });
+        resolveRun({
+          status: 1,
+          signal: 'TIMEOUT',
+          stdout,
+          stderr: `${stderr}\nTimed out after 120000ms`.trim(),
+        });
       }
     }, 120000);
 
@@ -297,7 +324,9 @@ export async function verifyArxivCompile(options = {}) {
   const logLines = [];
   try {
     proxy = plan.bundleProxy ? await startTectonicBundleProxy() : null;
-    const stages = proxy ? plan.stages.map(stage => stageWithBundle(stage, proxy.url)) : plan.stages;
+    const stages = proxy
+      ? plan.stages.map(stage => stageWithBundle(stage, proxy.url))
+      : plan.stages;
     for (const stage of stages) {
       logLines.push(`$ ${stage.command} ${stage.args.join(' ')}`);
       const result = await runStage(stage, outDir);
@@ -359,7 +388,9 @@ export function verifyArxivCompileReport(options = {}) {
   }
 
   try {
-    failures.push(...validateSchema(report, readJson(pathForReport(schemaPath)), 'audrey-arxiv-compile-report'));
+    failures.push(
+      ...validateSchema(report, readJson(pathForReport(schemaPath)), 'audrey-arxiv-compile-report'),
+    );
   } catch (error) {
     failures.push(`schema: ${error.message}`);
   }
@@ -386,8 +417,13 @@ export function verifyArxivCompileReport(options = {}) {
   } else if (report.status === 'failed') {
     failures.push(...(report.failures?.length ? report.failures : ['arXiv compile failed']));
   } else if (report.status === 'passed') {
-    if (!report.outputPdf || !existsSync(fromRoot(report.outputPdf))) failures.push('arxiv-compile-report.json: outputPdf is missing');
-    if (report.outputPdf && report.outputPdfSha256 && sha256File(fromRoot(report.outputPdf)) !== report.outputPdfSha256) {
+    if (!report.outputPdf || !existsSync(fromRoot(report.outputPdf)))
+      failures.push('arxiv-compile-report.json: outputPdf is missing');
+    if (
+      report.outputPdf &&
+      report.outputPdfSha256 &&
+      sha256File(fromRoot(report.outputPdf)) !== report.outputPdfSha256
+    ) {
       failures.push('arxiv-compile-report.json: outputPdfSha256 is stale');
     }
   }

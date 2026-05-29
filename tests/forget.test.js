@@ -14,12 +14,18 @@ function insertSemantic(db, embedding, id, content, state = 'active') {
     const vector = await embedding.embed(content);
     const buf = embedding.vectorToBuffer(vector);
     const now = new Date().toISOString();
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
         contradicting_count, retrieval_count, created_at, embedding_model, embedding_version)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, content, buf, state, 1, 1, 0, 0, now, embedding.modelName, embedding.modelVersion);
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(id, buf, state);
+    `,
+    ).run(id, content, buf, state, 1, 1, 0, 0, now, embedding.modelName, embedding.modelVersion);
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      id,
+      buf,
+      state,
+    );
   })();
 }
 
@@ -28,12 +34,18 @@ function insertProcedure(db, embedding, id, content, state = 'active') {
     const vector = await embedding.embed(content);
     const buf = embedding.vectorToBuffer(vector);
     const now = new Date().toISOString();
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO procedures (id, content, embedding, state, success_count, failure_count,
         retrieval_count, created_at, embedding_model, embedding_version)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, content, buf, state, 3, 0, 0, now, embedding.modelName, embedding.modelVersion);
-    db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)').run(id, buf, state);
+    `,
+    ).run(id, content, buf, state, 3, 0, 0, now, embedding.modelName, embedding.modelVersion);
+    db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)').run(
+      id,
+      buf,
+      state,
+    );
   })();
 }
 
@@ -106,7 +118,9 @@ describe('forgetMemory', () => {
   });
 
   it('throws on unknown ID', () => {
-    expect(() => forgetMemory(db, 'nonexistent-id-12345')).toThrow('Memory not found: nonexistent-id-12345');
+    expect(() => forgetMemory(db, 'nonexistent-id-12345')).toThrow(
+      'Memory not found: nonexistent-id-12345',
+    );
   });
 
   it('hard-deletes an episode with purge: true', async () => {
@@ -173,7 +187,13 @@ describe('purgeMemories', () => {
     const activeProcId = generateId();
     await insertProcedure(db, embedding, activeProcId, 'Active procedure stays', 'active');
     const rolledBackProcId = generateId();
-    await insertProcedure(db, embedding, rolledBackProcId, 'Rolled back procedure goes', 'rolled_back');
+    await insertProcedure(
+      db,
+      embedding,
+      rolledBackProcId,
+      'Rolled back procedure goes',
+      'rolled_back',
+    );
 
     const result = purgeMemories(db);
 
@@ -185,9 +205,13 @@ describe('purgeMemories', () => {
     expect(db.prepare('SELECT id FROM episodes WHERE id = ?').get(forgottenEpId)).toBeUndefined();
     expect(db.prepare('SELECT id FROM semantics WHERE id = ?').get(activeSemId)).toBeDefined();
     expect(db.prepare('SELECT id FROM semantics WHERE id = ?').get(dormantSemId)).toBeUndefined();
-    expect(db.prepare('SELECT id FROM semantics WHERE id = ?').get(supersededSemId)).toBeUndefined();
+    expect(
+      db.prepare('SELECT id FROM semantics WHERE id = ?').get(supersededSemId),
+    ).toBeUndefined();
     expect(db.prepare('SELECT id FROM procedures WHERE id = ?').get(activeProcId)).toBeDefined();
-    expect(db.prepare('SELECT id FROM procedures WHERE id = ?').get(rolledBackProcId)).toBeUndefined();
+    expect(
+      db.prepare('SELECT id FROM procedures WHERE id = ?').get(rolledBackProcId),
+    ).toBeUndefined();
   });
 
   it('returns zero counts when nothing to purge', async () => {
@@ -222,7 +246,9 @@ describe('forgetByQuery', () => {
       source: 'direct-observation',
     });
 
-    const result = await forgetByQuery(db, embedding, 'Stripe API returned 429', { minSimilarity: 0.5 });
+    const result = await forgetByQuery(db, embedding, 'Stripe API returned 429', {
+      minSimilarity: 0.5,
+    });
 
     expect(result).not.toBeNull();
     expect(result.id).toBe(id);
@@ -238,7 +264,9 @@ describe('forgetByQuery', () => {
       source: 'direct-observation',
     });
 
-    const result = await forgetByQuery(db, embedding, 'quantum physics dark matter', { minSimilarity: 0.999 });
+    const result = await forgetByQuery(db, embedding, 'quantum physics dark matter', {
+      minSimilarity: 0.999,
+    });
 
     expect(result).toBeNull();
   });
@@ -249,7 +277,10 @@ describe('forgetByQuery', () => {
       source: 'direct-observation',
     });
 
-    const result = await forgetByQuery(db, embedding, 'Purge me via query', { minSimilarity: 0.5, purge: true });
+    const result = await forgetByQuery(db, embedding, 'Purge me via query', {
+      minSimilarity: 0.5,
+      purge: true,
+    });
 
     expect(result).not.toBeNull();
     expect(result.purged).toBe(true);

@@ -48,10 +48,10 @@ describe('introspect', () => {
   });
 
   it('returns dormant count', () => {
-    db.prepare(`INSERT INTO semantics (id, content, state, evidence_count, supporting_count,
-      source_type_diversity, created_at) VALUES (?, ?, 'dormant', 1, 1, 1, ?)`).run(
-      'dormant-1', 'Old memory', new Date().toISOString()
-    );
+    db.prepare(
+      `INSERT INTO semantics (id, content, state, evidence_count, supporting_count,
+      source_type_diversity, created_at) VALUES (?, ?, 'dormant', 1, 1, 1, ?)`,
+    ).run('dormant-1', 'Old memory', new Date().toISOString());
     const stats = introspect(db);
     expect(stats.dormant).toBe(1);
   });
