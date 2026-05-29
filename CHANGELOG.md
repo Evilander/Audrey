@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.0.3 - 2026-05-28
+
+Housekeeping release. Nothing about how Audrey behaves has changed — this is
+all under-the-hood tidying plus a friendlier README. Safe to upgrade from 1.0.2
+without touching anything.
+
+### Cleaner code under the hood
+
+- Started breaking up the big `mcp-server/index.ts` file (it had grown to ~3,600
+  lines that did everything at once). The memory-tool input schemas and the
+  shared validation helpers now live in their own small files
+  (`tool-schemas.ts`, `tool-validation.ts`). Same behavior, just easier to read
+  and work on. More of this tidying will follow.
+
+### More reliable tests
+
+- The test suite used to need a slow, multi-step "build all the benchmark and
+  paper files first" step before it could run. It now sets those up
+  automatically, so `npm test` (or a plain `vitest run`) just works from a fresh
+  checkout. 785 tests pass with nothing extra to remember.
+
+### Friendlier docs
+
+- The README now opens with a short "In Plain English" section that explains
+  what Audrey is for in everyday language, before diving into the technical
+  detail.
+
 ## 1.0.2 - 2026-05-28
 
 Maintenance and engineering-quality release. No runtime behavior change — the
