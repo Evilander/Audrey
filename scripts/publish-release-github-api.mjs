@@ -27,11 +27,14 @@ function parseArgs(argv = process.argv.slice(2)) {
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
-    if ((token === '--repository' || token === '--repo') && argv[i + 1]) args.repository = argv[++i];
+    if ((token === '--repository' || token === '--repo') && argv[i + 1])
+      args.repository = argv[++i];
     else if (token === '--branch' && argv[i + 1]) args.branch = argv[++i];
-    else if ((token === '--version' || token === '--target-version') && argv[i + 1]) args.version = argv[++i];
+    else if ((token === '--version' || token === '--target-version') && argv[i + 1])
+      args.version = argv[++i];
     else if (token === '--token-env' && argv[i + 1]) args.tokenEnv = argv[++i];
-    else if (token === '--concurrency' && argv[i + 1]) args.concurrency = Number.parseInt(argv[++i], 10);
+    else if (token === '--concurrency' && argv[i + 1])
+      args.concurrency = Number.parseInt(argv[++i], 10);
     else if (token === '--apply') args.apply = true;
     else if (token === '--json') args.json = true;
     else if (token === '--force') args.force = true;
@@ -84,7 +87,10 @@ function run(command, args, options = {}) {
 }
 
 function assertOk(result) {
-  if (!result.ok) throw new Error(`${result.command} failed: ${result.stderr || result.stdout || result.error || result.status}`);
+  if (!result.ok)
+    throw new Error(
+      `${result.command} failed: ${result.stderr || result.stdout || result.error || result.status}`,
+    );
   return result.stdout;
 }
 
@@ -97,7 +103,9 @@ function normalized(path) {
 }
 
 function sha256(path) {
-  return createHash('sha256').update(readFileSync(resolve(ROOT, path))).digest('hex');
+  return createHash('sha256')
+    .update(readFileSync(resolve(ROOT, path)))
+    .digest('hex');
 }
 
 function readJsonIfExists(path) {
@@ -106,9 +114,24 @@ function readJsonIfExists(path) {
 }
 
 function collectChangedPaths() {
-  const changed = splitZ(assertOk(run('git', ['-c', 'core.quotepath=false', 'diff', '--name-only', '-z', 'HEAD', '--'])));
-  const untracked = splitZ(assertOk(run('git', ['-c', 'core.quotepath=false', 'ls-files', '--others', '--exclude-standard', '-z'])));
-  return [...new Set([...changed, ...untracked].map(normalized))].sort((a, b) => a.localeCompare(b));
+  const changed = splitZ(
+    assertOk(run('git', ['-c', 'core.quotepath=false', 'diff', '--name-only', '-z', 'HEAD', '--'])),
+  );
+  const untracked = splitZ(
+    assertOk(
+      run('git', [
+        '-c',
+        'core.quotepath=false',
+        'ls-files',
+        '--others',
+        '--exclude-standard',
+        '-z',
+      ]),
+    ),
+  );
+  return [...new Set([...changed, ...untracked].map(normalized))].sort((a, b) =>
+    a.localeCompare(b),
+  );
 }
 
 function fileMode(path) {
@@ -136,9 +159,34 @@ function changedEntries() {
 }
 
 function remoteRefs(repository, branch, version) {
-  let result = run('git', ['ls-remote', `https://github.com/${repository}.git`, `refs/heads/${branch}`, `refs/tags/v${version}`], { timeout: 60_000 });
-  if (!result.ok && /schannel|AcquireCredentialsHandle|SEC_E_NO_CREDENTIALS/i.test(`${result.stderr}\n${result.stdout}`)) {
-    result = run('git', ['-c', 'http.sslBackend=openssl', 'ls-remote', `https://github.com/${repository}.git`, `refs/heads/${branch}`, `refs/tags/v${version}`], { timeout: 60_000 });
+  let result = run(
+    'git',
+    [
+      'ls-remote',
+      `https://github.com/${repository}.git`,
+      `refs/heads/${branch}`,
+      `refs/tags/v${version}`,
+    ],
+    { timeout: 60_000 },
+  );
+  if (
+    !result.ok &&
+    /schannel|AcquireCredentialsHandle|SEC_E_NO_CREDENTIALS/i.test(
+      `${result.stderr}\n${result.stdout}`,
+    )
+  ) {
+    result = run(
+      'git',
+      [
+        '-c',
+        'http.sslBackend=openssl',
+        'ls-remote',
+        `https://github.com/${repository}.git`,
+        `refs/heads/${branch}`,
+        `refs/tags/v${version}`,
+      ],
+      { timeout: 60_000 },
+    );
     result.fallback = 'openssl';
   }
 
@@ -155,7 +203,10 @@ function remoteRefs(repository, branch, version) {
 }
 
 function releaseDates() {
-  const headTime = Number.parseInt(assertOk(run('git', ['show', '-s', '--format=%ct', 'HEAD'])), 10);
+  const headTime = Number.parseInt(
+    assertOk(run('git', ['show', '-s', '--format=%ct', 'HEAD'])),
+    10,
+  );
   const commitEpoch = headTime + 1;
   return {
     commitEpoch,
@@ -191,7 +242,9 @@ async function githubJson(token, repository, path, options = {}) {
   const payload = text ? JSON.parse(text) : null;
   if (!response.ok) {
     const message = payload?.message ?? text.slice(0, 500) ?? response.statusText;
-    throw new Error(`GitHub API ${options.method ?? 'GET'} ${path} failed (${response.status}): ${message}`);
+    throw new Error(
+      `GitHub API ${options.method ?? 'GET'} ${path} failed (${response.status}): ${message}`,
+    );
   }
   return payload;
 }
@@ -238,12 +291,18 @@ function localState(args) {
   const bytes = entries.reduce((total, entry) => total + entry.bytes, 0);
   const blockers = [];
 
-  if (!refs.result.ok) blockers.push(`Remote ref check failed: ${refs.result.stderr || refs.result.stdout || refs.result.error}`);
+  if (!refs.result.ok)
+    blockers.push(
+      `Remote ref check failed: ${refs.result.stderr || refs.result.stdout || refs.result.error}`,
+    );
   if (refs.branch && refs.branch !== localHead && !args.force) {
     blockers.push(`Remote ${args.branch} is ${refs.branch}, but local HEAD is ${localHead}`);
   }
   if (refs.tag) blockers.push(`Remote tag v${args.version} already exists at ${refs.tag}`);
-  if (!objectReport?.commit || !objectReport?.tree) blockers.push('Missing .tmp/release-git-object-report.json; run npm run release:artifacts first');
+  if (!objectReport?.commit || !objectReport?.tree)
+    blockers.push(
+      'Missing .tmp/release-git-object-report.json; run npm run release:artifacts first',
+    );
 
   return {
     localHead,
@@ -283,7 +342,9 @@ async function publishWithGitHubApi(args, state, token) {
   });
 
   if (state.expectedReleaseTree && tree.sha !== state.expectedReleaseTree) {
-    throw new Error(`GitHub release tree ${tree.sha} does not match local source-bundle tree ${state.expectedReleaseTree}`);
+    throw new Error(
+      `GitHub release tree ${tree.sha} does not match local source-bundle tree ${state.expectedReleaseTree}`,
+    );
   }
 
   const dates = releaseDates();
@@ -300,7 +361,9 @@ async function publishWithGitHubApi(args, state, token) {
   });
 
   if (state.expectedReleaseCommit && commit.sha !== state.expectedReleaseCommit) {
-    throw new Error(`GitHub release commit ${commit.sha} does not match local source-bundle commit ${state.expectedReleaseCommit}`);
+    throw new Error(
+      `GitHub release commit ${commit.sha} does not match local source-bundle commit ${state.expectedReleaseCommit}`,
+    );
   }
 
   const branchUpdate = await githubJson(token, args.repository, `/git/refs/heads/${args.branch}`, {
@@ -398,12 +461,12 @@ async function main() {
     })),
     changedEntries: args.includeEntries
       ? state.entries.map(entry => ({
-        path: entry.path,
-        deleted: entry.deleted,
-        mode: entry.mode,
-        bytes: entry.bytes,
-        sha256: entry.sha256,
-      }))
+          path: entry.path,
+          deleted: entry.deleted,
+          mode: entry.mode,
+          bytes: entry.bytes,
+          sha256: entry.sha256,
+        }))
       : undefined,
     finalizeArtifacts: state.finalizeArtifacts,
     blockers: [...state.blockers],
@@ -413,7 +476,9 @@ async function main() {
   if (args.apply) {
     const token = process.env[args.tokenEnv];
     if (!token) {
-      report.blockers.push(`Set ${args.tokenEnv} to a GitHub token with contents:write before applying`);
+      report.blockers.push(
+        `Set ${args.tokenEnv} to a GitHub token with contents:write before applying`,
+      );
     } else if (report.blockers.length === 0) {
       report.publish = await publishWithGitHubApi(args, state, token);
     }

@@ -24,11 +24,9 @@ if (!existsSync(cli)) {
 }
 
 function createTempRoot() {
-  const candidates = [
-    process.env.AUDREY_SMOKE_TMPDIR,
-    tmpdir(),
-    join(root, '.tmp'),
-  ].filter(Boolean);
+  const candidates = [process.env.AUDREY_SMOKE_TMPDIR, tmpdir(), join(root, '.tmp')].filter(
+    Boolean,
+  );
   const failures = [];
 
   for (const candidate of candidates) {
@@ -75,10 +73,12 @@ try {
 
   const doctor = JSON.parse(run('doctor --json', ['doctor', '--json']));
   if (doctor.version !== pkg.version || doctor.ok !== true) {
-    fail(`doctor --json returned unexpected release status: ${JSON.stringify({
-      version: doctor.version,
-      ok: doctor.ok,
-    })}`);
+    fail(
+      `doctor --json returned unexpected release status: ${JSON.stringify({
+        version: doctor.version,
+        ok: doctor.ok,
+      })}`,
+    );
   }
 
   const demo = run('demo', ['demo']);

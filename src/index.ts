@@ -4,7 +4,14 @@ export { startServer } from './server.js';
 export type { ServerOptions } from './server.js';
 export { createApp } from './routes.js';
 export type { AppOptions } from './routes.js';
-export { computeConfidence, sourceReliability, salienceModifier, DEFAULT_SOURCE_RELIABILITY, DEFAULT_WEIGHTS, DEFAULT_HALF_LIVES } from './confidence.js';
+export {
+  computeConfidence,
+  sourceReliability,
+  salienceModifier,
+  DEFAULT_SOURCE_RELIABILITY,
+  DEFAULT_WEIGHTS,
+  DEFAULT_HALF_LIVES,
+} from './confidence.js';
 export {
   createEmbeddingProvider,
   MockEmbeddingProvider,
@@ -12,7 +19,12 @@ export {
   OpenAIEmbeddingProvider,
   GeminiEmbeddingProvider,
 } from './embedding.js';
-export { createLLMProvider, MockLLMProvider, AnthropicLLMProvider, OpenAILLMProvider } from './llm.js';
+export {
+  createLLMProvider,
+  MockLLMProvider,
+  AnthropicLLMProvider,
+  OpenAILLMProvider,
+} from './llm.js';
 export { createDatabase, closeDatabase, readStoredDimensions } from './db.js';
 export { recall, recallStream } from './recall.js';
 export { addCausalLink, getCausalChain, articulateCausalLink } from './causal.js';
@@ -29,7 +41,12 @@ export { reembedAll } from './migrate.js';
 export { forgetMemory, forgetByQuery, purgeMemories } from './forget.js';
 export { applyInterference, interferenceModifier } from './interference.js';
 export { contextMatchRatio, contextModifier } from './context.js';
-export { arousalSalienceBoost, affectSimilarity, moodCongruenceModifier, detectResonance } from './affect.js';
+export {
+  arousalSalienceBoost,
+  affectSimilarity,
+  moodCongruenceModifier,
+  detectResonance,
+} from './affect.js';
 export { ProfileRecorder, isAudreyProfileEnabled } from './profile.js';
 export type { ProfileDiagnostics, ProfileSpan } from './profile.js';
 export { buildPreflight } from './preflight.js';

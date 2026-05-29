@@ -11,7 +11,8 @@ async function demo() {
 
   console.log('--- Encoding care-coordination observations ---');
   await brain.encode({
-    content: 'Referral queue delays drop when missing imaging notes are requested before prior-authorization submission.',
+    content:
+      'Referral queue delays drop when missing imaging notes are requested before prior-authorization submission.',
     source: 'direct-observation',
     salience: 0.9,
     tags: ['healthcare-ops', 'prior-auth', 'referrals'],
@@ -19,7 +20,8 @@ async function demo() {
   });
 
   await brain.encode({
-    content: 'Scheduling team reports the highest callback completion rate between 4pm and 6pm for discharge follow-up.',
+    content:
+      'Scheduling team reports the highest callback completion rate between 4pm and 6pm for discharge follow-up.',
     source: 'tool-result',
     salience: 0.8,
     tags: ['healthcare-ops', 'follow-up', 'scheduling'],
@@ -27,7 +29,8 @@ async function demo() {
   });
 
   await brain.encode({
-    content: 'Care coordinators want interpreter requirements captured in every handoff note before outreach starts.',
+    content:
+      'Care coordinators want interpreter requirements captured in every handoff note before outreach starts.',
     source: 'told-by-user',
     salience: 0.7,
     tags: ['healthcare-ops', 'handoff', 'interpreter'],
@@ -39,7 +42,8 @@ async function demo() {
     minClusterSize: 3,
     similarityThreshold: -0.3,
     extractPrinciple: () => ({
-      content: 'For care-coordination workflows, collect missing documentation and communication preferences before outreach or prior-auth submission.',
+      content:
+        'For care-coordination workflows, collect missing documentation and communication preferences before outreach or prior-auth submission.',
       type: 'procedural',
       conditions: ['prior-auth missing documentation', 'handoff note lacks outreach constraints'],
     }),

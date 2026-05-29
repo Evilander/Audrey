@@ -60,9 +60,11 @@ function protectInline(text) {
   };
 
   let next = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (_, label, url) =>
-    protect(`\\href{${latexEscape(url)}}{${latexEscape(label)}}`));
+    protect(`\\href{${latexEscape(url)}}{${latexEscape(label)}}`),
+  );
   next = next.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) =>
-    protect(`\\texttt{${latexEscape(label)}} (${latexEscape(url)})`));
+    protect(`\\texttt{${latexEscape(label)}} (${latexEscape(url)})`),
+  );
   next = next.replace(/\[@([^\]]+)\]/g, (_, rawIds) => {
     const ids = rawIds
       .split(/;\s*@?|\s*,\s*@?/)
@@ -288,17 +290,21 @@ export function writeArxivSourcePackage(options = {}) {
 
   writeFileSync(join(outDir, 'main.tex'), built.tex, 'utf-8');
   cpSync(fromRoot(SOURCE_BIB), join(outDir, 'references.bib'));
-  writeFileSync(join(outDir, 'README-arxiv.txt'), [
-    'Audrey arXiv source package',
-    '',
-    'Main file: main.tex',
-    'Bibliography: references.bib',
-    '',
-    'Generated from docs/paper/audrey-paper-v1.md and docs/paper/publication-pack.json.',
-    'This host did not require a local TeX compiler to generate the source package.',
-    'Before final arXiv upload, compile with a TeX toolchain and preview the PDF in arXiv.',
-    '',
-  ].join('\n'), 'utf-8');
+  writeFileSync(
+    join(outDir, 'README-arxiv.txt'),
+    [
+      'Audrey arXiv source package',
+      '',
+      'Main file: main.tex',
+      'Bibliography: references.bib',
+      '',
+      'Generated from docs/paper/audrey-paper-v1.md and docs/paper/publication-pack.json.',
+      'This host did not require a local TeX compiler to generate the source package.',
+      'Before final arXiv upload, compile with a TeX toolchain and preview the PDF in arXiv.',
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
 
   const files = [
     fileRecord(outDir, 'main.tex', SOURCE_MARKDOWN),

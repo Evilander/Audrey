@@ -61,7 +61,7 @@ describe('auto-consolidation', () => {
   it('emits consolidation events from auto-consolidate', async () => {
     vi.useFakeTimers();
     const events = [];
-    audrey.on('consolidation', (e) => events.push(e));
+    audrey.on('consolidation', e => events.push(e));
     audrey.startAutoConsolidate(1000);
 
     await vi.advanceTimersByTimeAsync(1500);

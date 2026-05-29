@@ -31,7 +31,9 @@ export function forgetMemory(
       return { id, type: 'episodic', purged: purge };
     }
 
-    const semantic = db.prepare('SELECT id FROM semantics WHERE id = ?').get(id) as IdRow | undefined;
+    const semantic = db.prepare('SELECT id FROM semantics WHERE id = ?').get(id) as
+      | IdRow
+      | undefined;
     if (semantic) {
       if (purge) {
         db.prepare('DELETE FROM vec_semantics WHERE id = ?').run(id);
@@ -44,7 +46,9 @@ export function forgetMemory(
       return { id, type: 'semantic', purged: purge };
     }
 
-    const procedure = db.prepare('SELECT id FROM procedures WHERE id = ?').get(id) as IdRow | undefined;
+    const procedure = db.prepare('SELECT id FROM procedures WHERE id = ?').get(id) as
+      | IdRow
+      | undefined;
     if (procedure) {
       if (purge) {
         db.prepare('DELETE FROM vec_procedures WHERE id = ?').run(id);
@@ -64,14 +68,12 @@ export function forgetMemory(
 }
 
 export function purgeMemories(db: Database.Database): PurgeResult {
-  const selectDeadEpisodes = db.prepare(
-    'SELECT id FROM episodes WHERE superseded_by IS NOT NULL'
-  );
+  const selectDeadEpisodes = db.prepare('SELECT id FROM episodes WHERE superseded_by IS NOT NULL');
   const selectDeadSemantics = db.prepare(
-    "SELECT id FROM semantics WHERE state IN ('superseded', 'dormant', 'rolled_back')"
+    "SELECT id FROM semantics WHERE state IN ('superseded', 'dormant', 'rolled_back')",
   );
   const selectDeadProcedures = db.prepare(
-    "SELECT id FROM procedures WHERE state IN ('superseded', 'dormant', 'rolled_back')"
+    "SELECT id FROM procedures WHERE state IN ('superseded', 'dormant', 'rolled_back')",
   );
 
   let episodes = 0;
@@ -118,25 +120,37 @@ export async function forgetByQuery(
 
   const candidates: SimilarityRow[] = [];
 
-  const epMatch = db.prepare(`
+  const epMatch = db
+    .prepare(
+      `
     SELECT e.id, (1.0 - v.distance) AS similarity, 'episodic' AS type
     FROM vec_episodes v JOIN episodes e ON e.id = v.id
     WHERE v.embedding MATCH ? AND k = 1 AND e.superseded_by IS NULL
-  `).get(queryBuffer) as SimilarityRow | undefined;
+  `,
+    )
+    .get(queryBuffer) as SimilarityRow | undefined;
   if (epMatch) candidates.push(epMatch);
 
-  const semMatch = db.prepare(`
+  const semMatch = db
+    .prepare(
+      `
     SELECT s.id, (1.0 - v.distance) AS similarity, 'semantic' AS type
     FROM vec_semantics v JOIN semantics s ON s.id = v.id
     WHERE v.embedding MATCH ? AND k = 1 AND (s.state = 'active' OR s.state = 'context_dependent')
-  `).get(queryBuffer) as SimilarityRow | undefined;
+  `,
+    )
+    .get(queryBuffer) as SimilarityRow | undefined;
   if (semMatch) candidates.push(semMatch);
 
-  const procMatch = db.prepare(`
+  const procMatch = db
+    .prepare(
+      `
     SELECT p.id, (1.0 - v.distance) AS similarity, 'procedural' AS type
     FROM vec_procedures v JOIN procedures p ON p.id = v.id
     WHERE v.embedding MATCH ? AND k = 1 AND (p.state = 'active' OR p.state = 'context_dependent')
-  `).get(queryBuffer) as SimilarityRow | undefined;
+  `,
+    )
+    .get(queryBuffer) as SimilarityRow | undefined;
   if (procMatch) candidates.push(procMatch);
 
   if (candidates.length === 0) return null;

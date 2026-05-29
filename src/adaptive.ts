@@ -19,12 +19,16 @@ export function suggestConsolidationParams(db: Database.Database): {
   similarityThreshold: number;
   confidence: string;
 } {
-  const runs = db.prepare(`
+  const runs = db
+    .prepare(
+      `
     SELECT min_cluster_size, similarity_threshold, clusters_found, principles_extracted, episodes_evaluated
     FROM consolidation_metrics
     ORDER BY created_at DESC
     LIMIT 20
-  `).all() as MetricRow[];
+  `,
+    )
+    .all() as MetricRow[];
 
   if (runs.length === 0) {
     return {

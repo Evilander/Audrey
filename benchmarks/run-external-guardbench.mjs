@@ -3,31 +3,46 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeGuardBenchConformanceCard } from './create-conformance-card.mjs';
-import { computeGuardBenchArtifactHashes, validateGuardBenchArtifacts } from './validate-guardbench-artifacts.mjs';
+import {
+  computeGuardBenchArtifactHashes,
+  validateGuardBenchArtifacts,
+} from './validate-guardbench-artifacts.mjs';
 import { publicArtifactValue } from './public-paths.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const KNOWN_ADAPTERS = new Map([
-  ['mem0', {
-    name: 'mem0-platform',
-    path: 'benchmarks/adapters/mem0-platform.mjs',
-    requiredEnv: ['MEM0_API_KEY'],
-  }],
-  ['mem0-platform', {
-    name: 'mem0-platform',
-    path: 'benchmarks/adapters/mem0-platform.mjs',
-    requiredEnv: ['MEM0_API_KEY'],
-  }],
-  ['zep', {
-    name: 'zep-cloud',
-    path: 'benchmarks/adapters/zep-cloud.mjs',
-    requiredEnv: ['ZEP_API_KEY'],
-  }],
-  ['zep-cloud', {
-    name: 'zep-cloud',
-    path: 'benchmarks/adapters/zep-cloud.mjs',
-    requiredEnv: ['ZEP_API_KEY'],
-  }],
+  [
+    'mem0',
+    {
+      name: 'mem0-platform',
+      path: 'benchmarks/adapters/mem0-platform.mjs',
+      requiredEnv: ['MEM0_API_KEY'],
+    },
+  ],
+  [
+    'mem0-platform',
+    {
+      name: 'mem0-platform',
+      path: 'benchmarks/adapters/mem0-platform.mjs',
+      requiredEnv: ['MEM0_API_KEY'],
+    },
+  ],
+  [
+    'zep',
+    {
+      name: 'zep-cloud',
+      path: 'benchmarks/adapters/zep-cloud.mjs',
+      requiredEnv: ['ZEP_API_KEY'],
+    },
+  ],
+  [
+    'zep-cloud',
+    {
+      name: 'zep-cloud',
+      path: 'benchmarks/adapters/zep-cloud.mjs',
+      requiredEnv: ['ZEP_API_KEY'],
+    },
+  ],
 ]);
 
 export function parseExternalArgs(argv = process.argv.slice(2)) {
@@ -127,13 +142,19 @@ export function evaluateAdapterConformance(summary, adapterName) {
     .filter(row => row.system === resolvedAdapterName);
 
   if (adapterRows.length !== expectedScenarios) {
-    failures.push(`Adapter ${resolvedAdapterName} returned ${adapterRows.length}/${expectedScenarios} scenario rows`);
+    failures.push(
+      `Adapter ${resolvedAdapterName} returned ${adapterRows.length}/${expectedScenarios} scenario rows`,
+    );
   }
   if (systemSummary && systemSummary.scenarios !== expectedScenarios) {
-    failures.push(`Adapter ${resolvedAdapterName} system summary has ${systemSummary.scenarios}/${expectedScenarios} scenarios`);
+    failures.push(
+      `Adapter ${resolvedAdapterName} system summary has ${systemSummary.scenarios}/${expectedScenarios} scenarios`,
+    );
   }
   if (systemSummary && systemSummary.redactionLeaks !== 0) {
-    failures.push(`Adapter ${resolvedAdapterName} leaked ${systemSummary.redactionLeaks} seeded secret(s) in decision output`);
+    failures.push(
+      `Adapter ${resolvedAdapterName} leaked ${systemSummary.redactionLeaks} seeded secret(s) in decision output`,
+    );
   }
   if (adapterRows.some(row => row.external !== true)) {
     failures.push(`Adapter ${resolvedAdapterName} rows are not marked external`);
@@ -270,7 +291,8 @@ async function main() {
   const card = child.status === 0 ? writeGuardBenchConformanceCard({ dir: run.outDir }) : null;
   console.log(`External GuardBench metadata: ${metadataPath}`);
   if (card) console.log(`External GuardBench conformance card: ${card.path}`);
-  process.exitCode = child.status === 0 && validation.ok && adapterConformance.ok ? 0 : (child.status ?? 1);
+  process.exitCode =
+    child.status === 0 && validation.ok && adapterConformance.ok ? 0 : (child.status ?? 1);
 }
 
 if (process.argv[1] && process.argv[1].endsWith('run-external-guardbench.mjs')) {

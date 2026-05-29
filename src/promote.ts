@@ -75,10 +75,12 @@ interface EventRow {
 }
 
 function loadPromotedMemoryIds(db: Database.Database, target: PromotionTarget): Set<string> {
-  const rows = db.prepare(
-    `SELECT metadata FROM memory_events
+  const rows = db
+    .prepare(
+      `SELECT metadata FROM memory_events
      WHERE event_type = 'Promotion' AND tool_name = ?`,
-  ).all(target) as EventRow[];
+    )
+    .all(target) as EventRow[];
 
   const ids = new Set<string>();
   for (const row of rows) {
@@ -145,7 +147,10 @@ function parseTags(raw: string | null): string[] {
   } catch {
     // fall through
   }
-  return String(raw).split(',').map(t => t.trim()).filter(Boolean);
+  return String(raw)
+    .split(',')
+    .map(t => t.trim())
+    .filter(Boolean);
 }
 
 export function findPromotionCandidates(
@@ -166,12 +171,14 @@ export function findPromotionCandidates(
   const candidates: PromotionCandidate[] = [];
 
   // Procedural memories: primary promotion stream
-  const procedurals = db.prepare(
-    `SELECT id, content, state, success_count, failure_count, retrieval_count,
+  const procedurals = db
+    .prepare(
+      `SELECT id, content, state, success_count, failure_count, retrieval_count,
             usage_count, salience, created_at, last_reinforced_at, trigger_conditions
      FROM procedures
      WHERE state = 'active'`,
-  ).all() as ProceduralRow[];
+    )
+    .all() as ProceduralRow[];
 
   for (const row of procedurals) {
     if (alreadyPromoted.has(row.id)) continue;
@@ -203,8 +210,12 @@ export function findPromotionCandidates(
     const reasonParts: string[] = [
       `procedural memory with ${successes}/${evidenceTotal} successful applications`,
     ];
-    if (failurePrevented > 0) reasonParts.push(`would have prevented ${failurePrevented} recent tool failure${failurePrevented === 1 ? '' : 's'}`);
-    if ((row.usage_count ?? 0) > 0) reasonParts.push(`used ${row.usage_count} time${row.usage_count === 1 ? '' : 's'}`);
+    if (failurePrevented > 0)
+      reasonParts.push(
+        `would have prevented ${failurePrevented} recent tool failure${failurePrevented === 1 ? '' : 's'}`,
+      );
+    if ((row.usage_count ?? 0) > 0)
+      reasonParts.push(`used ${row.usage_count} time${row.usage_count === 1 ? '' : 's'}`);
 
     candidates.push({
       candidate_id: `proc:${row.id}`,
@@ -224,12 +235,14 @@ export function findPromotionCandidates(
   // Semantic memories: only high-confidence, high-evidence, heavily reinforced ones.
   // The bar is higher because semantic memories are "facts," not "procedures" — we
   // do not want to promote every shared fact as a rule.
-  const semantics = db.prepare(
-    `SELECT id, content, state, evidence_count, supporting_count, contradicting_count,
+  const semantics = db
+    .prepare(
+      `SELECT id, content, state, evidence_count, supporting_count, contradicting_count,
             retrieval_count, usage_count, salience, created_at, last_reinforced_at
      FROM semantics
      WHERE state = 'active'`,
-  ).all() as SemanticRow[];
+    )
+    .all() as SemanticRow[];
 
   for (const row of semantics) {
     if (alreadyPromoted.has(row.id)) continue;
@@ -258,7 +271,10 @@ export function findPromotionCandidates(
     const reasonParts: string[] = [
       `semantic principle with ${supporting}/${evidence} supporting episodes`,
     ];
-    if (failurePrevented > 0) reasonParts.push(`matches ${failurePrevented} recent tool failure${failurePrevented === 1 ? '' : 's'}`);
+    if (failurePrevented > 0)
+      reasonParts.push(
+        `matches ${failurePrevented} recent tool failure${failurePrevented === 1 ? '' : 's'}`,
+      );
 
     candidates.push({
       candidate_id: `sem:${row.id}`,

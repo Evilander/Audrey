@@ -11,7 +11,12 @@ import type {
   RecallResults,
   SemanticRow,
 } from './types.js';
-import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier, sourceReliability } from './confidence.js';
+import {
+  computeConfidence,
+  DEFAULT_HALF_LIVES,
+  salienceModifier,
+  sourceReliability,
+} from './confidence.js';
 import { interferenceModifier } from './interference.js';
 import { contextMatchRatio, contextModifier } from './context.js';
 import { moodCongruenceModifier, affectSimilarity } from './affect.js';
@@ -20,13 +25,72 @@ import { ftsIdsByType, fuseResults } from './hybrid-recall.js';
 import type { ProfileRecorder } from './profile.js';
 
 const STOPWORDS = new Set([
-  'a', 'an', 'and', 'are', 'at', 'be', 'by', 'did', 'do', 'does', 'for', 'from', 'had', 'has', 'have',
-  'how', 'i', 'in', 'is', 'it', 'me', 'my', 'now', 'of', 'on', 'or', 'our', 's', 'sam', 'she', 'that',
-  'the', 'their', 'them', 'there', 'they', 'this', 'to', 'was', 'we', 'were', 'what', 'when', 'where',
-  'which', 'who', 'why', 'with', 'would', 'you', 'your',
+  'a',
+  'an',
+  'and',
+  'are',
+  'at',
+  'be',
+  'by',
+  'did',
+  'do',
+  'does',
+  'for',
+  'from',
+  'had',
+  'has',
+  'have',
+  'how',
+  'i',
+  'in',
+  'is',
+  'it',
+  'me',
+  'my',
+  'now',
+  'of',
+  'on',
+  'or',
+  'our',
+  's',
+  'sam',
+  'she',
+  'that',
+  'the',
+  'their',
+  'them',
+  'there',
+  'they',
+  'this',
+  'to',
+  'was',
+  'we',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'who',
+  'why',
+  'with',
+  'would',
+  'you',
+  'your',
 ]);
 
-const IDENTIFIER_TERMS = new Set(['account', 'api', 'credential', 'id', 'identifier', 'key', 'number', 'password', 'secret', 'ssn', 'token']);
+const IDENTIFIER_TERMS = new Set([
+  'account',
+  'api',
+  'credential',
+  'id',
+  'identifier',
+  'key',
+  'number',
+  'password',
+  'secret',
+  'ssn',
+  'token',
+]);
 
 interface VectorTableCounts {
   episodic: number;
@@ -79,7 +143,12 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function recordPartialFailure(options: RecallInternalOptions, type: RecallError['type'], stage: string, err: unknown): void {
+function recordPartialFailure(
+  options: RecallInternalOptions,
+  type: RecallError['type'],
+  stage: string,
+  err: unknown,
+): void {
   options.onPartialFailure?.({
     type,
     stage,
@@ -93,13 +162,24 @@ function vectorTableForType(type: MemoryType): 'vec_episodes' | 'vec_semantics' 
   return 'vec_procedures';
 }
 
-function reportMissingVectorTables(db: Database.Database, searchTypes: MemoryType[], options: RecallInternalOptions): void {
+function reportMissingVectorTables(
+  db: Database.Database,
+  searchTypes: MemoryType[],
+  options: RecallInternalOptions,
+): void {
   for (const type of searchTypes) {
     const table = vectorTableForType(type);
     try {
-      const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { name?: string } | undefined;
+      const row = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(table) as { name?: string } | undefined;
       if (!row?.name) {
-        recordPartialFailure(options, type, 'recall.vector_counts', new Error(`Missing vector table ${table}`));
+        recordPartialFailure(
+          options,
+          type,
+          'recall.vector_counts',
+          new Error(`Missing vector table ${table}`),
+        );
       }
     } catch (err) {
       recordPartialFailure(options, type, 'recall.vector_counts', err);
@@ -134,7 +214,10 @@ function lexicalCoverage(query: string, content: string): number {
 function hasIdentifierIntent(query: string): boolean {
   const normalized = String(query || '').toLowerCase();
   const asksForValue = /\b(find|give|lookup|show|tell|what|which)\b/.test(normalized);
-  const mentionsIdentifier = /\b(account number|api key|credential|id|identifier|key|number|passport number|password|secret|ssn|token)\b/.test(normalized);
+  const mentionsIdentifier =
+    /\b(account number|api key|credential|id|identifier|key|number|passport number|password|secret|ssn|token)\b/.test(
+      normalized,
+    );
   return asksForValue && mentionsIdentifier;
 }
 
@@ -209,7 +292,11 @@ function applyResultGuards(query: string, results: RecallResult[], limit: number
   return accepted;
 }
 
-function computeEpisodicConfidence(ep: EpisodeWithSimilarity, now: Date, confidenceConfig: Partial<ConfidenceConfig> = {}): number {
+function computeEpisodicConfidence(
+  ep: EpisodeWithSimilarity,
+  now: Date,
+  confidenceConfig: Partial<ConfidenceConfig> = {},
+): number {
   const ageDays = daysBetween(ep.created_at, now);
   const halfLives = confidenceConfig.halfLives || DEFAULT_HALF_LIVES;
   let confidence = computeConfidence({
@@ -227,7 +314,11 @@ function computeEpisodicConfidence(ep: EpisodeWithSimilarity, now: Date, confide
   return Math.max(0, Math.min(1, confidence));
 }
 
-function computeSemanticConfidence(sem: SemanticWithSimilarity, now: Date, confidenceConfig: Partial<ConfidenceConfig> = {}): number {
+function computeSemanticConfidence(
+  sem: SemanticWithSimilarity,
+  now: Date,
+  confidenceConfig: Partial<ConfidenceConfig> = {},
+): number {
   const ageDays = daysBetween(sem.created_at, now);
   const daysSinceRetrieval = sem.last_reinforced_at
     ? daysBetween(sem.last_reinforced_at, now)
@@ -244,12 +335,19 @@ function computeSemanticConfidence(sem: SemanticWithSimilarity, now: Date, confi
     weights: confidenceConfig.weights,
     customSourceReliability: confidenceConfig.sourceReliability,
   });
-  confidence *= interferenceModifier(sem.interference_count || 0, confidenceConfig.interferenceWeight);
+  confidence *= interferenceModifier(
+    sem.interference_count || 0,
+    confidenceConfig.interferenceWeight,
+  );
   confidence *= salienceModifier(sem.salience);
   return Math.max(0, Math.min(1, confidence));
 }
 
-function computeProceduralConfidence(proc: ProceduralWithSimilarity, now: Date, confidenceConfig: Partial<ConfidenceConfig> = {}): number {
+function computeProceduralConfidence(
+  proc: ProceduralWithSimilarity,
+  now: Date,
+  confidenceConfig: Partial<ConfidenceConfig> = {},
+): number {
   const ageDays = daysBetween(proc.created_at, now);
   const daysSinceRetrieval = proc.last_reinforced_at
     ? daysBetween(proc.last_reinforced_at, now)
@@ -266,7 +364,10 @@ function computeProceduralConfidence(proc: ProceduralWithSimilarity, now: Date, 
     weights: confidenceConfig.weights,
     customSourceReliability: confidenceConfig.sourceReliability,
   });
-  confidence *= interferenceModifier(proc.interference_count || 0, confidenceConfig.interferenceWeight);
+  confidence *= interferenceModifier(
+    proc.interference_count || 0,
+    confidenceConfig.interferenceWeight,
+  );
   confidence *= salienceModifier(proc.salience);
   return Math.max(0, Math.min(1, confidence));
 }
@@ -379,7 +480,10 @@ function safeKForCount(rowCount: number, candidateK: number): number {
   return rowCount > 0 ? Math.min(candidateK, rowCount) : 0;
 }
 
-function countVectorTable(db: Database.Database, table: 'vec_episodes' | 'vec_semantics' | 'vec_procedures'): number {
+function countVectorTable(
+  db: Database.Database,
+  table: 'vec_episodes' | 'vec_semantics' | 'vec_procedures',
+): number {
   try {
     return (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as CountRow).c || 0;
   } catch {
@@ -398,12 +502,16 @@ function countVectorTables(db: Database.Database, searchTypes: MemoryType[]): Ve
     ? '(SELECT COUNT(*) FROM vec_procedures) AS procedural'
     : '0 AS procedural';
   try {
-    const row = db.prepare(`
+    const row = db
+      .prepare(
+        `
       SELECT
         ${selectEpisodic},
         ${selectSemantic},
         ${selectProcedural}
-    `).get() as VectorCountsRow;
+    `,
+      )
+      .get() as VectorCountsRow;
     return {
       episodic: row.episodic || 0,
       semantic: row.semantic || 0,
@@ -435,7 +543,9 @@ function knnEpisodic(
   const privateClause = includePrivate ? '' : 'AND e."private" = 0';
   const agentClause = filters.agent ? 'AND e.agent = ?' : '';
   const params = filters.agent ? [queryBuffer, safeK, filters.agent] : [queryBuffer, safeK];
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT e.*, (1.0 - v.distance) AS similarity
     FROM vec_episodes v
     JOIN episodes e ON e.id = v.id
@@ -444,7 +554,9 @@ function knnEpisodic(
       AND e.superseded_by IS NULL
       ${privateClause}
       ${agentClause}
-  `).all(...params) as EpisodeWithSimilarity[];
+  `,
+    )
+    .all(...params) as EpisodeWithSimilarity[];
 
   const results: RecallResult[] = [];
   for (const row of rows) {
@@ -460,7 +572,11 @@ function knnEpisodic(
     if (confidenceConfig?.retrievalContext) {
       const encodingCtx = safeJsonParse<Record<string, string>>(row.context, {});
       ctxMatch = contextMatchRatio(encodingCtx, confidenceConfig.retrievalContext);
-      confidence *= contextModifier(encodingCtx, confidenceConfig.retrievalContext, confidenceConfig.contextWeight);
+      confidence *= contextModifier(
+        encodingCtx,
+        confidenceConfig.retrievalContext,
+        confidenceConfig.contextWeight,
+      );
       confidence = Math.max(0, Math.min(1, confidence));
     }
 
@@ -468,13 +584,19 @@ function knnEpisodic(
     if (confidenceConfig?.retrievalMood) {
       const encodingAffect = safeJsonParse<{ valence?: number; arousal?: number }>(row.affect, {});
       moodMatch = affectSimilarity(encodingAffect, confidenceConfig.retrievalMood);
-      confidence *= moodCongruenceModifier(encodingAffect, confidenceConfig.retrievalMood, confidenceConfig.affectWeight);
+      confidence *= moodCongruenceModifier(
+        encodingAffect,
+        confidenceConfig.retrievalMood,
+        confidenceConfig.affectWeight,
+      );
       confidence = Math.max(0, Math.min(1, confidence));
     }
 
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
-    results.push(buildEpisodicEntry(row, confidence, score, includeProvenance, ctxMatch, moodMatch));
+    results.push(
+      buildEpisodicEntry(row, confidence, score, includeProvenance, ctxMatch, moodMatch),
+    );
   }
   return results;
 }
@@ -495,7 +617,9 @@ function knnSemantic(
   if (safeK === 0) return { results: [], matchedIds: [] };
   const agentClause = filters.agent ? 'AND s.agent = ?' : '';
   const params = filters.agent ? [queryBuffer, safeK, filters.agent] : [queryBuffer, safeK];
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT s.*, (1.0 - v.distance) AS similarity
     FROM vec_semantics v
     JOIN semantics s ON s.id = v.id
@@ -503,7 +627,9 @@ function knnSemantic(
       AND k = ?
       ${stateClause(includeDormant)}
       ${agentClause}
-  `).all(...params) as SemanticWithSimilarity[];
+  `,
+    )
+    .all(...params) as SemanticWithSimilarity[];
 
   const results: RecallResult[] = [];
   const matchedIds: string[] = [];
@@ -534,7 +660,9 @@ function knnProcedural(
   if (safeK === 0) return { results: [], matchedIds: [] };
   const agentClause = filters.agent ? 'AND p.agent = ?' : '';
   const params = filters.agent ? [queryBuffer, safeK, filters.agent] : [queryBuffer, safeK];
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT p.*, (1.0 - v.distance) AS similarity
     FROM vec_procedures v
     JOIN procedures p ON p.id = v.id
@@ -542,7 +670,9 @@ function knnProcedural(
       AND k = ?
       ${stateClause(includeDormant)}
       ${agentClause}
-  `).all(...params) as ProceduralWithSimilarity[];
+  `,
+    )
+    .all(...params) as ProceduralWithSimilarity[];
 
   const results: RecallResult[] = [];
   const matchedIds: string[] = [];
@@ -596,32 +726,49 @@ export async function* recallStream(
       ? await profile.measure('recall.embedding', () => embeddingProvider.embed(query))
       : await embeddingProvider.embed(query);
     const queryBuffer = profile
-      ? profile.measureSync('recall.vector_to_buffer', () => embeddingProvider.vectorToBuffer(queryVector))
+      ? profile.measureSync('recall.vector_to_buffer', () =>
+          embeddingProvider.vectorToBuffer(queryVector),
+        )
       : embeddingProvider.vectorToBuffer(queryVector);
     const vectorCounts = profile
       ? profile.measureSync('recall.vector_counts', () => countVectorTables(db, searchTypes))
       : countVectorTables(db, searchTypes);
-    const maxVectorCount = Math.max(vectorCounts.episodic, vectorCounts.semantic, vectorCounts.procedural);
-    const candidateK = agentFilter
-      ? maxVectorCount
-      : hasFilters ? limit * 5 : limit * 3;
+    const maxVectorCount = Math.max(
+      vectorCounts.episodic,
+      vectorCounts.semantic,
+      vectorCounts.procedural,
+    );
+    const candidateK = agentFilter ? maxVectorCount : hasFilters ? limit * 5 : limit * 3;
 
     if (searchTypes.includes('episodic')) {
       try {
         const episodic = profile
-          ? profile.measureSync('recall.episodic_knn', () => knnEpisodic(
-            db,
-            queryBuffer,
-            candidateK,
-            vectorCounts.episodic,
-            now,
-            minConfidence,
-            includeProvenance,
-            confidenceConfig || {},
-            filters,
-            includePrivate,
-          ))
-          : knnEpisodic(db, queryBuffer, candidateK, vectorCounts.episodic, now, minConfidence, includeProvenance, confidenceConfig || {}, filters, includePrivate);
+          ? profile.measureSync('recall.episodic_knn', () =>
+              knnEpisodic(
+                db,
+                queryBuffer,
+                candidateK,
+                vectorCounts.episodic,
+                now,
+                minConfidence,
+                includeProvenance,
+                confidenceConfig || {},
+                filters,
+                includePrivate,
+              ),
+            )
+          : knnEpisodic(
+              db,
+              queryBuffer,
+              candidateK,
+              vectorCounts.episodic,
+              now,
+              minConfidence,
+              includeProvenance,
+              confidenceConfig || {},
+              filters,
+              includePrivate,
+            );
         allResults.push(...episodic);
       } catch (err) {
         recordPartialFailure(options, 'episodic', 'recall.episodic_knn', err);
@@ -631,19 +778,32 @@ export async function* recallStream(
     if (searchTypes.includes('semantic')) {
       try {
         const { results: semResults, matchedIds: semIds } = profile
-          ? profile.measureSync('recall.semantic_knn', () => knnSemantic(
-            db,
-            queryBuffer,
-            candidateK,
-            vectorCounts.semantic,
-            now,
-            minConfidence,
-            includeProvenance,
-            includeDormant,
-            confidenceConfig || {},
-            filters,
-          ))
-          : knnSemantic(db, queryBuffer, candidateK, vectorCounts.semantic, now, minConfidence, includeProvenance, includeDormant, confidenceConfig || {}, filters);
+          ? profile.measureSync('recall.semantic_knn', () =>
+              knnSemantic(
+                db,
+                queryBuffer,
+                candidateK,
+                vectorCounts.semantic,
+                now,
+                minConfidence,
+                includeProvenance,
+                includeDormant,
+                confidenceConfig || {},
+                filters,
+              ),
+            )
+          : knnSemantic(
+              db,
+              queryBuffer,
+              candidateK,
+              vectorCounts.semantic,
+              now,
+              minConfidence,
+              includeProvenance,
+              includeDormant,
+              confidenceConfig || {},
+              filters,
+            );
         allResults.push(...semResults);
 
         if (semIds.length > 0) {
@@ -651,7 +811,7 @@ export async function* recallStream(
           const placeholders = semIds.map(() => '?').join(',');
           const updateSemantic = (): void => {
             db.prepare(
-              `UPDATE semantics SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
+              `UPDATE semantics SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`,
             ).run(nowISO, ...semIds);
           };
           if (profile) profile.measureSync('recall.semantic_reinforce', updateSemantic);
@@ -665,19 +825,32 @@ export async function* recallStream(
     if (searchTypes.includes('procedural')) {
       try {
         const { results: procResults, matchedIds: procIds } = profile
-          ? profile.measureSync('recall.procedural_knn', () => knnProcedural(
-            db,
-            queryBuffer,
-            candidateK,
-            vectorCounts.procedural,
-            now,
-            minConfidence,
-            includeProvenance,
-            includeDormant,
-            confidenceConfig || {},
-            filters,
-          ))
-          : knnProcedural(db, queryBuffer, candidateK, vectorCounts.procedural, now, minConfidence, includeProvenance, includeDormant, confidenceConfig || {}, filters);
+          ? profile.measureSync('recall.procedural_knn', () =>
+              knnProcedural(
+                db,
+                queryBuffer,
+                candidateK,
+                vectorCounts.procedural,
+                now,
+                minConfidence,
+                includeProvenance,
+                includeDormant,
+                confidenceConfig || {},
+                filters,
+              ),
+            )
+          : knnProcedural(
+              db,
+              queryBuffer,
+              candidateK,
+              vectorCounts.procedural,
+              now,
+              minConfidence,
+              includeProvenance,
+              includeDormant,
+              confidenceConfig || {},
+              filters,
+            );
         allResults.push(...procResults);
 
         if (procIds.length > 0) {
@@ -685,7 +858,7 @@ export async function* recallStream(
           const placeholders = procIds.map(() => '?').join(',');
           const updateProcedural = (): void => {
             db.prepare(
-              `UPDATE procedures SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`
+              `UPDATE procedures SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`,
             ).run(nowISO, ...procIds);
           };
           if (profile) profile.measureSync('recall.procedural_reinforce', updateProcedural);
@@ -703,18 +876,21 @@ export async function* recallStream(
     const candidateK = agentFilter ? 10_000 : hasFilters ? limit * 5 : limit * 3;
     try {
       const ftsIds = profile
-        ? profile.measureSync('recall.fts_lookup', () => ftsIdsByType(db, query, searchTypes, candidateK, agentFilter))
+        ? profile.measureSync('recall.fts_lookup', () =>
+            ftsIdsByType(db, query, searchTypes, candidateK, agentFilter),
+          )
         : ftsIdsByType(db, query, searchTypes, candidateK, agentFilter);
-      const fuse = (): RecallResult[] => fuseResults(db, {
-        vectorResults: allResults,
-        ftsIds,
-        mode: retrieval,
-        includePrivate,
-        includeDormant,
-        minConfidence,
-        filters,
-        agentFilter,
-      });
+      const fuse = (): RecallResult[] =>
+        fuseResults(db, {
+          vectorResults: allResults,
+          ftsIds,
+          mode: retrieval,
+          includePrivate,
+          includeDormant,
+          minConfidence,
+          filters,
+          agentFilter,
+        });
       const fused = profile ? profile.measureSync('recall.fuse_results', fuse) : fuse();
       resultsToGuard = fused;
     } catch (err) {
@@ -724,7 +900,9 @@ export async function* recallStream(
   }
 
   const top = profile
-    ? profile.measureSync('recall.result_guards', () => applyResultGuards(query, resultsToGuard, limit))
+    ? profile.measureSync('recall.result_guards', () =>
+        applyResultGuards(query, resultsToGuard, limit),
+      )
     : applyResultGuards(query, resultsToGuard, limit);
   for (const entry of top) {
     yield entry;

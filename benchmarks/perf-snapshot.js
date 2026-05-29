@@ -157,8 +157,8 @@ function parseArgs(argv = process.argv.slice(2)) {
     if (token === '--sizes' && argv[i + 1]) {
       args.sizes = argv[++i]
         .split(',')
-        .map((s) => Number.parseInt(s.trim(), 10))
-        .filter((n) => Number.isFinite(n) && n > 0);
+        .map(s => Number.parseInt(s.trim(), 10))
+        .filter(n => Number.isFinite(n) && n > 0);
     } else if (token === '--recall-runs' && argv[i + 1]) {
       args.recallRuns = Number.parseInt(argv[++i], 10);
     } else if (token === '--out' && argv[i + 1]) {
@@ -180,7 +180,7 @@ async function runOneSize({ size, recallRuns }) {
   });
 
   const queueProcessingTimes = [];
-  audrey.on('post-encode-complete', (event) => {
+  audrey.on('post-encode-complete', event => {
     queueProcessingTimes.push(event.processing_ms);
   });
 
@@ -223,7 +223,10 @@ async function runOneSize({ size, recallRuns }) {
   }
 }
 
-export async function runPerfSnapshot({ sizes = DEFAULT_SIZES, recallRuns = DEFAULT_RECALL_RUNS } = {}) {
+export async function runPerfSnapshot({
+  sizes = DEFAULT_SIZES,
+  recallRuns = DEFAULT_RECALL_RUNS,
+} = {}) {
   const startedAt = Date.now();
   const sized = [];
   for (const size of sizes) {
@@ -265,11 +268,11 @@ export function formatMarkdownTable(snapshot) {
   lines.push(
     `Node ${snapshot.machine.node} · ${snapshot.machine.cpuCount}x ${snapshot.machine.cpuModel} · ${snapshot.machine.memoryGb} GB RAM`,
   );
-  lines.push(
-    `Generated ${snapshot.generatedAt}${snapshot.gitSha ? ` (${snapshot.gitSha})` : ''}`,
-  );
+  lines.push(`Generated ${snapshot.generatedAt}${snapshot.gitSha ? ` (${snapshot.gitSha})` : ''}`);
   lines.push('');
-  lines.push('| Corpus size | Encode p50 (ms) | Encode p95 (ms) | Recall p50 (ms) | Recall p95 (ms) | Recall p99 (ms) |');
+  lines.push(
+    '| Corpus size | Encode p50 (ms) | Encode p95 (ms) | Recall p50 (ms) | Recall p95 (ms) | Recall p99 (ms) |',
+  );
   lines.push('|---|---|---|---|---|---|');
   for (const row of snapshot.sizes) {
     lines.push(
@@ -287,7 +290,7 @@ export function formatMarkdownTable(snapshot) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = parseArgs();
   runPerfSnapshot({ sizes: args.sizes, recallRuns: args.recallRuns })
-    .then((snapshot) => {
+    .then(snapshot => {
       if (args.out) {
         writeFileSync(args.out, JSON.stringify(snapshot, null, 2) + '\n');
       }
@@ -297,7 +300,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         process.stdout.write(formatMarkdownTable(snapshot) + '\n');
       }
     })
-    .catch((err) => {
+    .catch(err => {
       console.error('[audrey] perf snapshot failed:', err);
       process.exit(1);
     });

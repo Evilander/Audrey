@@ -22,7 +22,8 @@ function parseArgs(argv = process.argv.slice(2)) {
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
-    if ((token === '--version' || token === '--target-version') && argv[i + 1]) args.version = argv[++i];
+    if ((token === '--version' || token === '--target-version') && argv[i + 1])
+      args.version = argv[++i];
     else if (token === '--bundle' && argv[i + 1]) args.bundle = argv[++i];
     else if (token === '--remote' && argv[i + 1]) args.remote = argv[++i];
     else if (token === '--apply') args.apply = true;
@@ -72,7 +73,12 @@ function run(command, args, options = {}) {
 }
 
 function firstLine(result) {
-  return `${result.stderr}\n${result.stdout}`.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? '';
+  return (
+    `${result.stderr}\n${result.stdout}`
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .find(Boolean) ?? ''
+  );
 }
 
 function parseBundleRefs(output, version) {
@@ -101,9 +107,27 @@ function parseRemoteRefs(output, version) {
 }
 
 function remoteHead(args) {
-  let result = run('git', ['ls-remote', args.remote, 'refs/heads/master', `refs/tags/v${args.version}`], { timeout: 60_000 });
-  if (!result.ok && /schannel|AcquireCredentialsHandle|SEC_E_NO_CREDENTIALS/i.test(firstLine(result))) {
-    result = run('git', ['-c', 'http.sslBackend=openssl', 'ls-remote', args.remote, 'refs/heads/master', `refs/tags/v${args.version}`], { timeout: 60_000 });
+  let result = run(
+    'git',
+    ['ls-remote', args.remote, 'refs/heads/master', `refs/tags/v${args.version}`],
+    { timeout: 60_000 },
+  );
+  if (
+    !result.ok &&
+    /schannel|AcquireCredentialsHandle|SEC_E_NO_CREDENTIALS/i.test(firstLine(result))
+  ) {
+    result = run(
+      'git',
+      [
+        '-c',
+        'http.sslBackend=openssl',
+        'ls-remote',
+        args.remote,
+        'refs/heads/master',
+        `refs/tags/v${args.version}`,
+      ],
+      { timeout: 60_000 },
+    );
     result.fallback = 'openssl';
   }
   return result;
@@ -112,20 +136,26 @@ function remoteHead(args) {
 function publishFromBundle(args, refs) {
   const temp = mkdtempSync(join(tmpdir(), 'audrey-release-push-'));
   try {
-    const clone = run('git', ['clone', '--bare', resolve(ROOT, args.bundle), temp], { timeout: 120_000 });
+    const clone = run('git', ['clone', '--bare', resolve(ROOT, args.bundle), temp], {
+      timeout: 120_000,
+    });
     if (!clone.ok) return [clone];
-    const push = run('git', [
-      '-c',
-      'http.sslBackend=openssl',
-      '-c',
-      'credential.helper=',
-      '-c',
-      'core.askPass=',
-      'push',
-      args.remote,
-      `${refs.master}:refs/heads/master`,
-      `${refs.tag}:refs/tags/v${args.version}`,
-    ], { cwd: temp, timeout: 45_000 });
+    const push = run(
+      'git',
+      [
+        '-c',
+        'http.sslBackend=openssl',
+        '-c',
+        'credential.helper=',
+        '-c',
+        'core.askPass=',
+        'push',
+        args.remote,
+        `${refs.master}:refs/heads/master`,
+        `${refs.tag}:refs/tags/v${args.version}`,
+      ],
+      { cwd: temp, timeout: 45_000 },
+    );
     return [clone, push];
   } finally {
     rmSync(temp, { recursive: true, force: true });
@@ -135,16 +165,22 @@ function publishFromBundle(args, refs) {
 export function planPublish(args) {
   const verify = run('git', ['bundle', 'verify', args.bundle], { timeout: 60_000 });
   const remote = remoteHead(args);
-  const bundleRefs = verify.ok ? parseBundleRefs(verify.stdout, args.version) : { master: null, tag: null };
-  const remoteRefs = remote.ok ? parseRemoteRefs(remote.stdout, args.version) : { master: null, tag: null };
+  const bundleRefs = verify.ok
+    ? parseBundleRefs(verify.stdout, args.version)
+    : { master: null, tag: null };
+  const remoteRefs = remote.ok
+    ? parseRemoteRefs(remote.stdout, args.version)
+    : { master: null, tag: null };
   const blockers = [];
 
   if (!verify.ok) blockers.push(`Bundle verification failed: ${firstLine(verify)}`);
   if (!bundleRefs.master) blockers.push('Bundle is missing refs/heads/master');
   if (!bundleRefs.tag) blockers.push(`Bundle is missing refs/tags/v${args.version}`);
   if (!remote.ok) blockers.push(`Remote check failed: ${firstLine(remote)}`);
-  if (remoteRefs.tag && remoteRefs.tag !== bundleRefs.tag) blockers.push(`Remote v${args.version} already points at ${remoteRefs.tag}`);
-  if (remoteRefs.master === bundleRefs.master && remoteRefs.tag === bundleRefs.tag) blockers.push('Remote already matches the release bundle');
+  if (remoteRefs.tag && remoteRefs.tag !== bundleRefs.tag)
+    blockers.push(`Remote v${args.version} already points at ${remoteRefs.tag}`);
+  if (remoteRefs.master === bundleRefs.master && remoteRefs.tag === bundleRefs.tag)
+    blockers.push('Remote already matches the release bundle');
 
   return {
     schemaVersion: '1.0.0',
@@ -198,7 +234,10 @@ async function main() {
 }
 
 function isDirectRun() {
-  return Boolean(process.argv[1]) && resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase();
+  return (
+    Boolean(process.argv[1]) &&
+    resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase()
+  );
 }
 
 if (isDirectRun()) {

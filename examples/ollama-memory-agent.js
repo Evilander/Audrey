@@ -6,8 +6,9 @@ const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen3';
 const AUDREY_API_KEY = process.env.AUDREY_API_KEY || '';
 const MAX_TOOL_LOOPS = Number.parseInt(process.env.MAX_TOOL_LOOPS || '4', 10);
 
-const userPrompt = process.argv.slice(2).join(' ').trim()
-  || 'Use Audrey memory to explain how this local Ollama agent should remember useful facts.';
+const userPrompt =
+  process.argv.slice(2).join(' ').trim() ||
+  'Use Audrey memory to explain how this local Ollama agent should remember useful facts.';
 
 function usage() {
   console.log(`
@@ -112,15 +113,22 @@ const tools = [
     type: 'function',
     function: {
       name: 'memory_preflight',
-      description: 'Check Audrey memory before taking an action, so prior failures and rules are not repeated.',
+      description:
+        'Check Audrey memory before taking an action, so prior failures and rules are not repeated.',
       parameters: {
         type: 'object',
         required: ['action'],
         properties: {
           action: { type: 'string', description: 'Action the agent is considering.' },
           tool: { type: 'string', description: 'Optional tool or command family.' },
-          strict: { type: 'boolean', description: 'If true, high-severity warnings can block the action.' },
-          include_capsule: { type: 'boolean', description: 'Include full capsule context in the result.' },
+          strict: {
+            type: 'boolean',
+            description: 'If true, high-severity warnings can block the action.',
+          },
+          include_capsule: {
+            type: 'boolean',
+            description: 'Include full capsule context in the result.',
+          },
         },
       },
     },
@@ -129,15 +137,22 @@ const tools = [
     type: 'function',
     function: {
       name: 'memory_reflexes',
-      description: 'Return Audrey Memory Reflexes: trigger-response rules for the action the agent is considering.',
+      description:
+        'Return Audrey Memory Reflexes: trigger-response rules for the action the agent is considering.',
       parameters: {
         type: 'object',
         required: ['action'],
         properties: {
           action: { type: 'string', description: 'Action the agent is considering.' },
           tool: { type: 'string', description: 'Optional tool or command family.' },
-          strict: { type: 'boolean', description: 'If true, high-severity warnings can become blocking reflexes.' },
-          include_preflight: { type: 'boolean', description: 'Include the full underlying preflight report.' },
+          strict: {
+            type: 'boolean',
+            description: 'If true, high-severity warnings can become blocking reflexes.',
+          },
+          include_preflight: {
+            type: 'boolean',
+            description: 'Include the full underlying preflight report.',
+          },
         },
       },
     },
@@ -176,7 +191,8 @@ const tools = [
     type: 'function',
     function: {
       name: 'memory_encode',
-      description: 'Store a useful lasting observation, decision, preference, or procedure in Audrey.',
+      description:
+        'Store a useful lasting observation, decision, preference, or procedure in Audrey.',
       parameters: {
         type: 'object',
         required: ['content'],
@@ -184,7 +200,13 @@ const tools = [
           content: { type: 'string', description: 'Memory content to store.' },
           source: {
             type: 'string',
-            enum: ['direct-observation', 'told-by-user', 'tool-result', 'inference', 'model-generated'],
+            enum: [
+              'direct-observation',
+              'told-by-user',
+              'tool-result',
+              'inference',
+              'model-generated',
+            ],
             description: 'Source reliability category.',
           },
           tags: {
@@ -270,7 +292,9 @@ async function main() {
     try {
       response = await ollamaChat(messages);
     } catch (err) {
-      console.error(`Ollama is not reachable at ${OLLAMA_URL}, or model "${OLLAMA_MODEL}" is not available.`);
+      console.error(
+        `Ollama is not reachable at ${OLLAMA_URL}, or model "${OLLAMA_MODEL}" is not available.`,
+      );
       console.error(`Try: ollama pull ${OLLAMA_MODEL}`);
       console.error(`Details: ${err.message}`);
       process.exit(1);
@@ -294,7 +318,11 @@ async function main() {
       const name = call.function?.name;
       const executor = toolExecutors[name];
       if (!executor) {
-        messages.push({ role: 'tool', tool_name: name || 'unknown', content: 'Unknown Audrey tool' });
+        messages.push({
+          role: 'tool',
+          tool_name: name || 'unknown',
+          content: 'Unknown Audrey tool',
+        });
         continue;
       }
 
@@ -320,7 +348,7 @@ async function main() {
   console.log('Stopped after MAX_TOOL_LOOPS without a final model answer.');
 }
 
-main().catch((err) => {
+main().catch(err => {
   console.error(err);
   process.exit(1);
 });

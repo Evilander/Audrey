@@ -24,10 +24,12 @@ describe('v0.8.0 schema', () => {
   it('context column defaults to empty JSON object', () => {
     dataDir = mkdtempSync(join(tmpdir(), 'audrey-'));
     ({ db } = createDatabase(dataDir, { dimensions: 64 }));
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO episodes (id, content, source, source_reliability, created_at)
       VALUES ('test-1', 'test', 'direct-observation', 0.95, '2026-01-01T00:00:00Z')
-    `).run();
+    `,
+    ).run();
     const row = db.prepare('SELECT context FROM episodes WHERE id = ?').get('test-1');
     expect(row.context).toBe('{}');
   });

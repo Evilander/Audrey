@@ -38,25 +38,29 @@ function renderBarChart({ title, rows, valueSuffix = '%', maxValue = 100 }) {
   const barWidth = Math.max(32, Math.floor(plotWidth / Math.max(rows.length, 1)) - 18);
   const gap = rows.length > 1 ? (plotWidth - barWidth * rows.length) / (rows.length - 1) : 0;
 
-  const bars = rows.map((row, index) => {
-    const value = Math.max(0, Math.min(maxValue, row.value));
-    const barHeight = (value / maxValue) * plotHeight;
-    const x = margin.left + index * (barWidth + gap);
-    const y = margin.top + plotHeight - barHeight;
-    return `
+  const bars = rows
+    .map((row, index) => {
+      const value = Math.max(0, Math.min(maxValue, row.value));
+      const barHeight = (value / maxValue) * plotHeight;
+      const x = margin.left + index * (barWidth + gap);
+      const y = margin.top + plotHeight - barHeight;
+      return `
       <rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="8" fill="${chartBarColor(row.label)}" />
       <text x="${x + barWidth / 2}" y="${y - 10}" text-anchor="middle" font-size="15" fill="${PALETTE.accent}">${value.toFixed(1)}${valueSuffix}</text>
       <text x="${x + barWidth / 2}" y="${height - 42}" text-anchor="middle" font-size="14" fill="${PALETTE.muted}">${escapeHtml(row.label)}</text>
     `;
-  }).join('\n');
+    })
+    .join('\n');
 
-  const grid = [0, 25, 50, 75, 100].map(tick => {
-    const y = margin.top + plotHeight - (tick / maxValue) * plotHeight;
-    return `
+  const grid = [0, 25, 50, 75, 100]
+    .map(tick => {
+      const y = margin.top + plotHeight - (tick / maxValue) * plotHeight;
+      return `
       <line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" stroke="${PALETTE.border}" stroke-dasharray="4 4" />
       <text x="${margin.left - 10}" y="${y + 5}" text-anchor="end" font-size="13" fill="${PALETTE.muted}">${tick}${valueSuffix}</text>
     `;
-  }).join('\n');
+    })
+    .join('\n');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)}">
@@ -68,39 +72,53 @@ function renderBarChart({ title, rows, valueSuffix = '%', maxValue = 100 }) {
 }
 
 function renderTrendList(trends) {
-  return trends.map(trend => `
+  return trends
+    .map(
+      trend => `
     <li>
       <strong>${escapeHtml(trend.title)}</strong><br />
       ${escapeHtml(trend.summary)}<br />
       <a href="${trend.source}">${escapeHtml(trend.source)}</a>
     </li>
-  `).join('\n');
+  `,
+    )
+    .join('\n');
 }
 
 function renderCaseRows(localCases) {
-  return localCases.map(caseResult => `
+  return localCases
+    .map(
+      caseResult => `
     <tr>
       <td>${escapeHtml(caseResult.title)}</td>
       <td>${escapeHtml(caseResult.suite)}</td>
       <td>${escapeHtml(caseResult.family)}</td>
-      ${caseResult.results.map(result => {
-        const bg = result.passed ? '#ecfdf5' : result.score >= 0.5 ? '#fff7ed' : '#fef2f2';
-        const fg = result.passed ? '#065f46' : result.score >= 0.5 ? '#9a3412' : '#991b1b';
-        return `<td style="background:${bg};color:${fg}">${result.score.toFixed(2)}<br /><span style="font-size:12px">${escapeHtml(result.summary)}</span></td>`;
-      }).join('')}
+      ${caseResult.results
+        .map(result => {
+          const bg = result.passed ? '#ecfdf5' : result.score >= 0.5 ? '#fff7ed' : '#fef2f2';
+          const fg = result.passed ? '#065f46' : result.score >= 0.5 ? '#9a3412' : '#991b1b';
+          return `<td style="background:${bg};color:${fg}">${result.score.toFixed(2)}<br /><span style="font-size:12px">${escapeHtml(result.summary)}</span></td>`;
+        })
+        .join('')}
     </tr>
-  `).join('\n');
+  `,
+    )
+    .join('\n');
 }
 
 function renderSuiteSections(suiteCharts) {
   if (suiteCharts.length === 0) return '';
-  return suiteCharts.map(chart => `
+  return suiteCharts
+    .map(
+      chart => `
     <section class="callout">
       <h2>${escapeHtml(chart.title)}</h2>
       <p>${escapeHtml(chart.description)}</p>
       <img src="./${escapeHtml(chart.fileName)}" alt="${escapeHtml(chart.title)} chart" />
     </section>
-  `).join('\n');
+  `,
+    )
+    .join('\n');
 }
 
 export function writeBenchmarkArtifacts({
@@ -114,9 +132,10 @@ export function writeBenchmarkArtifacts({
 }) {
   mkdirSync(outputDir, { recursive: true });
 
-  const localChartTitle = summary.local?.overall_scope === 'comparable_suites'
-    ? 'Audrey vs Comparable Local Memory Baselines'
-    : 'Selected Audrey Regression Suite';
+  const localChartTitle =
+    summary.local?.overall_scope === 'comparable_suites'
+      ? 'Audrey vs Comparable Local Memory Baselines'
+      : 'Selected Audrey Regression Suite';
   const localChart = renderBarChart({
     title: localChartTitle,
     rows: localOverall.map(row => ({ label: row.system, value: row.scorePercent })),
@@ -162,8 +181,10 @@ export function writeBenchmarkArtifacts({
         operationsReadmeChart,
         renderBarChart({
           title: 'Audrey Memory Operations Benchmark',
-          rows: (localSuites.find(suite => suite.id === 'operations')?.overall || [])
-            .map(row => ({ label: row.system, value: row.scorePercent })),
+          rows: (localSuites.find(suite => suite.id === 'operations')?.overall || []).map(row => ({
+            label: row.system,
+            value: row.scorePercent,
+          })),
         }),
         'utf8',
       );

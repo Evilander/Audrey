@@ -36,11 +36,17 @@ describe('applyInterference', () => {
     const semanticContent = 'Cats are obligate carnivores';
     const vector = await embeddingProvider.embed(semanticContent);
     const buffer = embeddingProvider.vectorToBuffer(vector);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO semantics (id, content, embedding, state, created_at, interference_count, salience)
       VALUES (?, ?, ?, 'active', ?, 0, 0.5)
-    `).run('sem-1', semanticContent, buffer, new Date().toISOString());
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run('sem-1', buffer, 'active');
+    `,
+    ).run('sem-1', semanticContent, buffer, new Date().toISOString());
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      'sem-1',
+      buffer,
+      'active',
+    );
 
     const episodeId = await encodeEpisode(db, embeddingProvider, {
       content: semanticContent,
@@ -66,20 +72,32 @@ describe('applyInterference', () => {
     const cookingContent = 'Sear steak at 450 degrees for a crispy crust';
     const vector = await embeddingProvider.embed(cookingContent);
     const buffer = embeddingProvider.vectorToBuffer(vector);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO semantics (id, content, embedding, state, created_at, interference_count, salience)
       VALUES (?, ?, ?, 'active', ?, 0, 0.5)
-    `).run('sem-cook', cookingContent, buffer, new Date().toISOString());
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run('sem-cook', buffer, 'active');
+    `,
+    ).run('sem-cook', cookingContent, buffer, new Date().toISOString());
+    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      'sem-cook',
+      buffer,
+      'active',
+    );
 
     const episodeId = await encodeEpisode(db, embeddingProvider, {
       content: 'Thunderstorms expected this weekend with heavy rainfall',
       source: 'direct-observation',
     });
 
-    const affected = await applyInterference(db, embeddingProvider, episodeId, {
-      content: 'Thunderstorms expected this weekend with heavy rainfall',
-    }, { threshold: 0.99 });
+    const affected = await applyInterference(
+      db,
+      embeddingProvider,
+      episodeId,
+      {
+        content: 'Thunderstorms expected this weekend with heavy rainfall',
+      },
+      { threshold: 0.99 },
+    );
 
     expect(affected).toEqual([]);
 
@@ -93,9 +111,15 @@ describe('applyInterference', () => {
       source: 'direct-observation',
     });
 
-    const affected = await applyInterference(db, embeddingProvider, episodeId, {
-      content: 'This should not trigger interference',
-    }, { enabled: false });
+    const affected = await applyInterference(
+      db,
+      embeddingProvider,
+      episodeId,
+      {
+        content: 'This should not trigger interference',
+      },
+      { enabled: false },
+    );
 
     expect(affected).toEqual([]);
   });

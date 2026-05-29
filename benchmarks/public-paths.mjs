@@ -34,15 +34,19 @@ export function publicCommand(command = []) {
 export function publicArtifactValue(value) {
   if (Array.isArray(value)) return value.map(item => publicArtifactValue(item));
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, publicArtifactValue(item)]));
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, publicArtifactValue(item)]),
+    );
   }
   return publicPath(value);
 }
 
 export function containsLocalPath(text) {
-  return WINDOWS_DRIVE_PATTERN.test(text)
-    || EXTENDED_PATH_PATTERN.test(text)
-    || FILE_URL_PATTERN.test(text);
+  return (
+    WINDOWS_DRIVE_PATTERN.test(text) ||
+    EXTENDED_PATH_PATTERN.test(text) ||
+    FILE_URL_PATTERN.test(text)
+  );
 }
 
 export function findLocalPathLeaks(value, path = '$') {
@@ -53,7 +57,9 @@ export function findLocalPathLeaks(value, path = '$') {
     return value.flatMap((item, index) => findLocalPathLeaks(item, `${path}[${index}]`));
   }
   if (value && typeof value === 'object') {
-    return Object.entries(value).flatMap(([key, item]) => findLocalPathLeaks(item, `${path}.${key}`));
+    return Object.entries(value).flatMap(([key, item]) =>
+      findLocalPathLeaks(item, `${path}.${key}`),
+    );
   }
   return [];
 }

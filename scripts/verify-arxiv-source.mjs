@@ -41,7 +41,8 @@ function checkSourceHash(label, sourcePath, expectedHash, failures) {
     failures.push(`arxiv-manifest.json: missing source file for ${label}: ${sourcePath}`);
     return;
   }
-  if (expectedHash !== sha256File(absolute)) failures.push(`arxiv-manifest.json: ${label} hash is stale`);
+  if (expectedHash !== sha256File(absolute))
+    failures.push(`arxiv-manifest.json: ${label} hash is stale`);
 }
 
 function parseArgs(argv = process.argv.slice(2)) {
@@ -99,12 +100,29 @@ export function verifyArxivSourcePackage(options = {}) {
 
   const listed = new Map((manifest.files ?? []).map(file => [file.path, file]));
   for (const file of REQUIRED_FILES) {
-    if (!listed.has(file)) failures.push(`arxiv-manifest.json: missing required file record ${file}`);
+    if (!listed.has(file))
+      failures.push(`arxiv-manifest.json: missing required file record ${file}`);
   }
-  if (listed.has('arxiv-manifest.json')) failures.push('arxiv-manifest.json: must not include a self-hash file record');
-  checkSourceHash('sourceMarkdown', manifest.sourceMarkdown, manifest.sourceHashes?.sourceMarkdown, failures);
-  checkSourceHash('publicationPack', manifest.publicationPack, manifest.sourceHashes?.publicationPack, failures);
-  checkSourceHash('referencesBib', 'docs/paper/references.bib', manifest.sourceHashes?.referencesBib, failures);
+  if (listed.has('arxiv-manifest.json'))
+    failures.push('arxiv-manifest.json: must not include a self-hash file record');
+  checkSourceHash(
+    'sourceMarkdown',
+    manifest.sourceMarkdown,
+    manifest.sourceHashes?.sourceMarkdown,
+    failures,
+  );
+  checkSourceHash(
+    'publicationPack',
+    manifest.publicationPack,
+    manifest.sourceHashes?.publicationPack,
+    failures,
+  );
+  checkSourceHash(
+    'referencesBib',
+    'docs/paper/references.bib',
+    manifest.sourceHashes?.referencesBib,
+    failures,
+  );
 
   for (const [file, record] of listed) {
     const path = join(dir, file);
@@ -126,11 +144,14 @@ export function verifyArxivSourcePackage(options = {}) {
     }
   }
 
-  const actualFiles = walkFiles(dir).filter(file => file !== 'arxiv-manifest.json').sort();
+  const actualFiles = walkFiles(dir)
+    .filter(file => file !== 'arxiv-manifest.json')
+    .sort();
   const listedFiles = [...listed.keys()].sort();
   const listedSet = new Set(listedFiles);
   for (const file of actualFiles) {
-    if (!listedSet.has(file)) failures.push(`${file}: present in package but missing from manifest`);
+    if (!listedSet.has(file))
+      failures.push(`${file}: present in package but missing from manifest`);
   }
 
   const mainPath = join(dir, 'main.tex');
@@ -138,24 +159,33 @@ export function verifyArxivSourcePackage(options = {}) {
   const main = existsSync(mainPath) ? readFileSync(mainPath, 'utf-8') : '';
   const bib = existsSync(bibPath) ? readFileSync(bibPath, 'utf-8') : '';
   const citationCount = [...main.matchAll(/\\cite\{([^}]+)\}/g)].length;
-  const citedIds = new Set([...main.matchAll(/\\cite\{([^}]+)\}/g)].flatMap(match => match[1].split(',').map(id => id.trim())));
+  const citedIds = new Set(
+    [...main.matchAll(/\\cite\{([^}]+)\}/g)].flatMap(match =>
+      match[1].split(',').map(id => id.trim()),
+    ),
+  );
   const bibIds = new Set([...bib.matchAll(/@\w+\s*\{\s*([^,\s]+)/g)].map(match => match[1].trim()));
   const bibEntries = countBibEntries(bib);
 
   if (!main.includes('\\documentclass')) failures.push('main.tex: missing documentclass');
   if (!main.includes('\\begin{abstract}')) failures.push('main.tex: missing abstract');
-  if (!main.includes('\\bibliography{references}')) failures.push('main.tex: missing bibliography command');
+  if (!main.includes('\\bibliography{references}'))
+    failures.push('main.tex: missing bibliography command');
   if (main.includes('[@')) failures.push('main.tex: contains unconverted Markdown citation syntax');
-  if (/^#{1,6}\s/m.test(main)) failures.push('main.tex: contains unconverted Markdown heading syntax');
+  if (/^#{1,6}\s/m.test(main))
+    failures.push('main.tex: contains unconverted Markdown heading syntax');
   if (main.includes(SEEDED_SECRET)) failures.push('main.tex: contains seeded raw secret');
-  if (/([A-Z]:\\|file:\/\/|C:\\Users\\|B:\\Projects\\)/i.test(main)) failures.push('main.tex: contains a local absolute path');
+  if (/([A-Z]:\\|file:\/\/|C:\\Users\\|B:\\Projects\\)/i.test(main))
+    failures.push('main.tex: contains a local absolute path');
   if (citationCount < 1) failures.push('main.tex: expected at least one citation');
   if (bibEntries !== 21) failures.push(`references.bib: expected 21 entries, found ${bibEntries}`);
   for (const id of citedIds) {
     if (!bibIds.has(id)) failures.push(`main.tex: cites missing bibliography id ${id}`);
   }
-  if (manifest.tex?.citationCount !== citationCount) failures.push('arxiv-manifest.json: citation count is stale');
-  if (manifest.tex?.bibEntryCount !== bibEntries) failures.push('arxiv-manifest.json: bibliography count is stale');
+  if (manifest.tex?.citationCount !== citationCount)
+    failures.push('arxiv-manifest.json: citation count is stale');
+  if (manifest.tex?.bibEntryCount !== bibEntries)
+    failures.push('arxiv-manifest.json: bibliography count is stale');
 
   return {
     ok: failures.length === 0,

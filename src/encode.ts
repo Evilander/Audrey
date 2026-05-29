@@ -42,15 +42,18 @@ export async function encodeEpisode(
   },
   options: EncodeEpisodeOptions = {},
 ): Promise<string> {
-  if (!content || typeof content !== 'string') throw new Error('content must be a non-empty string');
+  if (!content || typeof content !== 'string')
+    throw new Error('content must be a non-empty string');
   if (salience < 0 || salience > 1) throw new Error('salience must be between 0 and 1');
   if (tags && !Array.isArray(tags)) throw new Error('tags must be an array');
 
   const reliability = sourceReliability(source);
   const profile = options.profile;
-  const vector = options.vector ?? (profile
-    ? await profile.measure('encode.embedding', () => embeddingProvider.embed(content))
-    : await embeddingProvider.embed(content));
+  const vector =
+    options.vector ??
+    (profile
+      ? await profile.measure('encode.embedding', () => embeddingProvider.embed(content))
+      : await embeddingProvider.embed(content));
   const embeddingBuffer = profile
     ? profile.measureSync('encode.vector_to_buffer', () => embeddingProvider.vectorToBuffer(vector))
     : embeddingProvider.vectorToBuffer(vector);
@@ -61,27 +64,38 @@ export async function encodeEpisode(
   const boost = arousalSalienceBoost(affect.arousal);
   // Clamp both ends — a sufficiently negative arousal boost can drive salience
   // below 0, which propagates as a negative confidence multiplier downstream.
-  const effectiveSalience = Math.max(0, Math.min(1.0, salience + (boost * arousalWeight)));
+  const effectiveSalience = Math.max(0, Math.min(1.0, salience + boost * arousalWeight));
 
   const insertAndLink = db.transaction(() => {
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO episodes (
         id, content, embedding, source, agent, source_reliability, salience, context, affect,
         tags, causal_trigger, causal_consequence, created_at,
         embedding_model, embedding_version, supersedes, "private"
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id, content, embeddingBuffer, source, agent, reliability, effectiveSalience,
+    `,
+    ).run(
+      id,
+      content,
+      embeddingBuffer,
+      source,
+      agent,
+      reliability,
+      effectiveSalience,
       JSON.stringify(context),
       JSON.stringify(affect),
       tags ? JSON.stringify(tags) : null,
-      causal?.trigger || null, causal?.consequence || null,
-      now, embeddingProvider.modelName, embeddingProvider.modelVersion,
+      causal?.trigger || null,
+      causal?.consequence || null,
+      now,
+      embeddingProvider.modelName,
+      embeddingProvider.modelVersion,
       supersedes || null,
       isPrivate ? 1 : 0,
     );
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)'
+      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
     ).run(id, embeddingBuffer, source, BigInt(0));
     insertFTSEpisode(db, id, content, tags ?? null);
     if (supersedes) {
