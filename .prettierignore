@@ -1,0 +1,20 @@
+dist/
+node_modules/
+.tmp-vitest/
+.tmp/
+.archive/
+coverage/
+package-lock.json
+
+# Generated artifacts
+benchmarks/output/
+benchmarks/.tmp/
+benchmarks/.tmp-guardbench/
+docs/paper/output/
+
+# Python sources are formatted by Python tooling, not Prettier
+python/
+
+# Markdown and docs keep their hand-tuned formatting (README has inline HTML);
+# Prettier is scoped to code via the `format` npm script globs.
+*.md
