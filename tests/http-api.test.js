@@ -124,6 +124,158 @@ describe('HTTP API', () => {
     expect(Array.isArray(body.evidence_ids)).toBe(true);
   });
 
+  it('keeps capsule, preflight, and greeting isolated by X-Audrey-Agent', async () => {
+    for (const [agent, content] of [
+      ['alpha', 'Alpha project deploys only from the release branch'],
+      ['beta', 'Beta project uses a separate emergency deploy procedure'],
+    ]) {
+      await app.request('/v1/encode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': agent },
+        body: JSON.stringify({ content, source: 'direct-observation', tags: ['procedure'] }),
+      });
+    }
+    audrey.observeTool({
+      event: 'PostToolUseFailure',
+      tool: 'Bash',
+      actorAgent: 'beta',
+      outcome: 'failed',
+      errorSummary: 'beta-only deployment failure',
+    });
+
+    const capsuleResponse = await app.request('/v1/capsule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'alpha' },
+      body: JSON.stringify({ query: 'project deploy procedure' }),
+    });
+    const capsule = await capsuleResponse.json();
+    const capsuleText = Object.values(capsule.sections)
+      .flat()
+      .map(entry => entry.content)
+      .join('\n');
+    expect(capsuleText).toContain('Alpha project');
+    expect(capsuleText).not.toContain('Beta project');
+    expect(capsuleText).not.toContain('beta-only deployment failure');
+
+    const preflightResponse = await app.request('/v1/preflight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'alpha' },
+      body: JSON.stringify({ action: 'run a safe command', tool: 'Bash' }),
+    });
+    const preflight = await preflightResponse.json();
+    expect(preflight.recent_failures).toEqual([]);
+
+    const greetingResponse = await app.request('/v1/greeting', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'alpha' },
+      body: JSON.stringify({ context: 'project deploy' }),
+    });
+    const greeting = await greetingResponse.json();
+    expect(greeting.recent.map(entry => entry.content)).toContain(
+      'Alpha project deploys only from the release branch',
+    );
+    expect(greeting.recent.map(entry => entry.content)).not.toContain(
+      'Beta project uses a separate emergency deploy procedure',
+    );
+  });
+
+  it('rejects invalid scopes and gates shared REST access', async () => {
+    const invalid = await app.request('/v1/recall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'alpha' },
+      body: JSON.stringify({ query: 'deploy', scope: 'all' }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const denied = await app.request('/v1/capsule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'alpha' },
+      body: JSON.stringify({ query: 'deploy', scope: 'shared' }),
+    });
+    expect(denied.status).toBe(403);
+
+    for (const [agent, content] of [
+      ['alpha', 'Shared-scope alpha release marker'],
+      ['beta', 'Shared-scope beta release marker'],
+    ]) {
+      await app.request('/v1/encode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': agent },
+        body: JSON.stringify({ content, source: 'direct-observation' }),
+      });
+    }
+
+    const sharedApp = createApp(audrey, { sharedScopeEnabled: true });
+    const allowed = await sharedApp.request('/v1/recall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'alpha' },
+      body: JSON.stringify({ query: 'Shared-scope release marker', scope: 'shared', limit: 10 }),
+    });
+    expect(allowed.status).toBe(200);
+    const allowedBody = await allowed.json();
+    expect(new Set(allowedBody.results.map(entry => entry.agent))).toEqual(
+      new Set(['alpha', 'beta']),
+    );
+  });
+
+  it('scopes validation and guard receipts to X-Audrey-Agent', async () => {
+    const betaEncode = await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'beta' },
+      body: JSON.stringify({
+        content: 'Beta-only validation target',
+        source: 'direct-observation',
+      }),
+    });
+    const betaId = (await betaEncode.json()).id;
+
+    for (const endpoint of ['/v1/validate', '/v1/mark-used']) {
+      const denied = await app.request(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'alpha' },
+        body: JSON.stringify({ id: betaId, outcome: 'helpful' }),
+      });
+      expect(denied.status).toBe(404);
+    }
+
+    const allowed = await app.request('/v1/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'beta' },
+      body: JSON.stringify({ id: betaId, outcome: 'helpful' }),
+    });
+    expect(allowed.status).toBe(200);
+
+    const before = await app.request('/v1/guard/before', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'beta' },
+      body: JSON.stringify({ action: 'run beta check', tool: 'Bash' }),
+    });
+    const receiptId = (await before.json()).receipt_id;
+
+    const wrongAgent = await app.request('/v1/guard/after', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'alpha' },
+      body: JSON.stringify({ receipt_id: receiptId, outcome: 'succeeded' }),
+    });
+    expect(wrongAgent.status).toBe(404);
+
+    const correctAgent = await app.request('/v1/guard/after', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'beta' },
+      body: JSON.stringify({ receipt_id: receiptId, outcome: 'succeeded' }),
+    });
+    expect(correctAgent.status).toBe(200);
+  });
+
+  it('rejects blank agent headers', async () => {
+    const response = await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': '   ' },
+      body: JSON.stringify({ content: 'must not be stored', source: 'direct-observation' }),
+    });
+    expect(response.status).toBe(400);
+  });
+
   it('POST /v1/preflight checks memory before an action', async () => {
     audrey.observeTool({
       event: 'PostToolUse',

@@ -7,7 +7,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const DEFAULT_VERSION = '1.0.0';
+const DEFAULT_VERSION = '1.1.0';
 const DEFAULT_ARTIFACT_DIR = '.tmp/release-artifacts';
 const NPM_REGISTRY = 'https://registry.npmjs.org/';
 const RELEASE_COMMANDS = new Set(['git', 'node', 'npm', 'python']);

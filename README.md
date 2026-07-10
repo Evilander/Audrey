@@ -1,11 +1,11 @@
 <div align="center">
-  <img src="docs/assets/audrey-wordmark.png" alt="Audrey wordmark" width="760">
+  <img src="docs/assets/audrey-wordmark.png" alt="Audrey" width="720">
 
-  <p><strong>The local-first memory firewall for AI agents.</strong></p>
+  <p><strong>Memory that shows up before your coding agent makes the same mistake twice.</strong></p>
 
   <p>
-    Give Codex, Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, JetBrains, Ollama-backed agents,
-    and custom agent services one durable memory layer they can check before they touch tools.
+    Audrey gives Codex and Claude Code one local, evidence-backed memory loop:
+    remember what mattered, recall it automatically, check before acting, and learn from what happened next.
   </p>
 
   <p>
@@ -15,551 +15,417 @@
   </p>
 </div>
 
-## In Plain English
+## Your agent should remember the work, not just the chat
 
-AI coding assistants are brilliant but forgetful. They'll happily rerun the same broken command they ran yesterday, forget the rules your team agreed on last week, and treat every new session like it's day one.
+You fix the deploy command on Monday. On Thursday, a fresh session tries the broken version again.
 
-Audrey is the memory they're missing. It quietly keeps track of what worked, what failed, and what you told it — then checks that memory **before** the agent does something, so it can say "hold on, this exact command failed last time, and here's what fixed it" instead of repeating the mistake. Everything lives in one local file on your machine: no cloud, no account, and nothing about your code ever leaves your computer.
+You explain that this repository never commits generated files. The next agent helpfully commits them.
 
-That's the whole idea. The rest of this README is the detail.
+You discover a subtle migration rule, write it down somewhere, and still have to remember to paste it into every new conversation.
 
-## Why Audrey Exists
+That is the gap Audrey closes.
 
-Agents forget the exact mistakes they made yesterday. They repeat broken commands, lose project-specific rules, miss contradictions, and treat every new session like a cold start.
+Audrey sits beside the agent and participates in the work automatically. At the start of a session it brings back a small, relevant memory packet. When you submit a prompt, it recalls project facts, preferences, procedures, and recent risks. Before a side-effectful tool runs, Audrey checks the proposed action against prior evidence. Afterward, it links the outcome back to the exact check that preceded it.
 
-Audrey Guard is the headline loop: record what happened, remember what mattered, check before action, return `allow`, `warn`, or `block` with evidence, then validate whether the memory helped.
+The model does not have to remember that a memory tool exists. That is the point.
 
-Audrey turns those hard-won lessons into a local memory runtime:
+## Meet Audrey Autopilot
 
-- `audrey guard --tool Bash "npm run deploy"` runs memory-before-action from the terminal.
-- `memory_recall` finds durable context by semantic similarity.
-- `memory_preflight` checks prior failures, risks, rules, and relevant procedures before an action.
-- `memory_reflexes` converts remembered evidence into trigger-response guidance agents can follow.
-- `memory_validate` closes the loop after the action: `helpful`, `used`, or `wrong` outcomes feed salience and can bind back to the exact preflight event, evidence ids, and Guard action fingerprint.
-- `memory_dream` consolidates episodes into principles and applies decay.
-- `audrey impact` and `audrey doctor` tell a human or CI system whether the runtime is doing real work and is actually ready.
+Install Audrey once, review the hooks once, and then use Codex or Claude Code normally.
 
-It is not a hosted vector database, a notes app, or a Claude-only plugin. Audrey is a SQLite-backed continuity layer that can sit under any local or sidecar agent loop.
+```bash
+npm install -g audrey
+audrey install --host auto
+```
 
-<div align="center">
-  <img src="docs/assets/audrey-feature-grid.jpg" alt="Audrey feature marks: memory continuity, archive signal, recall loop, layered evidence, local node, and remembering before acting" width="760">
-</div>
+`auto` configures whichever supported CLIs are installed. You can choose one explicitly:
 
-## Quick Start
+```bash
+audrey install --host codex
+audrey install --host claude-code
+```
 
-Requires Node.js 20+.
+Restart the host after installation. Codex asks you to trust non-managed hooks once through `/hooks`; Claude Code may also ask you to approve project or plugin components. Audrey is automatic after that explicit install-and-trust step—never secretly installed.
+
+Autopilot then closes the loop:
+
+| Moment | What Audrey does |
+|---|---|
+| Session starts | Injects a compact, agent-scoped memory briefing |
+| You send a prompt | Recalls relevant evidence; explicitly durable phrases such as “remember that…” or “I prefer…” can become memories |
+| Bash/edit/write is proposed | Checks exact prior failures, trusted rules, procedures, contradictions, and memory health |
+| The tool finishes | Correlates `tool_use_id` to the Guard receipt and records the redacted outcome |
+| A tool failure is reported | Forms a durable, sanitized failure memory for the next attempt |
+| The turn stops or context compacts | Runs lightweight, due-only consolidation without holding the conversation open |
+
+Infrastructure failures are fail-open by default: a broken memory service must not strand a developer. Teams that need enforcement can set `AUDREY_HOOK_FAIL_CLOSED=1`.
+
+## A small story about a failed deploy
+
+The first attempt fails:
+
+```text
+$ npm run deploy
+Error: deployment target is missing
+```
+
+Audrey keeps a redacted trace and the exact action fingerprint. If another session proposes the same action before the problem is fixed, Guard returns a denial with evidence. Change the command or fix the target and Audrey lets the work continue. Once that exact action succeeds, the old failure no longer blocks it.
+
+This is more useful than “the vector search found a vaguely similar error.” Audrey creates a receipt before the action, records what happened after it, and preserves the lineage between the two.
+
+Try the complete loop without an API key or network call:
+
+```bash
+npx audrey demo --scenario repeated-failure
+```
+
+## What Audrey remembers
+
+Audrey treats memory as more than a pile of text chunks.
+
+- Episodes are things that happened: a user decision, a tool result, a project fact, a preference.
+- Semantic memories are principles supported by accumulated evidence.
+- Procedural memories are ways of acting: how to retry, verify, avoid, or recover.
+- Contradictions stay visible instead of being silently overwritten.
+- Confidence changes with source quality, evidence, age, retrieval, interference, context, and feedback.
+- Low-value memories decay; repeated evidence can consolidate into longer-lived knowledge.
+
+Every context packet includes memory IDs, confidence, provenance where available, and a reason for inclusion. Uncertain or disputed memories are labeled as such. Retrieved content is wrapped with a simple rule: memory is evidence, not authority; current system and user instructions always win.
+
+## What Audrey deliberately does not do
+
+Audrey does not upload your memory to a hosted service by default. It does not treat every sentence as permanent truth. It does not promote instructions from arbitrary tool output into trusted policy. It does not claim that a small local benchmark proves state-of-the-art memory quality.
+
+Raw prompt events and tool bodies are not retained by default. Audrey stores hashes, bounded summaries, fingerprints, and redaction metadata. Explicit user-memory language is persisted intentionally; tool failure memories are sanitized first. Admin export/import/forget surfaces are disabled unless `AUDREY_ENABLE_ADMIN_TOOLS=1`.
+
+At-rest encryption, identity-bound tenant authorization, rate limiting, and regulated retention remain deployment responsibilities today. They are not hidden behind a “production ready” badge.
+
+## Why a team might actually want this
+
+### Fewer repeated mistakes
+
+Guard checks memory at the point where it can change an action, not after the damage is done. Exact failure fingerprints avoid the noisy “one Bash command failed, so all Bash commands are suspicious” behavior.
+
+### Continuity across agent sessions
+
+Audrey is not tied to one model vendor. Codex and Claude Code use the same memory runtime and the same evidence contract. MCP, REST, JavaScript, and Python clients make the core usable in custom agents too.
+
+### Evidence a human can inspect
+
+Allow, warn, and block decisions carry receipts and evidence IDs. Outcome records connect back to those receipts. Teams can ask not only “what did the agent remember?” but “which memory changed this action, and was that useful?”
+
+### Local control
+
+The default store is SQLite, FTS5, and `sqlite-vec`. Local embeddings are the default. Cloud embedding or LLM providers require explicit configuration.
+
+### A safer shared store
+
+Agent-scoped recall now continues through validation, contradiction detection, interference, affect, failure lookup, capsules, greetings, Guard, and REST request routing. Hidden retrieval candidates do not reinforce themselves; only memories actually surfaced to the caller receive retrieval bookkeeping.
+
+Vector candidates are partitioned by agent before nearest-neighbor ranking, so one busy agent cannot crowd another out of a bounded search. For hard tenant boundaries, still use a distinct `AUDREY_DATA_DIR` per tenant or security domain.
+
+## See it before installing anything
 
 ```bash
 npx audrey doctor
-npx audrey demo --scenario repeated-failure
-npx audrey guard --tool Bash "npm run deploy"
+npx audrey demo
+npx audrey install --host auto --dry-run
 ```
 
-`doctor` verifies Node, the MCP entrypoint, provider selection, memory-store health, and host config generation. The repeated-failure demo is no-key, no-host, and no-network: it creates a temporary store, records a failed deploy, teaches Audrey the fix, then shows Audrey Guard blocking the repeat attempt with evidence.
+The dry run prints the MCP and lifecycle-hook configuration for both hosts without changing files.
 
-Expected first-run shape:
+<div align="center">
+  <img src="docs/assets/audrey-feature-grid.jpg" alt="Audrey memory continuity, recall, evidence, local storage, and memory-before-action" width="760">
+</div>
 
-```text
-Audrey Doctor v1.0.2
-Store health: not initialized
-Verdict: ready
-```
+## Where we want to take it
 
-After the first real memory write, `doctor` should report the store as healthy.
+The ambition is a temporal evidence graph for agents: immutable observations, explicit validity windows, source trust, evolving claims, scoped procedures, and outcome-calibrated policy. The defensible part is not storing more text. It is knowing what was believed, why, in which context, for how long, and whether acting on it helped.
 
-## Install Into Agent Hosts
+Near-term work includes durable background cognition jobs, tenant namespaces bound to credentials, memory quarantine and taint propagation, public long-horizon evaluations, encrypted backup options, and a persistent local daemon that removes per-hook model startup entirely.
 
-Preview host setup without editing config files:
+If that is the kind of agent infrastructure you want to build, open an issue or start with the demo. Audrey is MIT licensed, and the product boundary is intentionally inspectable.
+
+---
+
+## Technical reference
+
+Everything below is the machinery. The short version above is the product.
+
+### Requirements and packages
+
+- Node.js 20+
+- npm package: `audrey`
+- Python client: `audrey-memory`
+- Default storage: local SQLite + FTS5 + `sqlite-vec`
+- Default embeddings: local 384-dimensional model
 
 ```bash
-npx audrey install --host codex --dry-run
-npx audrey install --host claude-code --dry-run
-npx audrey install --host generic --dry-run
+npm install audrey
+pip install audrey-memory
 ```
 
-Generate raw config blocks:
+For Autopilot, prefer a global or otherwise stable installation. Hook and MCP configuration pins the actual Node executable and Audrey entrypoint; an ephemeral `npx` cache is not a durable production runtime.
+
+### Host configuration
+
+Preview or apply lifecycle hooks independently:
 
 ```bash
-npx audrey mcp-config codex
-npx audrey mcp-config generic
-npx audrey mcp-config vscode
-npx audrey hook-config claude-code
+audrey hook-config claude-code
+audrey hook-config claude-code --apply --scope local
+audrey hook-config claude-code --apply --scope project
+audrey hook-config claude-code --apply --scope user
+
+audrey hook-config codex
+audrey hook-config codex --apply --scope project
+audrey hook-config codex --apply --scope user
 ```
 
-Claude Code can be registered directly:
+Claude Code scope mapping follows the host’s terminology:
+
+- `local` → `.claude/settings.local.json`
+- `project` → `.claude/settings.json`
+- `user` → `~/.claude/settings.json`
+
+Codex supports project `.codex/hooks.json` and user `~/.codex/hooks.json`; it has no local hook scope. Audrey preserves unrelated hooks, replaces older Audrey-owned handlers, writes a private timestamped backup, and is idempotent on repeat installation. Project-adjacent backup names match `*.audrey-*.bak`; keep that pattern ignored because a host config can contain unrelated credentials.
+
+Audrey respects `CLAUDE_CONFIG_DIR` and `CODEX_HOME`. Generated hooks pin the stable Node executable, Audrey entrypoint, data directory, agent identity, and non-secret provider choices used at install time. With local embeddings, an Autopilot install performs one warmup so the first real hook is not also the first model load; set `AUDREY_DISABLE_WARMUP=1` to skip it.
+
+Generate MCP configuration without applying it:
 
 ```bash
-npx audrey install
-claude mcp list
+audrey mcp-config codex
+audrey mcp-config generic
+audrey mcp-config vscode
 ```
 
-For memory-before-action hooks, preview with `npx audrey hook-config
-claude-code`, then apply with `npx audrey hook-config claude-code --apply
---scope project` for `.claude/settings.local.json` or `--scope user` for
-`~/.claude/settings.json`. Audrey merges the hook block into existing settings
-and writes a timestamped backup before changing a non-empty file. The generated
-`PreToolUse` hook runs `audrey guard --hook --fail-on-warn`; the `PostToolUse`
-and `PostToolUseFailure` hooks record redacted tool traces. Verify the active
-hook set inside Claude Code with `/hooks`.
-
-All local MCP paths default to local embeddings and one shared SQLite-backed memory directory. **Set a distinct `AUDREY_DATA_DIR` per tenant, agent identity, or concurrent host.** SQLite uses WAL mode without an advisory lock, so two processes sharing a directory will contend on writes. Isolation is a hard requirement for multi-agent setups, not a recommendation.
-
-Installer-generated host config does not include provider API keys by default. Prefer setting `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, or `GEMINI_API_KEY` in the host runtime environment; use `npx audrey install --include-secrets` only if you explicitly accept argv/config exposure.
-
-## Use With Ollama And Local Agents
-
-Ollama runs models; Audrey supplies memory. Start Audrey as a local REST sidecar and expose its routes as tools in your agent loop:
+Remove Audrey-owned MCP registrations and hooks with the same host and scope you installed:
 
 ```bash
-AUDREY_AGENT=ollama-local-agent npx audrey serve
-curl http://localhost:7437/health
-curl http://localhost:7437/v1/status
+audrey uninstall --host auto --scope user
+audrey uninstall --host claude-code --scope local
+audrey uninstall --host codex --scope project
 ```
 
-Runnable example:
+Add `--dry-run` to preview uninstall without changing either host. Add `--mcp-only` only when you intentionally want to preserve Audrey hooks.
 
-```bash
-AUDREY_AGENT=ollama-local-agent npx audrey serve
-OLLAMA_MODEL=qwen3 node examples/ollama-memory-agent.js "What should you remember about Audrey?"
-```
+### Autopilot safety contract
 
-Core sidecar tools:
+The shared hook adapter normalizes current Codex and Claude Code payloads.
 
-| Agent Need | REST Route |
-|---|---|
-| Check memory before acting | `POST /v1/preflight` |
-| Get reflex rules for an action | `POST /v1/reflexes` |
-| Store a useful observation | `POST /v1/encode` |
-| Recall relevant context | `POST /v1/recall` |
-| Get a turn-sized memory packet | `POST /v1/capsule` |
-| Check health | `GET /v1/status` |
+- Context injection is bounded by `AUDREY_CONTEXT_BUDGET_CHARS` (default 4000; Autopilot uses a conservative 3200-character packet unless overridden).
+- Prompt and tool retrieval queries are bounded before embedding. Large edits carry hashes and lengths instead of file bodies; exact Guard identity uses a full redacted digest rather than a truncated prefix.
+- Only `Bash`, `Edit`, `Write`, `NotebookEdit`, and `apply_patch` are guarded and observed by the generated default hooks.
+- Pre/post correlation uses `session_id + tool_use_id`, so parallel tool calls do not attach to the wrong receipt.
+- Claude `PostToolUseFailure` and Codex responses that explicitly expose a non-zero exit normalize to the same failure path. Current Codex hooks can omit Bash exit status; Audrey records an opaque result as `unknown`, never as invented success.
+- Context and Guard failures emit `{}` and log to stderr unless fail-closed mode is explicitly enabled.
+- Stop hooks always emit valid JSON and never continue or block a completed turn.
 
-## What Ships
+Codex hook interception is a guardrail, not a complete shell-policy boundary. The current host contract does not intercept every richer `unified_exec` path and may omit the exit status of silent Bash failures. See the [Codex hooks documentation](https://learn.chatgpt.com/docs/hooks). Use the Guard receipt as evidence, and keep sandboxing, approvals, CI, and deployment controls in place.
 
-| Surface | Status |
-|---|---|
-| MCP stdio server | 20 tools plus status/recent/principles resources and briefing/recall/reflection prompts |
-| CLI | `doctor`, `demo`, `guard`, `install`, `mcp-config`, `hook-config`, `status`, `dream`, `reembed`, `observe-tool`, `promote`, `impact` |
-| REST API | Hono server with `/health` and `/v1/*` routes |
-| JavaScript SDK | Direct TypeScript/Node import from `audrey` |
-| Python client | `pip install audrey-memory`, calls the REST sidecar |
-| Storage | Local SQLite plus `sqlite-vec`, no hosted database required |
-| Deployment | npm package, Docker, Compose, host-specific MCP config generation |
-| Safety loop | preflight warnings, reflexes, redacted tool traces, contradiction handling |
-
-## Memory Model
-
-Audrey is built around the parts of memory that matter for agents:
-
-- Episodic memory: specific observations, tool results, preferences, and session facts.
-- Semantic memory: consolidated principles extracted from repeated evidence.
-- Procedural memory: remembered ways to act, avoid, retry, or verify.
-- Affect and salience: emotional weight and importance influence recall.
-- Interference and decay: stale, conflicting, or low-confidence memories lose authority over time.
-- Contradiction handling: competing claims are tracked instead of silently overwritten.
-- Tool-trace learning: failed commands and risky actions become future preflight warnings.
-
-The product bet is simple: the next generation of useful agents will not just retrieve facts. They will remember what happened, decide whether a memory is still trustworthy, and use that memory before touching tools.
-
-## Use Audrey From Code
-
-### JavaScript
+### JavaScript API
 
 ```js
-import { Audrey } from 'audrey';
+import { Audrey, MemoryController } from 'audrey';
 
-const brain = new Audrey({
+const memory = new Audrey({
   dataDir: './audrey-data',
-  agent: 'support-agent',
+  agent: 'payments-agent',
   embedding: { provider: 'local', dimensions: 384 },
 });
 
-await brain.encode({
-  content: 'Stripe returns HTTP 429 above 100 req/s',
+await memory.encode({
+  content: 'Stripe returns HTTP 429 above 100 requests per second.',
   source: 'direct-observation',
   tags: ['stripe', 'rate-limit'],
+  context: { service: 'billing' },
 });
 
-const memories = await brain.recall('stripe rate limit');
+const capsule = await memory.capsule('increase Stripe throughput', {
+  scope: 'agent',
+  budgetChars: 3000,
+});
 
-await brain.waitForIdle();
-brain.close();
+const guard = new MemoryController(memory);
+const before = await guard.beforeAction({
+  action: 'deploy the billing worker',
+  tool: 'Bash',
+  command: 'npm run deploy:billing',
+  cwd: process.cwd(),
+});
+
+console.log(before.decision, before.evidenceIds);
+await memory.closeAsync();
 ```
 
-### Python
+### REST sidecar
 
 ```bash
-pip install audrey-memory
+AUDREY_AGENT=payments-agent audrey serve
+curl http://127.0.0.1:7437/health
 ```
+
+Core routes:
+
+| Need | Route |
+|---|---|
+| Encode an episode | `POST /v1/encode` |
+| Recall memory | `POST /v1/recall` |
+| Build a context packet | `POST /v1/capsule` |
+| Check before an action | `POST /v1/preflight` |
+| Create a Guard receipt | `POST /v1/guard/before` |
+| Close a Guard receipt | `POST /v1/guard/after` |
+| Consolidate and decay | `POST /v1/dream` |
+| Health and index state | `GET /v1/status` |
+
+Use `AUDREY_API_KEY` for any non-loopback deployment. `X-Audrey-Agent` scopes encode, recall, capsules, preflight, Guard, consolidation, and greetings inside a trusted deployment; it is a routing header, not an authentication boundary. Bind agent/tenant identity at your gateway rather than trusting an arbitrary public header.
+
+### Python client
 
 ```python
 from audrey_memory import Audrey
 
-brain = Audrey(base_url="http://127.0.0.1:7437", agent="support-agent")
-memory_id = brain.encode("Stripe returns HTTP 429 above 100 req/s", source="direct-observation")
-results = brain.recall("stripe rate limit", limit=5)
-brain.close()
+memory = Audrey(base_url="http://127.0.0.1:7437", agent="payments-agent")
+memory_id = memory.encode(
+    "Stripe returns HTTP 429 above 100 requests per second.",
+    source="direct-observation",
+)
+results = memory.recall("Stripe rate limit", limit=5)
+memory.close()
 ```
 
-## Production Readiness
+The Python package is a client for the REST sidecar; the memory runtime remains in the Node process.
 
-Audrey is close to a 1.0-ready local memory runtime, but production depends on how it is embedded. Treat it like stateful infrastructure.
+### Memory and retrieval pipeline
 
-Release gates used for this package:
+```text
+episode
+  ├─ transactional SQLite + vector + FTS write
+  ├─ agent-scoped interference / resonance / validation
+  ├─ reinforcement or contradiction evidence
+  └─ sleep-time consolidation into semantic or procedural memory
 
-```bash
-npm run release:gate
-npm run python:release:check
-npm run bench:guard:card
-npm run bench:guard:validate
-npx audrey doctor
-npx audrey demo
+query
+  ├─ bounded vector candidates
+  ├─ FTS5 lexical candidates
+  ├─ reciprocal-rank fusion and confidence scoring
+  ├─ context / affect / recency / interference modifiers
+  └─ final-only retrieval bookkeeping
 ```
 
-Recommended runtime checks:
+Agent-scoped vector search uses a native `sqlite-vec` partition key before nearest-neighbor ranking, not post-filtered whole-store candidates. If fusion underfills, Audrey makes one bounded partition-local retry. Semantic and procedural retrieval counts update only as final results are yielded; deduplicated, over-limit, and unconsumed stream candidates receive no authority boost.
 
-```bash
-npx audrey doctor --json
-npx audrey status --json --fail-on-unhealthy
-npx audrey install --host codex --dry-run
-```
+### MCP surface
 
-Production controls you still own:
+Audrey exposes 22 MCP tools plus status, recent-memory, and principle resources and briefing/recall/reflection prompts. The main groups are:
 
-- Set one `AUDREY_DATA_DIR` per tenant, environment, or isolation boundary.
-- Pin `AUDREY_EMBEDDING_PROVIDER` and `AUDREY_LLM_PROVIDER` explicitly.
-- Back up the SQLite data directory before provider or dimension changes.
-- Keep API keys and raw credentials out of encoded memory content.
-- Use `AUDREY_API_KEY` if the REST sidecar is reachable beyond the local process boundary.
-- Run `npx audrey dream` on a schedule so consolidation and decay stay current.
-- Add application-level encryption, retention, access control, and audit logging for regulated environments.
+- capture: `memory_encode`, `memory_reflect`, `memory_observe_tool`
+- retrieval: `memory_recall`, `memory_capsule`, `memory_greeting`
+- action safety: `memory_preflight`, `memory_guard_before`, `memory_guard_after`, `memory_reflexes`
+- lifecycle: `memory_consolidate`, `memory_dream`, `memory_decay`, `memory_resolve_truth`
+- governance: `memory_validate`, `memory_promote`, `memory_forget`, `memory_export`, `memory_import`, `memory_status`, `memory_introspect`
 
-## Environment Variables
+The server also sends host instructions explaining the Guard receipt loop when lifecycle hooks are unavailable.
+
+### Environment variables
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AUDREY_DATA_DIR` | `~/.audrey/data` | SQLite memory store path. Use one per tenant or agent identity for isolation. |
-| `AUDREY_AGENT` | `local-agent` | Logical agent identity stamped on writes. |
-| `AUDREY_EMBEDDING_PROVIDER` | `local` | `local`, `gemini`, `openai`, or `mock`. Cloud providers require explicit opt-in. |
-| `AUDREY_LLM_PROVIDER` | auto | `anthropic`, `openai`, or `mock`. |
-| `AUDREY_DEVICE` | `gpu` | Local embedding device (`gpu` or `cpu`). Falls back to CPU if GPU init fails. |
-| `AUDREY_PORT` | `7437` | REST sidecar port. |
-| `AUDREY_HOST` | `127.0.0.1` | REST sidecar bind address. Set to `0.0.0.0` only with `AUDREY_API_KEY`. |
-| `AUDREY_API_KEY` | unset | Bearer token required for non-loopback REST traffic. |
-| `AUDREY_ALLOW_NO_AUTH` | `0` | Set to `1` to allow non-loopback bind without an API key. Don't. |
-| `AUDREY_ENABLE_ADMIN_TOOLS` | `0` | Set to `1` to enable export, import, and forget routes/tools. Disabled by default. |
-| `AUDREY_PROMOTE_ROOTS` | unset | Colon/semicolon-separated extra roots for `audrey promote --yes` writes. By default writes are restricted to `process.cwd()`. |
-| `AUDREY_DEBUG` | `0` | Set to `1` to print MCP info logs (server started, warmup completed). Errors always log. |
-| `AUDREY_PROFILE` | `0` | Set to `1` to emit per-stage timings via MCP `_meta.diagnostics`. |
-| `AUDREY_DISABLE_WARMUP` | `0` | Set to `1` to skip background embedding warmup at MCP boot. |
-| `AUDREY_ONNX_VERBOSE` | `0` | Set to `1` to restore ONNX runtime EP-assignment warnings (suppressed by default). |
-| `AUDREY_PRAGMA_DEFAULTS` | `1` | Set to `0` to revert SQLite PRAGMA tuning to better-sqlite3 defaults. |
-| `AUDREY_CONTEXT_BUDGET_CHARS` | `4000` | Default Memory Capsule character budget. |
+| `AUDREY_DATA_DIR` | `~/.audrey/data` | SQLite store; use a distinct directory per tenant/security boundary |
+| `AUDREY_AGENT` | host-specific | Logical memory owner used for scoped operations |
+| `AUDREY_EMBEDDING_PROVIDER` | `local` | `local`, `gemini`, `openai`, or `mock` |
+| `AUDREY_LLM_PROVIDER` | auto | `anthropic`, `openai`, or `mock` for reflection/consolidation |
+| `AUDREY_LLM_MODEL` | provider default | Explicit LLM model override |
+| `AUDREY_DEVICE` | `gpu` | Local embedding device; falls back to CPU |
+| `AUDREY_CONTEXT_BUDGET_CHARS` | `4000` | Maximum default capsule size |
+| `AUDREY_AUTOPILOT_SCOPE` | `agent` | `agent` or explicit cross-agent `shared` recall for hooks |
+| `AUDREY_HOOK_FAIL_CLOSED` | `0` | Deny guarded actions when Audrey itself fails |
+| `AUDREY_API_KEY` | unset | Bearer token for REST access |
+| `AUDREY_HOST` | `127.0.0.1` | REST bind address |
+| `AUDREY_PORT` | `7437` | REST port |
+| `AUDREY_ENABLE_ADMIN_TOOLS` | `0` | Enable export, import, and forget operations |
+| `AUDREY_ENABLE_SHARED_SCOPE` | `0` | Allow explicit cross-agent REST recall; admin tools also enable it |
+| `AUDREY_PROFILE` | `0` | Include stage timing diagnostics |
+| `AUDREY_DISABLE_WARMUP` | `0` | Disable MCP embedding warmup |
+| `AUDREY_PRAGMA_DEFAULTS` | `1` | Set `0` to use better-sqlite3 PRAGMA defaults |
 
-## Benchmarks
+Provider secrets are never embedded in generated hook commands. `--include-secrets` applies only to MCP registration; prefer host environment injection or a secret manager.
 
-Audrey ships three benchmark families.
+### Production checklist
 
-### Performance snapshot
+- Give every tenant or hard isolation domain its own `AUDREY_DATA_DIR`.
+- Pin embedding and LLM providers explicitly.
+- Back up the store before provider, dimension, or version migrations.
+- Put the REST sidecar behind authentication and rate limits; do not expose an agent-selection header as identity.
+- Leave REST shared scope disabled unless cross-agent retrieval is intentional and authorized by your own identity layer.
+- Keep credentials and regulated raw content out of encoded memories.
+- Decide retention, deletion, encryption, and audit policy before regulated use.
+- Monitor `audrey status --json --fail-on-unhealthy`.
+- Keep the hook runtime on a stable installed path.
+- Load-test concurrent writers for your topology; SQLite WAL is not a distributed coordination layer.
 
-`npm run bench:perf-snapshot` measures encode and hybrid recall latency at multiple corpus sizes against the in-process mock provider. It reports p50/p95/p99 plus machine provenance so the numbers are reproducible and honest about what they cover.
+### Benchmarks and evidence
 
-```bash
-npm run build
-npm run bench:perf-snapshot                                 # default sizes 100, 1000, 5000
-node benchmarks/perf-snapshot.js --sizes 1000,10000 --json  # custom shape
-```
-
-Sample output from `benchmarks/snapshots/perf-0.22.2.json` (24-core Ryzen 9 7900X3D, Node 25.5.0, mock 64-dim embedding, hybrid recall, limit 5):
-
-| Corpus size | Encode p50 (ms) | Encode p95 (ms) | Recall p50 (ms) | Recall p95 (ms) | Recall p99 (ms) |
-|---|---|---|---|---|---|
-| 100 | 0.33 | 0.59 | 0.54 | 1.82 | 2.71 |
-| 1,000 | 0.31 | 2.15 | 1.57 | 2.36 | 21.18 |
-| 5,000 | 0.31 | 1.84 | 2.09 | 3.42 | 16.58 |
-
-These numbers cover Audrey's own pipeline (SQLite + sqlite-vec + hybrid ranking) and exclude embedding-provider cost. Real-world recall p95 with a local 384-dim provider is typically 5-15x higher; with a hosted provider it is dominated by the API round-trip. Run on your own hardware before quoting numbers anywhere.
-
-### Behavioral regression suite
-
-`npm run bench:memory:check` is a release gate. It runs a small set of retrieval and lifecycle scenarios (information extraction, knowledge updates, multi-session reasoning, conflict resolution, privacy boundary, overwrite, delete-and-abstain, semantic/procedural merge) against Audrey and three weak baselines (vector-only, keyword+recency, recent-window) and asserts Audrey doesn't regress. The baseline comparisons exist to catch correctness regressions in retrieval logic, not to make marketing claims.
+Run the release gates locally:
 
 ```bash
-npm run bench:memory          # full regression suite (writes JSON + report)
-npm run bench:memory:check    # release gate, exits non-zero on regression
-```
-
-### GuardBench comparative suite
-
-`npm run bench:guard:check` runs Audrey's local GuardBench comparative suite:
-ten pre-action scenarios across Audrey Guard, no-memory, recent-window,
-vector-only, and FTS-only adapters. The scenarios cover exact repeated
-failures, required procedures, changed file scopes, changed commands,
-recovered failures, recall degradation, redaction safety, conflicting
-instructions, and noisy stores. It writes
-`benchmarks/output/guardbench-summary.json`,
-`benchmarks/output/guardbench-manifest.json`, and
-`benchmarks/output/guardbench-raw.json`. The emitted manifest, summary, and raw
-output shapes are validated by JSON schemas under `benchmarks/schemas/`.
-
-Latest local result in this checkout: 10/10 scenarios passed, 100% prevention
-rate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks in
-the raw-secret sweep, and 3.529ms / 27.78ms
-p50/p95 guard latency under the mock-provider methodology.
-
-**Methodology caveats, on purpose.** All numbers above are produced against
-the in-process mock 64-dim embedding provider documented in the run's
-`provenance` block. They characterize Audrey's controller and SQLite path,
-not real-provider end-to-end latency or production false-positive rates. The
-100% prevention rate is over the 5 GuardBench scenarios that expect a
-`block` decision (the suite is 10 scenarios total, mixed across allow / warn
-/ block). Local baseline decision accuracy was: no-memory 10%, recent-window
-60%, vector-only 40%, and FTS-only 10%; none of the local baselines passed
-the GuardBench decision-plus-evidence contract, which since v1.0.1 requires
-the correct decision plus at least one returned evidence id for `block` /
-`warn` scenarios (no longer Audrey-specific lineage phrasing — see
-`CHANGELOG.md#101---2026-05-15`). External-system numbers for Mem0 and Zep
-are explicitly out of scope for this Stage-A artifact; live credentialed
-runs land in a v2 paper after raw evidence bundles publish.
-
-```bash
-npm run bench:guard
+npm test
+npm run bench:memory:check
 npm run bench:guard:check
-npm run bench:guard:manifest
-npm run bench:guard:validate
-npm run bench:guard:card
-npm run bench:guard:bundle
-npm run bench:guard:bundle:verify
-npm run bench:guard:leaderboard
-npm run bench:guard:adapter-registry:validate
-npm run bench:guard:adapter-module:validate
-npm run bench:guard:adapter-self-test
-npm run bench:guard:adapter-self-test:validate
 npm run bench:guard:publication:verify
-npm run bench:guard:adapter-smoke
-npm run bench:guard:adapter-conformance
-npm run bench:guard:external:dry-run
-npm run bench:guard:mem0 -- --dry-run
-npm run bench:guard:zep -- --dry-run
-node benchmarks/adapter-self-test.mjs --adapter ./path/to/adapter.mjs
-node benchmarks/guardbench.js --adapter ./path/to/adapter.mjs --check
+npm run smoke:cli
+npm run pack:check
 ```
 
-External GuardBench adapters are ESM modules that export either `default`,
-`adapter`, or `createGuardBenchAdapter()`. The adapter receives scenario seed
-data and the proposed action, but the harness withholds `expectedDecision` and
-`requiredEvidence` until scoring. Start from
-`benchmarks/adapters/example-allow.mjs` when wiring a new system. Adapter
-authors can import `defineGuardBenchAdapter()` and `defineGuardBenchResult()`
-from `benchmarks/adapter-kit.mjs` to validate module shape and decision output
-while developing.
+GuardBench currently contains ten local, deterministic pre-action scenarios covering repeated failures, procedures, scope changes, recovery, redaction, conflicting instructions, and noisy stores. The checked-in v1 methodology uses a mock 64-dimensional embedding provider and exists to catch regressions. A perfect local pass is not a claim about real-provider latency or production false-positive rates.
 
-The published adapter registry lives at `benchmarks/adapters/registry.json`.
-Run `npm run bench:guard:adapter-registry:validate` to verify registry shape,
-adapter paths, and credential-free module loading.
+<!-- guardbench-summary:start -->
+Latest local result in this checkout: 10/10 scenarios passed, 100% prevention rate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks, and 3.892ms / 15.215ms p50/p95 Guard latency under the mock-provider methodology.
+<!-- guardbench-summary:end -->
 
-Before running the full self-test, validate the ESM module shape quickly:
+`benchmarks/perf-snapshot.js` measures encode and hybrid-recall p50/p95/p99 at configurable corpus sizes with machine and provider provenance. Run it on the hardware and embedding provider you plan to operate; hosted-provider latency is dominated by its network round trip.
+
+The longer-term public evaluation target includes [LongMemEval](https://arxiv.org/abs/2410.10813), [MemoryAgentBench](https://arxiv.org/abs/2507.05257), and adversarial memory-poisoning cases. Relevant design directions include bitemporal knowledge graphs in [Zep/Graphiti](https://arxiv.org/abs/2501.13956), evolving memory organization in [A-MEM](https://arxiv.org/abs/2502.12110), and sleep-time agent compute in [Sleep-time Compute](https://arxiv.org/abs/2504.13171).
+
+### Development
 
 ```bash
-npm run bench:guard:adapter-module:validate -- --adapter ./path/to/adapter.mjs
-```
-
-Before publishing a new adapter, run `npm run bench:guard:adapter-self-test --
---adapter ./path/to/adapter.mjs`. The self-test validates the external adapter
-contract and row conformance while explicitly allowing low benchmark scores, so
-authors can separate "valid submission shape" from "competitive GuardBench
-performance." The generated self-test report is validated against
-`benchmarks/schemas/guardbench-adapter-self-test.schema.json`. Reviewers can
-validate a submitted report without rerunning an adapter through `npm run
-bench:guard:adapter-self-test:validate -- --report ./guardbench-adapter-self-test.json`.
-
-Audrey ships external adapters for Mem0 Platform and Zep Cloud. Run them only
-with runtime API keys:
-
-```bash
-set MEM0_API_KEY=...
-npm run bench:guard:mem0
-
-set ZEP_API_KEY=...
-npm run bench:guard:zep
-```
-
-The Zep adapter uses the current REST surface for users, sessions, `memory.add`,
-`graph.search`, and benchmark-user cleanup. If Zep graph ingestion needs more
-time in a live account, set `ZEP_GUARDBENCH_INGEST_DELAY_MS` before the run.
-
-Run `npm run bench:guard:external:dry-run` before coordinating credentialed
-runs. It walks the runtime-env adapter registry, writes non-secret
-`external-run-metadata.json` files for each adapter, and reports which runtime
-environment variables are still missing. The external dry-run matrix report is schema-bound by
-`benchmarks/schemas/guardbench-external-dry-run.schema.json` and written to
-`benchmarks/output/external/guardbench-external-dry-run.json`.
-
-Run `npm run bench:guard:external:evidence` after dry-runs or live runs to
-write `benchmarks/output/external/guardbench-external-evidence.json`. This
-external evidence verification report is schema-bound by
-`benchmarks/schemas/guardbench-external-evidence.schema.json`, treats dry-run
-or missing-key rows as pending in normal release gates, and checks that saved
-metadata does not contain runtime credential values. Use
-`npm run bench:guard:external:evidence:strict` when Mem0/Zep keys have been
-provided; strict mode fails until every runtime-env adapter has a passed live
-bundle.
-
-External runs write `external-run-metadata.json` alongside the GuardBench
-summary, manifest, and raw output bundle under
-`benchmarks/output/external/<adapter>/`. The external runner validates the
-emitted bundle with `benchmarks/validate-guardbench-artifacts.mjs` before
-marking the run passed, and separately records adapter conformance so a valid
-low-scoring adapter is distinguished from a malformed adapter. When
-`external-run-metadata.json` is present, the validator also checks it against
-`benchmarks/schemas/guardbench-external-run.schema.json` and verifies any
-recorded SHA-256 artifact hashes against the bundle on disk.
-
-For a shareable submission artifact, run `npm run bench:guard:card -- --dir
-<output-dir>`. This writes `guardbench-conformance-card.json` with the subject
-name, run status, score, conformance result, artifact hashes, optional
-external-run metadata hash, and machine provenance. The standalone validator
-checks the card when it is present.
-
-For a portable submission directory, run `npm run bench:guard:bundle -- --dir
-<output-dir>`. This creates `submission-bundle/` with the raw GuardBench
-artifacts, conformance card, JSON schemas, validation report, and
-`submission-manifest.json` with SHA-256 hashes for every bundled file.
-Reviewers can run `npm run bench:guard:bundle:verify -- --dir
-<submission-bundle>` to check manifest hashes, bundled schemas, and artifact
-validation from the bundle alone.
-
-For benchmark aggregation, run `npm run bench:guard:leaderboard -- --bundle
-<submission-bundle>`. The leaderboard builder verifies each bundle before
-ranking and writes JSON plus Markdown reports under `benchmarks/output/leaderboard/`.
-
-Before publishing benchmark artifacts, run `npm run
-bench:guard:publication:verify`. This single benchmark-focused verifier checks
-the adapter registry, default adapter module, adapter self-test report,
-GuardBench manifest/summary/raw artifacts, submission bundle, external dry-run
-matrix, external evidence verification report, leaderboard, and a local
-absolute-path sweep over the public artifact set.
-The verifier validates its own machine-readable report against
-`benchmarks/schemas/guardbench-publication-verification.schema.json` before it
-exits.
-
-Before turning the paper into public posts or submissions, run `npm run
-paper:claims`. It validates `docs/paper/claim-register.json` against the
-current paper, README, GuardBench artifacts, publication verifier, and external
-evidence status so pending Mem0/Zep live-score claims cannot slip into public
-copy.
-Run `npm run paper:publication-pack` to verify the ready-to-use arXiv, Hacker
-News, Reddit, X, and LinkedIn drafts in `docs/paper/publication-pack.json`
-before browser-based submission. The X URL reserve is explicit: the first X
-post carries `reservedUrlChars: 24`, and submitted artifact-url targets in
-`browser-launch-results.json` must record the final `artifactUrl`.
-Run `npm run paper:arxiv` to generate a deterministic TeX source package under
-`docs/paper/output/arxiv/`, and `npm run paper:arxiv:verify` to check hashes,
-citation conversion, bibliography coverage, seeded-secret redaction, and local
-absolute-path leakage before arXiv upload.
-Run `npm run paper:arxiv:compile` to record a schema-bound compile report at
-`docs/paper/output/arxiv-compile-report.json`. It attempts `tectonic`,
-`latexmk`, `pdflatex`/`bibtex`, or `uvx tecto` with a local bundle proxy when
-available; `npm run paper:arxiv:compile:strict` stays blocked on hosts without
-supported TeX tooling.
-Run `npm run paper:launch-plan` to verify
-`docs/paper/browser-launch-plan.json`, which maps those drafts to manual
-browser targets, login/captcha expectations, platform-rule checks, source
-URLs, and post-submit URL capture.
-Run `npm run paper:launch-results` to validate
-`docs/paper/browser-launch-results.json`, the post-submit ledger for arXiv,
-Hacker News, Reddit, X, and LinkedIn targets. The normal verifier allows
-pending rows with explicit blockers; `npm run paper:launch-results:strict`
-fails until every target has a submitted, operator-verified public URL.
-Run `npm run paper:bundle` to generate
-`docs/paper/output/submission-bundle/`, a hash-manifested package containing
-paper sources, claim and publication registers, GuardBench outputs, schemas,
-and package metadata. `npm run paper:bundle:verify` checks the manifest and
-file hashes before browser upload.
-Run `npm run release:readiness` for the pending-aware Audrey 1.0 checklist.
-It keeps code/paper readiness separate from publish blockers; `npm run
-release:readiness:strict` fails until the 1.0 version surfaces,
-source-control state, live remote-head verification, Python artifacts, npm
-registry/auth readiness, PyPI publish readiness, arXiv compile proof, browser
-publication URLs, and live Mem0/Zep evidence are complete.
-Run `npm run release:cut:plan` to preview the exact 1.0 version/changelog
-edits across npm, lockfile, MCP, and Python surfaces. `npm run
-release:cut:apply -- --target-version 1.0.0` writes those edits only when the
-final cut is intentional. The generated changelog section is release-note copy,
-not a TODO scaffold; `release:readiness:strict` rejects placeholder changelog
-markers before publication.
-Run `npm run security:audit` before packaging or publishing; the release gates
-call it after artifact verification so production dependency advisories cannot
-slip past the final package check.
-
-## Command Reference
-
-```bash
-# First contact
-npx audrey doctor
-npx audrey demo
-
-# MCP setup
-npx audrey install --host codex --dry-run
-npx audrey mcp-config codex
-npx audrey mcp-config generic
-npx audrey hook-config claude-code
-npx audrey install
-npx audrey uninstall
-
-# Health and maintenance
-npx audrey status
-npx audrey status --json --fail-on-unhealthy
-npx audrey dream
-npx audrey reembed
-
-# Closed-loop visibility
-npx audrey impact
-npx audrey impact --json --window 7 --limit 5
-
-# Tool-trace learning
-npx audrey observe-tool --event PostToolUse --tool Bash --outcome failed
-npx audrey promote --dry-run
-
-# REST sidecar
-npx audrey serve
-copy .env.docker.example .env
-# edit AUDREY_API_KEY in .env
-docker compose up -d --build
-```
-
-The Node sidecar defaults to `127.0.0.1:7437`. The Docker image intentionally binds inside the container on `3487`, so Compose requires `AUDREY_API_KEY` in `.env` before startup. Override the published host port with `AUDREY_PUBLISHED_PORT` when using Compose.
-
-## Documentation
-
-- [Security policy](SECURITY.md)
-- [Audrey paper outline](docs/AUDREY_PAPER_OUTLINE.md)
-- Public setup, runtime, benchmark, and command guidance is maintained in this README.
-
-## Development
-
-Developer setup runs from source, not from the published tarball, so `npm run build` is required before any CLI subcommand resolves:
-
-```bash
+git clone https://github.com/Evilander/Audrey.git
+cd Audrey
 npm ci
 npm run build
-npm run lint     # ESLint (type-checked typescript-eslint); CI requires it clean
-npm run format   # Prettier; use `npm run format:check` to verify without writing
+npm run lint
+npm run format:check
 npm test
 ```
 
-Once built, the `Quick Start` commands work against the local `dist/` output. Code style and types are enforced: `npm run lint` and `npm run format:check` run in CI (Ubuntu + Windows) and in every release gate, so the baseline cannot regress. The full release gate runs everything CI runs:
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and [docs/MEMORY_BENCHMARKING.md](docs/MEMORY_BENCHMARKING.md).
+
+### Maintainer release gates
+
+These commands are intentionally documented because the paper and release evidence ledger verifies them against the public source tree:
 
 ```bash
-npm run release:gate
-python -m unittest discover -s python/tests -v
+npm run bench:guard:zep
+npm run bench:guard:external:dry-run
+npm run bench:guard:external:evidence
+npm run bench:guard:external:evidence:strict
+
+npm run paper:arxiv:compile
+npm run paper:arxiv:compile:strict
+npm run paper:launch-results
+npm run paper:launch-results:strict
+
+npm run release:cut:plan
+npm run release:cut:apply
+npm run release:readiness
+npm run release:readiness:strict
 npm run python:release:check
 ```
 
-`npm test` uses a repo-local Vitest launcher so locked-down Windows temp
-directories do not block test startup. `npm run release:gate:sandbox` remains
-available for hosts that block child-process spawning entirely.
+Live Zep runs require `ZEP_API_KEY`; `ZEP_GUARDBENCH_INGEST_DELAY_MS` tunes ingestion settling time. The external dry-run matrix proves adapter shape without credentials, while external evidence verification distinguishes pending runs from verified live evidence.
 
-## License
+Publication packaging performs an absolute-path sweep, reserves an X URL reserve in social copy, and checks submitted artifact-url targets. Release readiness separately reports source-control state, live remote-head verification, npm registry/auth readiness, and PyPI publish readiness.
 
-MIT. See [LICENSE](LICENSE).
+MIT licensed. Built for agents that should get better at the work without becoming less accountable.

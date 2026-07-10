@@ -5,6 +5,7 @@ export type MemoryValidateOutcome = 'used' | 'helpful' | 'wrong';
 export interface MemoryValidateInput {
   id: string;
   outcome: MemoryValidateOutcome;
+  agent?: string;
   preflightEventId?: string;
   actionKey?: string;
   evidenceIds?: string[];
@@ -65,7 +66,11 @@ function clampSalience(value: number): number {
   return value;
 }
 
-function findRow(db: Database.Database, id: string): { type: MemoryType; row: RowSnapshot } | null {
+function findRow(
+  db: Database.Database,
+  id: string,
+  agent: string,
+): { type: MemoryType; row: RowSnapshot } | null {
   for (const { type, name } of TABLES) {
     const hasState = name !== 'episodes';
     const hasRetrieval = name !== 'episodes';
@@ -78,9 +83,9 @@ function findRow(db: Database.Database, id: string): { type: MemoryType; row: Ro
       hasChallenge ? 'challenge_count' : 'NULL AS challenge_count',
       hasState ? 'state' : 'NULL AS state',
     ].join(', ');
-    const row = db.prepare(`SELECT ${cols} FROM ${name} WHERE id = ?`).get(id) as
-      | RowSnapshot
-      | undefined;
+    const row = db
+      .prepare(`SELECT ${cols} FROM ${name} WHERE id = ? AND agent = ?`)
+      .get(id, agent) as RowSnapshot | undefined;
     if (row) return { type, row };
   }
   return null;
@@ -100,7 +105,8 @@ export function applyFeedback(
   db: Database.Database,
   input: MemoryValidateInput,
 ): MemoryValidateResult | null {
-  const located = findRow(db, input.id);
+  if (!input.agent) throw new Error('agent is required for memory feedback');
+  const located = findRow(db, input.id, input.agent);
   if (!located) return null;
 
   const { type, row } = located;
@@ -117,15 +123,15 @@ export function applyFeedback(
   // and salience move.
   if (tableName === 'episodes') {
     db.prepare(
-      `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ? WHERE id = ?`,
-    ).run(newSalience, newUsageCount, nowISO, input.id);
+      `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ? WHERE id = ? AND agent = ?`,
+    ).run(newSalience, newUsageCount, nowISO, input.id, input.agent);
   } else if (tableName === 'semantics') {
     const newRetrieval = (row.retrieval_count ?? 0) + RETRIEVAL_BUMP[input.outcome];
     const newChallenge = (row.challenge_count ?? 0) + CHALLENGE_BUMP[input.outcome];
     const lastReinforced = RETRIEVAL_BUMP[input.outcome] > 0 ? nowISO : null;
     if (lastReinforced) {
       db.prepare(
-        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, last_reinforced_at = ?, challenge_count = ? WHERE id = ?`,
+        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, last_reinforced_at = ?, challenge_count = ? WHERE id = ? AND agent = ?`,
       ).run(
         newSalience,
         newUsageCount,
@@ -134,23 +140,32 @@ export function applyFeedback(
         lastReinforced,
         newChallenge,
         input.id,
+        input.agent,
       );
     } else {
       db.prepare(
-        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, challenge_count = ? WHERE id = ?`,
-      ).run(newSalience, newUsageCount, nowISO, newRetrieval, newChallenge, input.id);
+        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, challenge_count = ? WHERE id = ? AND agent = ?`,
+      ).run(newSalience, newUsageCount, nowISO, newRetrieval, newChallenge, input.id, input.agent);
     }
   } else {
     const newRetrieval = (row.retrieval_count ?? 0) + RETRIEVAL_BUMP[input.outcome];
     const lastReinforced = RETRIEVAL_BUMP[input.outcome] > 0 ? nowISO : null;
     if (lastReinforced) {
       db.prepare(
-        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, last_reinforced_at = ? WHERE id = ?`,
-      ).run(newSalience, newUsageCount, nowISO, newRetrieval, lastReinforced, input.id);
+        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ?, last_reinforced_at = ? WHERE id = ? AND agent = ?`,
+      ).run(
+        newSalience,
+        newUsageCount,
+        nowISO,
+        newRetrieval,
+        lastReinforced,
+        input.id,
+        input.agent,
+      );
     } else {
       db.prepare(
-        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ? WHERE id = ?`,
-      ).run(newSalience, newUsageCount, nowISO, newRetrieval, input.id);
+        `UPDATE ${tableName} SET salience = ?, usage_count = ?, last_used_at = ?, retrieval_count = ? WHERE id = ? AND agent = ?`,
+      ).run(newSalience, newUsageCount, nowISO, newRetrieval, input.id, input.agent);
     }
   }
 
@@ -158,7 +173,7 @@ export function applyFeedback(
   // row could have been forgotten/superseded by a concurrent caller between
   // the UPDATE above and now; in that rare case fall back to the values we
   // just wrote rather than crashing with a non-null assertion.
-  const fresh = findRow(db, input.id)?.row;
+  const fresh = findRow(db, input.id, input.agent)?.row;
   if (!fresh) {
     return {
       id: input.id,

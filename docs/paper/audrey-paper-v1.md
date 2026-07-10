@@ -841,11 +841,13 @@ The JSON walker redacts sensitive keys and values recursively. If a value sits u
 
 ### MCP, CLI, and REST Surfaces
 
-The MCP server registers 20 tools: `memory_dream`, `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`, `memory_export`, `memory_import`, `memory_forget`, `memory_validate`, `memory_decay`, `memory_status`, `memory_reflect`, `memory_greeting`, `memory_observe_tool`, `memory_recent_failures`, `memory_capsule`, `memory_preflight`, `memory_reflexes`, and `memory_promote` (Ledger: E32). The Guard-relevant MCP surface is `memory_observe_tool`, `memory_recent_failures`, `memory_capsule`, `memory_preflight`, and `memory_reflexes`, with `memory_validate` supporting closed-loop validation and REST or CLI impact reporting supporting aggregate impact inspection (Ledger: E16-E19, E32-E34).
+The MCP server registers 22 tools: `memory_dream`, `memory_encode`, `memory_recall`, `memory_consolidate`, `memory_introspect`, `memory_resolve_truth`, `memory_export`, `memory_import`, `memory_forget`, `memory_validate`, `memory_decay`, `memory_status`, `memory_reflect`, `memory_greeting`, `memory_observe_tool`, `memory_recent_failures`, `memory_capsule`, `memory_preflight`, `memory_guard_before`, `memory_guard_after`, `memory_reflexes`, and `memory_promote` (Ledger: E32). The Guard-relevant MCP surface is `memory_observe_tool`, `memory_recent_failures`, `memory_capsule`, `memory_preflight`, `memory_guard_before`, `memory_guard_after`, and `memory_reflexes`, with `memory_validate` supporting closed-loop validation and REST or CLI impact reporting supporting aggregate impact inspection (Ledger: E16-E19, E32-E34).
 
-The CLI recognizes `install`, `uninstall`, `mcp-config`, `hook-config`, `demo`, `guard`, `reembed`, `dream`, `greeting`, `reflect`, `serve`, `status`, `doctor`, `observe-tool`, `promote`, and `impact` (Ledger: E34). The `guard` subcommand invokes the controller, prints JSON or formatted output, exits nonzero for blocking decisions unless an explicit override is supplied, and can run as a Claude Code PreToolUse hook with `--hook`. `hook-config claude-code --apply` merges the generated hook block into Claude Code settings with backup/idempotence (Ledger: E26, E43).
+The CLI recognizes `install`, `uninstall`, `mcp-config`, `hook-config`, `demo`, `guard`, `guard-after`, `hook`, `reembed`, `dream`, `greeting`, `reflect`, `serve`, `status`, `doctor`, `observe-tool`, `promote`, and `impact` (Ledger: E34). The `guard` subcommand remains available for explicit checks, while the host-facing `hook` subcommand normalizes current Claude Code and Codex lifecycle payloads. `audrey install --host auto` discovers installed supported CLIs, registers the MCP server, and applies host-specific lifecycle hooks from a stable Node and Audrey entrypoint. Generated settings preserve unrelated hooks, replace older Audrey-owned handlers, write backups before changing non-empty files, and are idempotent. Claude Code supports local, project, and user hook scopes; Codex supports project and user scopes and requires one-time review of non-managed hooks through `/hooks` (Ledger: E26, E43).
 
-The REST sidecar exposes routes for health, encode, recall, validate, mark-used, capsule, preflight, reflexes, consolidate, dream, introspect, impact, resolve-truth, export, import, forget, decay, status, reflect, and greeting (Ledger: E33). The sidecar defaults to loopback binding, refuses non-loopback binds without `AUDREY_API_KEY` unless `AUDREY_ALLOW_NO_AUTH=1`, and emits an explicit warning when that no-auth override is used (Ledger: E35). Export, import, and forget are disabled unless `AUDREY_ENABLE_ADMIN_TOOLS=1` (Ledger: E33).
+The generated lifecycle covers session start, user prompt submission, guarded pre-tool use, correlated post-tool outcomes, post-compaction, and turn stop. Session and prompt hooks inject bounded, agent-scoped memory context. Pre-tool hooks create Guard receipts, and post-tool hooks close the matching receipt by `session_id + tool_use_id`; sanitized failures may become durable memories. Claude Code exposes an explicit failure event. Current Codex Bash hooks can omit exit status, so Audrey records an opaque result as `unknown` unless structured fields or response text establish success or failure. Stop and post-compaction hooks run consolidation only when due. Audrey fails open on hook-runtime errors by default, with explicit fail-closed operation available through `AUDREY_HOOK_FAIL_CLOSED=1`. This is lifecycle integration, not a complete enforcement boundary: Audrey can inspect only the events and tool paths emitted by each host, and the short-lived hook process still pays provider startup cost instead of using a persistent daemon (Ledger: E43).
+
+The REST sidecar exposes routes for health, encode, recall, validate, mark-used, capsule, preflight, Guard before/after receipts, reflexes, consolidate, dream, introspect, impact, resolve-truth, export, import, forget, decay, status, reflect, and greeting (Ledger: E33). The sidecar defaults to loopback binding, refuses non-loopback binds without `AUDREY_API_KEY` unless `AUDREY_ALLOW_NO_AUTH=1`, and emits an explicit warning when that no-auth override is used (Ledger: E35). Export, import, and forget are disabled unless `AUDREY_ENABLE_ADMIN_TOOLS=1` (Ledger: E33).
 
 ### Configuration
 
@@ -895,14 +897,14 @@ These numbers measure Audrey's local call path under an in-process mock embeddin
 
 ### Behavioral Regression Result
 
-The current `benchmarks/output/summary.json` was generated on 2026-05-15T17:46:08.103Z with command `node benchmarks/run.js --provider mock --dimensions 64` (Ledger: E24). It reports:
+The current `benchmarks/output/summary.json` was generated on 2026-07-10T14:40:08.781Z with command `node benchmarks/run.js --provider mock --dimensions 64` (Ledger: E24). It reports:
 
 | System | Score Percent | Pass Rate | Average Duration Ms |
 |---|---:|---:|---:|
-| Audrey | 100 | 100 | 15.083333333333334 |
-| Vector Only | 41.66666666666667 | 25 | 0.25 |
-| Keyword + Recency | 41.66666666666667 | 25 | 0.6666666666666666 |
-| Recent Window | 37.5 | 25 | 0 |
+| Audrey | 100 | 100 | 16.25 |
+| Vector Only | 41.66666666666667 | 25 | 0.08333333333333333 |
+| Keyword + Recency | 41.66666666666667 | 25 | 0.5 |
+| Recent Window | 37.5 | 25 | 0.08333333333333333 |
 
 This output is a regression-gate result. The baselines are toy local baselines used to catch retrieval and lifecycle regressions in the Audrey codebase. They are not external systems, not tuned competitor implementations, and not GuardBench baselines (Ledger: E23-E24). The current suite covers retrieval and operation families such as information extraction, knowledge updates, multi-session reasoning, conflict resolution, procedural learning, privacy boundary, overwrite, delete-and-abstain, semantic merge, and procedural merge (Ledger: E23-E24).
 
@@ -924,7 +926,7 @@ It reports local adapters only, not external-system comparisons (Ledger: E46):
 | Evidence recall | 100% |
 | Redaction leaks | 0 |
 | Recall-degradation detection | 100% |
-| Guard latency p50 / p95 | 3.529 ms / 27.78 ms |
+| Guard latency p50 / p95 | 3.892 ms / 15.215 ms |
 | Published artifact raw-secret leaks | 0 |
 | Audrey Guard decision accuracy | 100% |
 | No-memory decision accuracy | 10% |
@@ -1071,7 +1073,7 @@ Reflex generation is deterministic, not adaptive. Reflexes are mapped from prefl
 
 ### Open Problems
 
-Host hook parity. Audrey exposes CLI pieces that host hooks can call, and Claude Code documents hook extension points [@anthropic2026claudecodehooks]. Audrey now generates and applies Claude Code hook settings, `guard --hook` emits the current PreToolUse `hookSpecificOutput.permissionDecision` shape, and `observe-tool` records post-tool events (Ledger: E43). The remaining production installer work is equivalent wiring for hosts with stable hook surfaces, especially Codex.
+Host hook coverage and process model. Audrey 1.1 generates, applies, and removes lifecycle hooks for current Claude Code and Codex CLIs; the shared adapter injects bounded context, runs Guard before selected side-effectful tools, correlates post-tool outcomes, and performs due-only maintenance (Ledger: E43). This closes the configuration gap, not the enforcement gap. Hook execution still depends on host trust and on the host emitting a supported event for the relevant tool path. Alternate or incompletely intercepted host tool paths remain outside Audrey's view. Each hook also starts a short-lived Audrey process, so the default local embedding provider can pay cold-start cost repeatedly. Production follow-up is a persistent local runtime, measured compatibility gates against supported host versions, and organization-managed deployment that binds tenant identity and enforcement policy outside a caller-controlled routing header. Claude Code's documented hook surface remains an example of the underlying host boundary [@anthropic2026claudecodehooks].
 
 Validation lineage is implemented but not yet policy-adaptive. Audrey can bind validation events to the exact preflight event, evidence IDs, and action key that produced a decision, and rejects mismatched evidence claims (Ledger: E44). The next step is using that closed-loop signal to tune warning priority and recommendation wording without giving the model direct control over policy.
 

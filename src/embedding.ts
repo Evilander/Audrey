@@ -158,8 +158,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
   device: string;
   batchSize: number;
   pipelineFactory:
-    | ((task: string, model: string, options?: Record<string, unknown>) => Promise<unknown>)
-    | null;
+    ((task: string, model: string, options?: Record<string, unknown>) => Promise<unknown>) | null;
   _pipeline: FeatureExtractionPipeline | null;
   _readyPromise: Promise<void> | null;
   _actualDevice: string | null;

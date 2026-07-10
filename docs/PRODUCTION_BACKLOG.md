@@ -1,6 +1,6 @@
 # Audrey Production Backlog
 
-Updated: 2026-05-13 after the Audrey 1.0 release-cut and paper-gate pass.
+Updated: 2026-07-10 for the Audrey 1.1 Autopilot release candidate.
 
 This file tracks release posture and remaining product work. It is intentionally
 public-safe: it avoids exploit recipes, stale line references, and private
@@ -8,8 +8,9 @@ planning notes.
 
 ## Current Release Posture
 
-Audrey 1.0.0 has been cut locally and is ready for package-level validation
-through the full gate:
+Audrey 1.0.0 and 1.0.1 remain the published historical baseline. The 1.1.0
+working tree adds automatic Claude Code and Codex lifecycle integration and is
+released only after it passes the full gate:
 
 ```bash
 npm run release:gate
@@ -17,7 +18,8 @@ npm run release:gate:paper
 npm run release:cut:plan
 npm run release:readiness
 npm run python:release:check
-npm run npm:smoke
+npm run smoke:cli
+npm run pack:check
 npm run security:audit
 npx audrey doctor
 npx audrey status --fail-on-unhealthy
@@ -26,14 +28,14 @@ python -m build --no-isolation python
 ```
 
 `npm run release:readiness` is intentionally pending-aware. It exits cleanly
-when local code and paper artifacts verify but the final 1.0 release is still
+when local code and paper artifacts verify but the final 1.1 release is still
 blocked on source-control release state, GitHub Release object readiness, npm
 registry/auth readiness, PyPI publish readiness, authenticated browser
 publication URLs, live Mem0/Zep evidence, or npm/PyPI account steps. Use
-`npm run release:readiness:strict` only when cutting the actual 1.0 release;
+`npm run release:readiness:strict` only when cutting the actual 1.1 release;
 strict mode must fail until those publish blockers are resolved.
 `npm run release:cut:plan` is the dry-run version/changelog cut. It previews
-the edits that `npm run release:cut:apply -- --target-version 1.0.0` would
+the edits that `npm run release:cut:apply -- --target-version 1.1.0` would
 write to `package.json`, `package-lock.json`, `mcp-server/config.ts`,
 `python/audrey_memory/_version.py`, and `CHANGELOG.md`. The changelog plan is
 publishable release-note copy rather than TODO scaffolding, and strict
@@ -45,9 +47,24 @@ previous locked-down Windows temp-directory startup failure while keeping
 `npm run release:gate:sandbox` available for hosts that block child-process
 spawning entirely.
 
-## Unreleased v0.23 Guard Chassis
+## Guard Chassis And 1.1 Autopilot
 
-The first Audrey Guard slice is now in the working tree:
+The Guard chassis shipped across the 0.23 and 1.0 lines. Audrey 1.1 adds the
+automatic host loop:
+
+- `audrey install --host auto` discovers installed Claude Code and Codex CLIs,
+  registers the MCP server, and applies host-specific hooks from stable Node
+  and Audrey entrypoints. It preserves unrelated configuration, backs up
+  non-empty files, replaces older Audrey-owned handlers, and is idempotent.
+- One host adapter normalizes session start, prompt submission, pre-tool,
+  post-tool, post-compaction, and stop events. It injects bounded memory,
+  creates Guard receipts, correlates outcomes by `session_id + tool_use_id`,
+  forms sanitized failure memories, and runs maintenance only when due.
+- Codex project and user hooks require one-time review through `/hooks`;
+  Claude Code supports local, project, and user scopes. Hook failures remain
+  fail-open unless `AUDREY_HOOK_FAIL_CLOSED=1` is set.
+
+The underlying Guard chassis includes:
 
 - `src/controller.ts` adds `MemoryController.beforeAction()` and
   `afterAction()` over the existing tool-trace, reflex, preflight, capsule,
@@ -96,9 +113,8 @@ The first Audrey Guard slice is now in the working tree:
 - `npm run release:gate:paper` is the publication gate: it rebuilds, typechecks,
   refreshes performance and behavioral benchmark outputs, runs GuardBench,
   syncs README/paper/ledger metrics from JSON artifacts, verifies paper
-  consistency and redaction hygiene, runs the pending-aware 1.0 readiness
-  checklist, then runs a clean-consumer npm package smoke test and the npm pack
-  dry-run.
+  consistency and redaction hygiene, runs the pending-aware 1.1 readiness
+  checklist, then runs the CLI smoke test and npm pack dry-run.
 - Preflight now performs a supplemental tagged control-memory sweep for
   trusted `must-follow` memories so high-salience rules survive irrelevant
   memory noise.
@@ -112,9 +128,10 @@ The first Audrey Guard slice is now in the working tree:
 - `docs/AUDREY_PAPER_OUTLINE.md` defines the publishable Audrey Guard thesis
   and the GuardBench evaluation plan.
 
-Still not production-complete Guard: Claude Code hook apply is explicit rather
-than part of `install`, Codex hook wiring is not available yet, and validation
-feedback is recorded but not yet used to tune risk scoring.
+Still not production-complete Guard: hooks can inspect only the lifecycle
+events and tool paths emitted by each trusted host, each event starts a
+short-lived Audrey process rather than using a persistent local daemon, and
+validation feedback is recorded but does not yet tune risk scoring.
 
 ## Shipped In The 0.22.2 Correctness Pass
 
@@ -158,11 +175,11 @@ Before publishing a new npm or Python package, capture:
 - `npm run release:gate:sandbox` on locked-down local hosts.
 - `npm run release:gate:paper` before publishing the paper, npm package, or
   public launch posts that quote benchmark numbers.
-- `npm run release:readiness -- --json` to capture the current 1.0 prompt-to-artifact checklist.
+- `npm run release:readiness -- --json` to capture the current 1.1 prompt-to-artifact checklist.
 - `npm run release:readiness:strict -- --json` immediately before npm publish, PyPI publish, and browser launch are claimed complete.
-- `npm run release:cut:plan -- --target-version 1.0.0 --json` before applying the final version/changelog bump.
+- `npm run release:cut:plan -- --target-version 1.1.0 --json` before applying the final version/changelog bump.
 - `npm run python:release:check` to build wheel/sdist artifacts, inspect package metadata, check for local path leakage, and run `twine check`.
-- `npm run npm:smoke` to prove the packed npm tarball installs in a clean consumer project, imports the public ESM API, runs encode/recall, and executes both CLI shims.
+- `npm run smoke:cli` and `npm run pack:check` to exercise the public CLI and inspect the npm tarball contents.
 - `npm run security:audit`.
 - `npm ci --dry-run`.
 - Direct stdio MCP smoke: initialize, `tools/list`, `resources/list`,
@@ -173,9 +190,9 @@ Before publishing a new npm or Python package, capture:
 
 ## P0: Next Release Blockers
 
-1. Add the equivalent Codex hook wiring when the host exposes a stable hook
-   surface, and add a one-command Claude Code install mode that runs MCP
-   registration plus hook apply after a dry-run preview.
+1. Replace per-event process startup with a persistent local runtime, and add a
+   real-host compatibility matrix that measures cold/warm latency and records
+   which tool paths each supported Claude Code and Codex version emits.
 2. Run the Mem0 Platform and Zep Cloud adapters with real runtime keys,
    publish their raw per-scenario outputs, then add Letta/Graphiti-style
    adapters.
@@ -185,10 +202,10 @@ Before publishing a new npm or Python package, capture:
 4. Add MCP tool-risk policy inputs: descriptor fingerprints, annotation hints,
    trusted-server status, and descriptor drift warnings.
 
-## 1.0 / Paper Publish Blockers
+## Historical 1.0 / Paper Publish Snapshot
 
-The local code and paper gates are strong, but the 1.0/publication objective is
-not complete until `release:readiness:strict` passes. Current blockers:
+The following rows preserve the publication state recorded during the 2026-05-13
+paper pass. They are evidence history, not the current 1.1 release checklist:
 
 - Source control is partially released remotely but not coherent yet: live
   GitHub refs now show `release/audrey-1.0.0` at `83eb0ad` while `v1.0.0` is
@@ -257,7 +274,7 @@ the context they already earned. The strongest paid surface is likely team
 memory operations: policy editor, memory diff/rollback, audit log, shared
 encrypted stores, hosted relay, CI gates, and support.
 
-## v0.23 Product Direction (Tracked, Not Decided)
+## Historical v0.23 Product Direction
 
 A 2026-05-01 audit recommends repositioning Audrey from a generic local
 memory framework to **Audrey Guard** — a local-first memory firewall whose
@@ -275,12 +292,12 @@ Open questions before committing to the rename:
   while branding the guard CLI separately give us the same wedge without
   abandoning existing positioning?
 
-Concrete v0.23 work the audit identified, scoped to fit one or two
-releases:
+Concrete v0.23 work the audit identified, with shipped items marked:
 
-1. Host hook wiring for Claude Code and Codex so Guard runs automatically
-   before tool use and tool outcomes feed back into trace/validation surfaces.
-2. Memory Controller Layer (`src/controller.ts`) that owns
+1. Shipped in 1.1: host hook wiring for Claude Code and Codex so Guard runs
+   automatically before supported tool use and outcomes feed trace/validation
+   surfaces.
+2. Shipped: Memory Controller Layer (`src/controller.ts`) that owns
    `beforeAction(action) → GuardResult` and
    `afterAction(outcome) → void` over the existing primitives. This
    chassis also enables splitting `src/audrey.ts` (now ~1.2K lines) into

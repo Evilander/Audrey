@@ -9,7 +9,7 @@ on:
       tag:
         description: Existing release tag to publish
         required: true
-        default: v1.0.0
+        default: v1.1.0
         type: string
       publish_npm:
         description: Publish the npm package

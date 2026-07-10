@@ -37,8 +37,9 @@ describe('validateMemory', () => {
       new Date().toISOString(),
       JSON.stringify(['ep-0']),
     );
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'sem-1',
+      'default',
       vecBuf,
       'active',
     );
@@ -82,8 +83,9 @@ describe('validateMemory', () => {
       new Date().toISOString(),
       JSON.stringify(['ep-0']),
     );
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'sem-2',
+      'default',
       vecBuf,
       'active',
     );
@@ -186,8 +188,9 @@ describe('validateMemory with LLM contradiction detection', () => {
       supporting_count, source_type_diversity, created_at, evidence_episode_ids)
       VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`,
     ).run('sem-1', 'Rate limit is 100 per second', vecBuf, new Date().toISOString(), '[]');
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'sem-1',
+      'default',
       vecBuf,
       'active',
     );
@@ -236,8 +239,9 @@ describe('validateMemory with LLM contradiction detection', () => {
       new Date().toISOString(),
       '[]',
     );
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'sem-c',
+      'default',
       vecBuf,
       'active',
     );
@@ -280,8 +284,9 @@ describe('validateMemory with LLM contradiction detection', () => {
       supporting_count, source_type_diversity, created_at, evidence_episode_ids)
       VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`,
     ).run('sem-nc', 'some test memory', vecBuf, new Date().toISOString(), '[]');
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'sem-nc',
+      'default',
       vecBuf,
       'active',
     );
@@ -321,8 +326,9 @@ describe('validateMemory with LLM contradiction detection', () => {
       supporting_count, source_type_diversity, created_at, evidence_episode_ids)
       VALUES (?, ?, ?, 'active', 1, 1, 1, ?, ?)`,
     ).run('sem-no-llm', 'memory without llm', vecBuf, new Date().toISOString(), '[]');
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'sem-no-llm',
+      'default',
       vecBuf,
       'active',
     );

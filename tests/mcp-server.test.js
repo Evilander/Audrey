@@ -2,11 +2,12 @@
 import { z } from 'zod';
 import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { Audrey } from '../dist/src/index.js';
 import {
   buildAudreyConfig,
   buildInstallArgs,
+  buildAutopilotRuntimeArgs,
   buildStdioMcpServerConfig,
   DEFAULT_AGENT,
   DEFAULT_DATA_DIR,
@@ -82,7 +83,13 @@ describe('CLI surface', () => {
   const cli = resolve('dist/mcp-server/index.js');
 
   afterEach(() => {
-    for (const dir of ['./test-cli-guard', './test-cli-guard-after']) {
+    for (const dir of [
+      './test-cli-guard',
+      './test-cli-guard-after',
+      './test-cli-warmup',
+      './test-cli-install',
+      './test-cli-uninstall',
+    ]) {
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -111,6 +118,129 @@ describe('CLI surface', () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("unknown command 'definitelynotacommand'");
     expect(r.stdout).toContain('Usage: audrey');
+  });
+
+  it('warms the exact hook runtime configuration without reading hook stdin', () => {
+    const r = spawnSync(
+      process.execPath,
+      [
+        cli,
+        'hook',
+        '--host',
+        'codex',
+        '--warmup',
+        '--data-dir',
+        './test-cli-warmup',
+        '--agent',
+        'warmup-test',
+        '--embedding-provider',
+        'mock',
+      ],
+      { encoding: 'utf8', timeout: 10000 },
+    );
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ warmed: true, provider: 'mock' });
+  });
+
+  it('rejects Codex local uninstall before touching any config', () => {
+    const codexHome = resolve('./test-cli-uninstall/.codex');
+    mkdirSync(codexHome, { recursive: true });
+    const configPath = join(codexHome, 'config.toml');
+    const original = '[mcp_servers.keep-me]\ncommand = "node"\n';
+    writeFileSync(configPath, original, 'utf8');
+    const r = spawnSync(
+      process.execPath,
+      [cli, 'uninstall', '--host', 'codex', '--scope', 'local'],
+      {
+        encoding: 'utf8',
+        timeout: 10000,
+        env: { ...process.env, CODEX_HOME: codexHome },
+      },
+    );
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('Codex does not support local hook scope');
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+  });
+
+  it('detects Claude local MCP registration in the project-scoped config shape', () => {
+    const root = resolve('./test-cli-uninstall/claude-local');
+    mkdirSync(root, { recursive: true });
+    const configPath = join(root, '.claude.json');
+    const original = JSON.stringify({
+      projects: {
+        [process.cwd().replace(/\\/g, '/')]: {
+          mcpServers: {
+            [SERVER_NAME]: { command: process.execPath, args: [MCP_ENTRYPOINT] },
+          },
+        },
+      },
+    });
+    writeFileSync(configPath, original, 'utf8');
+
+    const r = spawnSync(
+      process.execPath,
+      [cli, 'uninstall', '--host', 'claude-code', '--scope', 'local', '--dry-run'],
+      {
+        encoding: 'utf8',
+        timeout: 10000,
+        env: { ...process.env, CLAUDE_CONFIG_DIR: root },
+      },
+    );
+
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('would remove Audrey MCP registration');
+    expect(readFileSync(configPath, 'utf8')).toBe(original);
+  });
+
+  it('does not report success when an existing registration cannot be removed', () => {
+    const codexHome = resolve('./test-cli-uninstall/codex-missing-cli');
+    mkdirSync(codexHome, { recursive: true });
+    const configPath = join(codexHome, 'config.toml');
+    const hooksPath = join(codexHome, 'hooks.json');
+    const config = `[mcp_servers.${SERVER_NAME}]\ncommand = "node"\n`;
+    const hooks = '{"hooks":{"Stop":[]}}\n';
+    writeFileSync(configPath, config, 'utf8');
+    writeFileSync(hooksPath, hooks, 'utf8');
+
+    const r = spawnSync(
+      process.execPath,
+      [cli, 'uninstall', '--host', 'codex', '--scope', 'user'],
+      {
+        encoding: 'utf8',
+        timeout: 10000,
+        env: { ...process.env, PATH: '', CODEX_HOME: codexHome },
+      },
+    );
+
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('CLI is required');
+    expect(readFileSync(configPath, 'utf8')).toBe(config);
+    expect(readFileSync(hooksPath, 'utf8')).toBe(hooks);
+  });
+
+  it('rejects auto local install before touching either host config', () => {
+    const root = resolve('./test-cli-install');
+    const codexHome = join(root, '.codex');
+    const claudeHome = join(root, 'claude');
+    mkdirSync(codexHome, { recursive: true });
+    mkdirSync(claudeHome, { recursive: true });
+    const codexConfig = join(codexHome, 'config.toml');
+    const claudeConfig = join(claudeHome, '.claude.json');
+    const codexOriginal = '[mcp_servers.keep-me]\ncommand = "node"\n';
+    const claudeOriginal = '{"mcpServers":{"keep-me":{"command":"node"}}}\n';
+    writeFileSync(codexConfig, codexOriginal, 'utf8');
+    writeFileSync(claudeConfig, claudeOriginal, 'utf8');
+
+    const r = spawnSync(process.execPath, [cli, 'install', '--host', 'auto', '--scope', 'local'], {
+      encoding: 'utf8',
+      timeout: 10000,
+      env: { ...process.env, CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome },
+    });
+
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('Codex does not support local hook scope');
+    expect(readFileSync(codexConfig, 'utf8')).toBe(codexOriginal);
+    expect(readFileSync(claudeConfig, 'utf8')).toBe(claudeOriginal);
   });
 
   it('guard --json emits a before-action decision', () => {
@@ -306,13 +436,40 @@ describe('MCP CLI: buildAudreyConfig', () => {
 });
 
 describe('MCP CLI: buildInstallArgs', () => {
+  it('pins the same non-secret runtime settings into Autopilot hooks', () => {
+    const args = buildAutopilotRuntimeArgs({
+      AUDREY_DATA_DIR: '/custom/audrey',
+      AUDREY_AGENT: 'team-agent',
+      AUDREY_EMBEDDING_PROVIDER: 'local',
+      AUDREY_DEVICE: 'cpu',
+      AUDREY_LLM_PROVIDER: 'openai',
+      AUDREY_LLM_MODEL: 'gpt-5.5',
+      OPENAI_API_KEY: 'must-not-be-persisted',
+    });
+    expect(args).toEqual([
+      '--data-dir',
+      '/custom/audrey',
+      '--agent',
+      'team-agent',
+      '--embedding-provider',
+      'local',
+      '--device',
+      'cpu',
+      '--llm-provider',
+      'openai',
+      '--llm-model',
+      'gpt-5.5',
+    ]);
+    expect(args.join(' ')).not.toContain('must-not-be-persisted');
+  });
+
   it('pins the installed command and persists the default local embedding config', () => {
     const args = buildInstallArgs({});
     expect(args).toContain(SERVER_NAME);
     const dashDashIdx = args.indexOf('--');
     expect(args[dashDashIdx + 1]).toBe(process.execPath);
     expect(args[dashDashIdx + 2]).toBe(MCP_ENTRYPOINT);
-    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '--env').join(' ');
     // Local is the default, so the install args should persist local embedding config without API keys.
     expect(envPairsStr).toContain(`AUDREY_DATA_DIR=${DEFAULT_DATA_DIR}`);
     expect(envPairsStr).toContain('AUDREY_EMBEDDING_PROVIDER=local');
@@ -326,7 +483,7 @@ describe('MCP CLI: buildInstallArgs', () => {
       AUDREY_DEVICE: 'cpu',
       GOOGLE_API_KEY: 'google-test',
     });
-    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '--env').join(' ');
     expect(envPairsStr).toContain('AUDREY_EMBEDDING_PROVIDER=local');
     expect(envPairsStr).toContain('AUDREY_DEVICE=cpu');
     expect(envPairsStr).not.toContain('GOOGLE_API_KEY=google-test');
@@ -334,21 +491,21 @@ describe('MCP CLI: buildInstallArgs', () => {
 
   it('does not include auto-detected LLM provider secrets by default', () => {
     const args = buildInstallArgs({ ANTHROPIC_API_KEY: 'sk-ant-test' });
-    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '--env').join(' ');
     expect(envPairsStr).not.toContain('AUDREY_LLM_PROVIDER=anthropic');
     expect(envPairsStr).not.toContain('ANTHROPIC_API_KEY=sk-ant-test');
   });
 
   it('includes provider secrets only when explicitly requested', () => {
     const args = buildInstallArgs({ ANTHROPIC_API_KEY: 'sk-ant-test' }, { includeSecrets: true });
-    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '--env').join(' ');
     expect(envPairsStr).toContain('AUDREY_LLM_PROVIDER=anthropic');
     expect(envPairsStr).toContain('ANTHROPIC_API_KEY=sk-ant-test');
   });
 
   it('persists a custom data directory', () => {
     const args = buildInstallArgs({ AUDREY_DATA_DIR: '/custom/audrey' });
-    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '--env').join(' ');
     expect(envPairsStr).toContain('AUDREY_DATA_DIR=/custom/audrey');
   });
 
@@ -357,21 +514,21 @@ describe('MCP CLI: buildInstallArgs', () => {
       AUDREY_LLM_PROVIDER: 'openai',
       OPENAI_API_KEY: 'sk-openai-test',
     });
-    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '--env').join(' ');
     expect(envPairsStr).toContain('AUDREY_LLM_PROVIDER=openai');
     expect(envPairsStr).not.toContain('OPENAI_API_KEY=sk-openai-test');
   });
 
-  it('places server name before -e flags to avoid variadic parsing bug', () => {
+  it("places the server name before Claude's variadic env options", () => {
     const args = buildInstallArgs({ OPENAI_API_KEY: 'sk-test' });
     const nameIdx = args.indexOf(SERVER_NAME);
-    const firstEnvIdx = args.indexOf('-e');
+    const firstEnvIdx = args.indexOf('--env');
     expect(nameIdx).toBeLessThan(firstEnvIdx);
   });
 
   it('keeps claude-code as the agent name for the Claude CLI installer', () => {
     const args = buildInstallArgs({});
-    const envPairsStr = args.filter((_, i) => args[i - 1] === '-e').join(' ');
+    const envPairsStr = args.filter((_, i) => args[i - 1] === '--env').join(' ');
     expect(envPairsStr).toContain('AUDREY_AGENT=claude-code');
   });
 });
@@ -423,24 +580,32 @@ describe('MCP CLI: install guidance', () => {
   it('prints a Claude Code dry-run path before invoking the installer', () => {
     const text = formatInstallGuide('claude-code', {}, true);
     expect(text).toContain('claude-code');
-    expect(text).toContain('Run without --dry-run');
-    expect(text).toContain('Generated Claude Code hook config');
-    expect(text).toContain('guard --hook --fail-on-warn');
-    expect(text).toContain('hook-config claude-code --apply --scope project');
+    expect(text).toContain('apply once with: audrey install --host claude-code');
+    expect(text).toContain('claude-code Autopilot hooks');
+    expect(text).toContain('UserPromptSubmit');
+    expect(text).not.toContain('fail-on-warn');
     expect(text).toContain('AUDREY_AGENT');
   });
 
-  it('formats Claude Code hooks for preflight and tool observation', () => {
+  it('does not advertise hooks or Autopilot for an MCP-only preview', () => {
+    const text = formatInstallGuide('codex', {}, true, false, 'project');
+    expect(text).toContain('Audrey MCP install preview');
+    expect(text).toContain('codex MCP config');
+    expect(text).not.toContain('Autopilot hooks');
+    expect(text).not.toContain('review/trust the hooks');
+    expect(text).toContain('--scope project --mcp-only');
+  });
+
+  it('formats Claude Code hooks for automatic recall, Guard, and outcome capture', () => {
     const text = formatClaudeCodeHookConfig('B:/audrey/dist/mcp-server/index.js');
     const parsed = JSON.parse(text);
-    expect(parsed.hooks.PreToolUse[0].matcher).toBe('.*');
-    expect(parsed.hooks.PreToolUse[0].hooks[0].command).toContain('guard --hook --fail-on-warn');
-    expect(parsed.hooks.PostToolUse[0].hooks[0].command).toContain(
-      'observe-tool --event PostToolUse',
-    );
-    expect(parsed.hooks.PostToolUseFailure[0].hooks[0].command).toContain(
-      'observe-tool --event PostToolUseFailure',
-    );
+    expect(parsed.hooks.SessionStart).toBeDefined();
+    expect(parsed.hooks.UserPromptSubmit).toBeDefined();
+    expect(parsed.hooks.PreToolUse[0].matcher).toBe('^(Bash|Edit|Write|NotebookEdit|apply_patch)$');
+    expect(parsed.hooks.PreToolUse[0].hooks[0].args).toContain('PreToolUse');
+    expect(parsed.hooks.PostToolUse[0].hooks[0].args).toContain('PostToolUse');
+    expect(parsed.hooks.PostToolUseFailure[0].hooks[0].args).toContain('PostToolUseFailure');
+    expect(parsed.hooks.Stop).toBeDefined();
   });
 
   it('merges Claude Code hooks without removing unrelated settings', () => {
@@ -461,10 +626,12 @@ describe('MCP CLI: install guidance', () => {
 
     expect(merged.permissions).toEqual({ allow: ['Bash(npm test)'] });
     expect(merged.hooks.PreToolUse.some(group => group.matcher === 'Bash')).toBe(true);
-    expect(merged.hooks.PreToolUse.some(group => group.matcher === '.*')).toBe(true);
-    expect(merged.hooks.PostToolUse[0].hooks[0].command).toContain(
-      'observe-tool --event PostToolUse',
-    );
+    expect(
+      merged.hooks.PreToolUse.some(
+        group => group.matcher === '^(Bash|Edit|Write|NotebookEdit|apply_patch)$',
+      ),
+    ).toBe(true);
+    expect(merged.hooks.PostToolUse[0].hooks[0].args).toContain('PostToolUse');
   });
 
   it('applies Claude Code hooks with a backup and is idempotent', () => {
@@ -499,7 +666,11 @@ describe('MCP CLI: install guidance', () => {
     expect(existsSync(first.backupPath)).toBe(true);
     const parsed = JSON.parse(readFileSync(settingsPath, 'utf-8'));
     expect(parsed.hooks.PreToolUse.some(group => group.matcher === 'Bash')).toBe(true);
-    expect(parsed.hooks.PreToolUse.some(group => group.matcher === '.*')).toBe(true);
+    expect(
+      parsed.hooks.PreToolUse.some(
+        group => group.matcher === '^(Bash|Edit|Write|NotebookEdit|apply_patch)$',
+      ),
+    ).toBe(true);
 
     const second = applyClaudeCodeHookConfig({ settingsPath });
     expect(second.changed).toBe(false);
@@ -1287,21 +1458,28 @@ describe('MCP tool: memory_resolve_truth', () => {
     audrey.db
       .prepare(
         `
-      INSERT INTO semantics (id, content, state, created_at, evidence_count,
+      INSERT INTO semantics (id, content, agent, state, created_at, evidence_count,
         supporting_count, source_type_diversity, evidence_episode_ids)
-      VALUES (?, ?, 'active', ?, 1, 1, 1, '[]')
+      VALUES (?, ?, ?, 'active', ?, 1, 1, 1, '[]')
     `,
       )
-      .run('sem-x', 'Claim X content', new Date().toISOString());
+      .run('sem-x', 'Claim X content', audrey.agent, new Date().toISOString());
 
     audrey.db
       .prepare(
         `
-      INSERT INTO episodes (id, content, source, source_reliability, created_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO episodes (id, content, agent, source, source_reliability, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
     `,
       )
-      .run('ep-y', 'Claim Y content', 'direct-observation', 0.95, new Date().toISOString());
+      .run(
+        'ep-y',
+        'Claim Y content',
+        audrey.agent,
+        'direct-observation',
+        0.95,
+        new Date().toISOString(),
+      );
 
     audrey.db
       .prepare(

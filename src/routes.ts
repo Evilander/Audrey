@@ -9,11 +9,15 @@ import type {
   ConsolidationOptions,
   HalfLives,
   MemoryType,
+  PublicRetrievalMode,
   RecallOptions,
   RecallResults,
   SourceType,
 } from './types.js';
 import { VERSION } from '../mcp-server/config.js';
+import { requireAgent, resolveMemoryScope } from './utils.js';
+
+class SharedScopeAuthorizationError extends Error {}
 
 // Allowlist of recall option keys safe to accept from untrusted HTTP callers.
 // Spreading the request body directly into recall() lets a caller flip
@@ -53,7 +57,7 @@ function recallResponse(results: RecallResults): {
 function sanitizeRecallOptions(raw: unknown): RecallOptions {
   if (!raw || typeof raw !== 'object') return {};
   const opts: RecallOptions = {};
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(raw)) {
     if (!SAFE_RECALL_KEYS.has(key)) continue;
     if (key === 'minConfidence' || key === 'min_confidence') {
       if (typeof value === 'number') opts.minConfidence = value;
@@ -72,11 +76,11 @@ function sanitizeRecallOptions(raw: unknown): RecallOptions {
     } else if (key === 'context') {
       if (value && typeof value === 'object') opts.context = value as Record<string, string>;
     } else if (key === 'mood') {
-      if (value && typeof value === 'object') opts.mood = value;
+      if (value && typeof value === 'object') opts.mood = value as RecallOptions['mood'];
     } else if (key === 'retrieval') {
-      if (value === 'hybrid' || value === 'vector') opts.retrieval = value;
+      if (value === 'hybrid' || value === 'vector') opts.retrieval = value as PublicRetrievalMode;
     } else if (key === 'scope') {
-      if (value === 'shared' || value === 'agent') opts.scope = value;
+      opts.scope = resolveMemoryScope(value, 'agent');
     }
   }
   return opts;
@@ -85,6 +89,7 @@ function sanitizeRecallOptions(raw: unknown): RecallOptions {
 export interface AppOptions {
   apiKey?: string;
   adminToolsEnabled?: boolean;
+  sharedScopeEnabled?: boolean;
 }
 
 function adminToolsEnabled(options: AppOptions): boolean {
@@ -93,16 +98,7 @@ function adminToolsEnabled(options: AppOptions): boolean {
   return value === '1' || value === 'true' || value === 'yes';
 }
 
-// The shape of a decoded JSON request body across the `/v1/*` POST routes.
-// Every field is optional because the wire payload is untrusted: this type
-// documents the contract and gives the handlers static field access, but it is
-// NOT validation. Values are validated where they matter — recall options are
-// allowlisted (`sanitizeRecallOptions`), `encode` rejects bad content, and the
-// SQLite CHECK constraints reject bad enums. Handlers that pass an optional
-// field into a required core parameter assert the wire contract at that single
-// call site and let the core validate the value.
 type RouteBody = {
-  // encode
   content?: string;
   source?: SourceType;
   tags?: string[];
@@ -110,7 +106,6 @@ type RouteBody = {
   context?: Record<string, string>;
   affect?: Affect;
   private?: boolean;
-  // shared action / preflight / guard
   action?: string;
   query?: string;
   tool?: string;
@@ -119,6 +114,8 @@ type RouteBody = {
   cwd?: string;
   files?: string[];
   strict?: boolean;
+  scope?: 'agent' | 'shared';
+  agent?: string;
   limit?: number;
   budget_chars?: number;
   budgetChars?: number;
@@ -136,25 +133,11 @@ type RouteBody = {
   recordEvent?: boolean;
   include_preflight?: boolean;
   includePreflight?: boolean;
-  include_risks?: boolean;
-  includeRisks?: boolean;
-  include_contradictions?: boolean;
-  includeContradictions?: boolean;
-  recall?: unknown;
-  // validate
-  id?: string;
-  outcome?: string;
-  preflight_event_id?: string;
-  preflightEventId?: string;
-  action_key?: string;
-  actionKey?: string;
-  evidence_ids?: string[];
-  evidenceIds?: string[];
-  // guard/after
   receipt_id?: string;
   receiptId?: string;
   input?: unknown;
   output?: unknown;
+  outcome?: string;
   error_summary?: string;
   errorSummary?: string;
   metadata?: Record<string, unknown>;
@@ -162,17 +145,25 @@ type RouteBody = {
   retainDetails?: boolean;
   evidence_feedback?: Record<string, 'used' | 'helpful' | 'wrong'>;
   evidenceFeedback?: Record<string, 'used' | 'helpful' | 'wrong'>;
-  // forget / import / resolve-truth
+  include_risks?: boolean;
+  includeRisks?: boolean;
+  include_contradictions?: boolean;
+  includeContradictions?: boolean;
+  recall?: unknown;
+  id?: string;
+  preflight_event_id?: string;
+  preflightEventId?: string;
+  action_key?: string;
+  actionKey?: string;
+  evidence_ids?: string[];
+  evidenceIds?: string[];
   purge?: boolean;
   minSimilarity?: number;
   snapshot?: unknown;
   contradiction_id?: string;
-  // reflect
   turns?: { role: string; content: string }[];
 };
 
-// Maintenance endpoints accept their core option object directly, so they are
-// typed to that shape rather than the shared RouteBody.
 type DreamRequestBody = {
   minClusterSize?: number;
   similarityThreshold?: number;
@@ -185,13 +176,18 @@ function actionFromBody(body: RouteBody): unknown {
   return body.action ?? body.query;
 }
 
-function preflightOptionsFromBody(body: RouteBody): PreflightOptions {
+function preflightOptionsFromBody(
+  body: RouteBody,
+  agent: string,
+  scope: NonNullable<RecallOptions['scope']>,
+): PreflightOptions {
   return {
     tool: body.tool,
     sessionId: body.session_id ?? body.sessionId,
     cwd: body.cwd,
     files: body.files,
     strict: body.strict,
+    scope,
     limit: body.limit,
     budgetChars: body.budget_chars ?? body.budgetChars,
     mode: body.mode,
@@ -203,17 +199,35 @@ function preflightOptionsFromBody(body: RouteBody): PreflightOptions {
     includeCapsule: body.include_capsule ?? body.includeCapsule,
     includeStatus: body.include_status ?? body.includeStatus,
     recordEvent: body.record_event ?? body.recordEvent,
+    agent,
   };
 }
 
 function requestAgent(c: Context): string | undefined {
-  const value = c.req.header('X-Audrey-Agent')?.trim();
-  return value || undefined;
+  const value = c.req.header('X-Audrey-Agent');
+  return value === undefined ? undefined : requireAgent(value);
+}
+
+function authorizedRestScope(
+  value: unknown,
+  enabled: boolean,
+): NonNullable<RecallOptions['scope']> {
+  const scope = resolveMemoryScope(value, 'agent');
+  if (scope === 'shared' && !enabled) {
+    throw new SharedScopeAuthorizationError('Shared memory scope is disabled for this server.');
+  }
+  return scope;
+}
+
+function sharedScopeErrorResponse(c: Context, err: unknown): Response | undefined {
+  if (!(err instanceof SharedScopeAuthorizationError)) return undefined;
+  return c.json({ error: err.message }, 403);
 }
 
 export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   const app = new Hono();
   const allowAdminTools = adminToolsEnabled(options);
+  const allowSharedScope = options.sharedScopeEnabled ?? allowAdminTools;
 
   function adminDisabledResponse(c: Context) {
     return c.json(
@@ -313,14 +327,13 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       const body = await c.req.json<RouteBody>();
       const { query, ...rest } = body;
       const options = sanitizeRecallOptions(rest);
-      const agent = requestAgent(c);
-      if (agent) {
-        options.agent = agent;
-        options.scope = options.scope ?? 'agent';
-      }
+      options.scope = authorizedRestScope(options.scope, allowSharedScope);
+      options.agent = requestAgent(c) ?? audrey.agent;
       const results = await audrey.recall(query as string, options);
       return c.json(recallResponse(results));
     } catch (err: unknown) {
+      const denied = sharedScopeErrorResponse(c, err);
+      if (denied) return denied;
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, 400);
     }
@@ -355,7 +368,14 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         : Array.isArray(body.evidenceIds)
           ? body.evidenceIds.filter((value: unknown): value is string => typeof value === 'string')
           : undefined;
-      const result = audrey.validate({ id, outcome, preflightEventId, actionKey, evidenceIds });
+      const result = audrey.validate({
+        id,
+        outcome,
+        agent: requestAgent(c) ?? audrey.agent,
+        preflightEventId,
+        actionKey,
+        evidenceIds,
+      });
       if (!result) return c.json({ ok: false, error: `no memory with id ${id}` }, 404);
       return c.json({ ok: true, ...result });
     } catch (err: unknown) {
@@ -374,7 +394,11 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       const body = await c.req.json<RouteBody>();
       const id = typeof body.id === 'string' ? body.id : null;
       if (!id) return c.json({ error: 'id is required' }, 400);
-      const result = audrey.validate({ id, outcome: 'used' });
+      const result = audrey.validate({
+        id,
+        outcome: 'used',
+        agent: requestAgent(c) ?? audrey.agent,
+      });
       if (!result) return c.json({ ok: false, error: `no memory with id ${id}` }, 404);
       return c.json({ ok: true });
     } catch (err: unknown) {
@@ -391,6 +415,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         return c.json({ error: 'query must be a non-empty string' }, 400);
       }
 
+      const scope = authorizedRestScope(body.scope, allowSharedScope);
       const result = await audrey.capsule(body.query, {
         limit: body.limit,
         budgetChars: body.budget_chars ?? body.budgetChars,
@@ -398,10 +423,14 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         recentChangeWindowHours: body.recent_change_window_hours ?? body.recentChangeWindowHours,
         includeRisks: body.include_risks ?? body.includeRisks,
         includeContradictions: body.include_contradictions ?? body.includeContradictions,
+        scope,
+        agent: requestAgent(c) ?? audrey.agent,
         recall: sanitizeRecallOptions(body.recall),
       });
       return c.json(result);
     } catch (err: unknown) {
+      const denied = sharedScopeErrorResponse(c, err);
+      if (denied) return denied;
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, 400);
     }
@@ -416,9 +445,15 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         return c.json({ error: 'action must be a non-empty string' }, 400);
       }
 
-      const result = await audrey.preflight(action, preflightOptionsFromBody(body));
+      const scope = authorizedRestScope(body.scope, allowSharedScope);
+      const result = await audrey.preflight(
+        action,
+        preflightOptionsFromBody(body, requestAgent(c) ?? audrey.agent, scope),
+      );
       return c.json(result);
     } catch (err: unknown) {
+      const denied = sharedScopeErrorResponse(c, err);
+      if (denied) return denied;
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, 400);
     }
@@ -433,12 +468,15 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         return c.json({ error: 'action must be a non-empty string' }, 400);
       }
 
+      const scope = authorizedRestScope(body.scope, allowSharedScope);
       const result = await audrey.reflexes(action, {
-        ...preflightOptionsFromBody(body),
+        ...preflightOptionsFromBody(body, requestAgent(c) ?? audrey.agent, scope),
         includePreflight: body.include_preflight ?? body.includePreflight,
       });
       return c.json(result);
     } catch (err: unknown) {
+      const denied = sharedScopeErrorResponse(c, err);
+      if (denied) return denied;
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, 400);
     }
@@ -453,12 +491,15 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         return c.json({ error: 'action must be a non-empty string' }, 400);
       }
 
+      const scope = authorizedRestScope(body.scope, allowSharedScope);
       const result = await audrey.beforeAction(action, {
-        ...preflightOptionsFromBody(body),
+        ...preflightOptionsFromBody(body, requestAgent(c) ?? audrey.agent, scope),
         recordEvent: true,
       });
       return c.json(result);
     } catch (err: unknown) {
+      const denied = sharedScopeErrorResponse(c, err);
+      if (denied) return denied;
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, 400);
     }
@@ -486,6 +527,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         metadata: body.metadata,
         retainDetails: body.retain_details ?? body.retainDetails,
         evidenceFeedback: body.evidence_feedback ?? body.evidenceFeedback,
+        actorAgent: requestAgent(c),
       });
       return c.json(result);
     } catch (err: unknown) {
@@ -503,7 +545,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       const body = await c.req
         .json<Partial<ConsolidationOptions>>()
         .catch((): Partial<ConsolidationOptions> => ({}));
-      const result = await audrey.consolidate(body);
+      const result = await audrey.consolidate({ ...body, agent: requestAgent(c) ?? audrey.agent });
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -515,7 +557,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   app.post('/v1/dream', async c => {
     try {
       const body = await c.req.json<DreamRequestBody>().catch((): DreamRequestBody => ({}));
-      const result = await audrey.dream(body);
+      const result = await audrey.dream({ ...body, agent: requestAgent(c) ?? audrey.agent });
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -548,7 +590,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       if (!Number.isFinite(limit) || limit < 1 || limit > 100) {
         return c.json({ error: 'limit must be between 1 and 100' }, 400);
       }
-      return c.json(audrey.impact({ windowDays, limit }));
+      return c.json(audrey.impact({ windowDays, limit, agent: requestAgent(c) ?? audrey.agent }));
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, 400);
@@ -559,7 +601,9 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   app.post('/v1/resolve-truth', async c => {
     try {
       const body = await c.req.json<RouteBody>();
-      const result = await audrey.resolveTruth(body.contradiction_id as string);
+      const result = await audrey.resolveTruth(body.contradiction_id as string, {
+        agent: requestAgent(c) ?? audrey.agent,
+      });
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -632,6 +676,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       const result = audrey.decay({
         dormantThreshold: body.dormantThreshold,
         halfLives: body.halfLives,
+        agent: requestAgent(c) ?? audrey.agent,
       });
       return c.json(result);
     } catch (err: unknown) {
@@ -666,7 +711,10 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   app.post('/v1/greeting', async c => {
     try {
       const body = await c.req.json<GreetingRequestBody>().catch((): GreetingRequestBody => ({}));
-      const result = await audrey.greeting({ context: body.context });
+      const result = await audrey.greeting({
+        context: body.context,
+        agent: requestAgent(c) ?? audrey.agent,
+      });
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AudreyConfig, EmbeddingConfig, LLMConfig } from '../src/types.js';
 
-export const VERSION = '1.0.3';
+export const VERSION = '1.1.0';
 export const SERVER_NAME = 'audrey-memory';
 export const DEFAULT_AGENT = 'local-agent';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
@@ -24,6 +24,7 @@ export type AudreyHost = keyof typeof HOST_AGENT_NAMES;
 
 interface McpEnvOptions {
   includeSecrets?: boolean;
+  scope?: 'local' | 'project' | 'user';
 }
 
 const VALID_EMBEDDING_PROVIDERS = new Set(['mock', 'local', 'gemini', 'openai']);
@@ -84,23 +85,25 @@ export function resolveLLMProvider(
   env: Record<string, string | undefined>,
   explicit: string | undefined = env['AUDREY_LLM_PROVIDER'],
 ): (LLMConfig & { apiKey?: string }) | null {
+  const model = env['AUDREY_LLM_MODEL']?.trim() || undefined;
+  const withModel = model ? { model } : {};
   if (explicit && explicit !== 'auto') {
     assertValidProvider(explicit, VALID_LLM_PROVIDERS, 'AUDREY_LLM_PROVIDER');
     const provider = explicit as LLMConfig['provider'];
     if (provider === 'anthropic') {
-      return { provider: 'anthropic', apiKey: env['ANTHROPIC_API_KEY'] };
+      return { provider: 'anthropic', apiKey: env['ANTHROPIC_API_KEY'], ...withModel };
     }
     if (provider === 'openai') {
-      return { provider: 'openai', apiKey: env['OPENAI_API_KEY'] };
+      return { provider: 'openai', apiKey: env['OPENAI_API_KEY'], ...withModel };
     }
     return { provider: 'mock' };
   }
 
   if (env['ANTHROPIC_API_KEY']) {
-    return { provider: 'anthropic', apiKey: env['ANTHROPIC_API_KEY'] };
+    return { provider: 'anthropic', apiKey: env['ANTHROPIC_API_KEY'], ...withModel };
   }
   if (env['OPENAI_API_KEY']) {
-    return { provider: 'openai', apiKey: env['OPENAI_API_KEY'] };
+    return { provider: 'openai', apiKey: env['OPENAI_API_KEY'], ...withModel };
   }
   return null;
 }
@@ -167,6 +170,7 @@ export function buildAudreyMcpEnv(
   const llm = resolveLLMProvider(providerEnv, env['AUDREY_LLM_PROVIDER']);
   if (llm) {
     addEnv('AUDREY_LLM_PROVIDER', llm.provider);
+    if (llm.model) addEnv('AUDREY_LLM_MODEL', llm.model);
     if (llm.provider === 'anthropic') {
       if (includeSecrets) addEnv('ANTHROPIC_API_KEY', llm.apiKey);
     } else if (llm.provider === 'openai') {
@@ -175,6 +179,26 @@ export function buildAudreyMcpEnv(
   }
 
   return Object.fromEntries(envPairs);
+}
+
+const AUTOPILOT_RUNTIME_FLAGS: Record<string, string> = {
+  AUDREY_DATA_DIR: '--data-dir',
+  AUDREY_AGENT: '--agent',
+  AUDREY_EMBEDDING_PROVIDER: '--embedding-provider',
+  AUDREY_DEVICE: '--device',
+  AUDREY_LLM_PROVIDER: '--llm-provider',
+  AUDREY_LLM_MODEL: '--llm-model',
+};
+
+export function buildAutopilotRuntimeArgs(
+  env: Record<string, string | undefined> = process.env,
+  agent = env['AUDREY_AGENT'] || DEFAULT_AGENT,
+): string[] {
+  const runtime = buildAudreyMcpEnv(env, agent, { includeSecrets: false });
+  return Object.entries(AUTOPILOT_RUNTIME_FLAGS).flatMap(([key, flag]) => {
+    const value = runtime[key];
+    return value ? [flag, value] : [];
+  });
 }
 
 export function buildStdioMcpServerConfig(
@@ -247,11 +271,36 @@ export function buildInstallArgs(
   const envPairs = buildAudreyMcpEnv(env, env['AUDREY_AGENT'] || HOST_AGENT_NAMES['claude-code'], {
     includeSecrets: options.includeSecrets ?? false,
   });
-  const args = ['mcp', 'add', '-s', 'user', SERVER_NAME];
+  // Claude's --env option is variadic, so the required server name must come
+  // first or it can be consumed as another environment value.
+  const args = [
+    'mcp',
+    'add',
+    '--transport',
+    'stdio',
+    '--scope',
+    options.scope ?? 'user',
+    SERVER_NAME,
+  ];
   for (const [key, value] of Object.entries(envPairs)) {
-    args.push('-e', `${key}=${value}`);
+    args.push('--env', `${key}=${value}`);
   }
   args.push('--', process.execPath, MCP_ENTRYPOINT);
 
+  return args;
+}
+
+export function buildCodexInstallArgs(
+  env: Record<string, string | undefined> = process.env,
+  options: McpEnvOptions = {},
+): string[] {
+  const envPairs = buildAudreyMcpEnv(env, env['AUDREY_AGENT'] || HOST_AGENT_NAMES.codex, {
+    includeSecrets: options.includeSecrets ?? false,
+  });
+  const args = ['mcp', 'add', SERVER_NAME];
+  for (const [key, value] of Object.entries(envPairs)) {
+    args.push('--env', `${key}=${value}`);
+  }
+  args.push('--', process.execPath, MCP_ENTRYPOINT);
   return args;
 }

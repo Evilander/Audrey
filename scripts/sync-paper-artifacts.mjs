@@ -66,12 +66,11 @@ function syncEvaluationText(text, summary, guardSummary) {
 function syncReadme(text, guardSummary) {
   return replaceOrFail(
     text,
-    /Latest local result in this checkout: 10\/10 scenarios passed, 100% prevention\r?\nrate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks in\r?\nthe raw-secret sweep, and [^\r\n]+\r?\np50\/p95 guard latency under the mock-provider methodology\./,
+    /<!-- guardbench-summary:start -->[\s\S]*?<!-- guardbench-summary:end -->/,
     [
-      'Latest local result in this checkout: 10/10 scenarios passed, 100% prevention',
-      'rate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks in',
-      `the raw-secret sweep, and ${metric(guardSummary.latency.p50Ms)}ms / ${metric(guardSummary.latency.p95Ms)}ms`,
-      'p50/p95 guard latency under the mock-provider methodology.',
+      '<!-- guardbench-summary:start -->',
+      `Latest local result in this checkout: 10/10 scenarios passed, 100% prevention rate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks, and ${metric(guardSummary.latency.p50Ms)}ms / ${metric(guardSummary.latency.p95Ms)}ms p50/p95 Guard latency under the mock-provider methodology.`,
+      '<!-- guardbench-summary:end -->',
     ].join('\n'),
     'README GuardBench summary',
   );

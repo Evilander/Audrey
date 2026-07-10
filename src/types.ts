@@ -10,21 +10,12 @@ export type { Database } from 'better-sqlite3';
 // ---------------------------------------------------------------------------
 
 export type SourceType =
-  | 'direct-observation'
-  | 'told-by-user'
-  | 'tool-result'
-  | 'inference'
-  | 'model-generated';
+  'direct-observation' | 'told-by-user' | 'tool-result' | 'inference' | 'model-generated';
 
 export type MemoryType = 'episodic' | 'semantic' | 'procedural';
 
 export type MemoryState =
-  | 'active'
-  | 'disputed'
-  | 'superseded'
-  | 'context_dependent'
-  | 'dormant'
-  | 'rolled_back';
+  'active' | 'disputed' | 'superseded' | 'context_dependent' | 'dormant' | 'rolled_back';
 
 export type ContradictionState = 'open' | 'resolved' | 'context_dependent' | 'reopened';
 
@@ -261,6 +252,7 @@ export interface GreetingOptions {
   principleLimit?: number;
   identityLimit?: number;
   scope?: 'agent' | 'shared';
+  agent?: string;
 }
 
 export interface GreetingResult {
@@ -328,8 +320,7 @@ export interface EmbeddingConfig {
   batchSize?: number;
   timeout?: number;
   pipelineFactory?:
-    | ((task: string, model: string, options?: Record<string, unknown>) => Promise<unknown>)
-    | null;
+    ((task: string, model: string, options?: Record<string, unknown>) => Promise<unknown>) | null;
 }
 
 export interface LLMConfig {
