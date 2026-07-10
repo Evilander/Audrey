@@ -651,8 +651,8 @@ describe('GuardBench harness', () => {
     }
   });
 
-  it('reports 1.0 release readiness without hiding publish blockers', async () => {
-    const report = await verifyReleaseReadiness({ targetVersion: '1.0.3', allowPending: true });
+  it('reports 1.1 release readiness without hiding publish blockers', async () => {
+    const report = await verifyReleaseReadiness({ targetVersion: '1.1.0', allowPending: true });
 
     expect(report.ok).toBe(true);
     expect(report.ready).toBe(false);
@@ -671,12 +671,12 @@ describe('GuardBench harness', () => {
     expect(blockers).toContain('PyPI publish credentials');
   });
 
-  it('keeps the 1.0 release cut idempotent after it is applied', () => {
-    const report = prepareReleaseCut({ targetVersion: '1.0.3', date: '2026-05-28' });
+  it('keeps the 1.1 release cut idempotent after it is applied', () => {
+    const report = prepareReleaseCut({ targetVersion: '1.1.0', date: '2026-07-09' });
 
     expect(report.ok).toBe(true);
     expect(report.apply).toBe(false);
-    expect(report.currentVersions.packageJson).toBe('1.0.3');
+    expect(report.currentVersions.packageJson).toBe('1.1.0');
     expect(report.files.filter(file => file.changed).map(file => file.path)).toEqual([]);
     expect(report.nextCommands).toContain('npm run release:gate:paper');
   });

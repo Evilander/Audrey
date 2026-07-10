@@ -34,8 +34,10 @@ describe('reembedAll', () => {
       )
       .run('ep-1', 'test episode', embedding8, 'direct-observation', 0.9, new Date().toISOString());
     db1
-      .prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)')
-      .run('ep-1', embedding8, 'direct-observation', BigInt(0));
+      .prepare(
+        'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run('ep-1', 'default', embedding8, 'direct-observation', BigInt(0));
     closeDatabase(db1);
 
     ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
@@ -56,8 +58,8 @@ describe('reembedAll', () => {
       )
       .run('sem-1', 'test semantic', embedding8, 'active', new Date().toISOString());
     db1
-      .prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)')
-      .run('sem-1', embedding8, 'active');
+      .prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)')
+      .run('sem-1', 'default', embedding8, 'active');
     closeDatabase(db1);
 
     ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
@@ -78,8 +80,8 @@ describe('reembedAll', () => {
       )
       .run('proc-1', 'test procedure', embedding8, 'active', new Date().toISOString());
     db1
-      .prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)')
-      .run('proc-1', embedding8, 'active');
+      .prepare('INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)')
+      .run('proc-1', 'default', embedding8, 'active');
     closeDatabase(db1);
 
     ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
@@ -100,16 +102,18 @@ describe('reembedAll', () => {
       )
       .run('ep-1', 'content', emb, 'direct-observation', 0.9, new Date().toISOString());
     db1
-      .prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)')
-      .run('ep-1', emb, 'direct-observation', BigInt(0));
+      .prepare(
+        'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run('ep-1', 'default', emb, 'direct-observation', BigInt(0));
     db1
       .prepare(
         'INSERT INTO semantics (id, content, embedding, state, created_at) VALUES (?, ?, ?, ?, ?)',
       )
       .run('sem-1', 'content', emb, 'active', new Date().toISOString());
     db1
-      .prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)')
-      .run('sem-1', emb, 'active');
+      .prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)')
+      .run('sem-1', 'default', emb, 'active');
     closeDatabase(db1);
 
     ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
@@ -131,8 +135,10 @@ describe('reembedAll', () => {
       )
       .run('ep-1', 'content', emb, 'direct-observation', 0.9, 1, new Date().toISOString());
     db1
-      .prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)')
-      .run('ep-1', emb, 'direct-observation', BigInt(1));
+      .prepare(
+        'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run('ep-1', 'default', emb, 'direct-observation', BigInt(1));
     closeDatabase(db1);
 
     ({ db } = createDatabase(TEST_DIR, { dimensions: 16 }));
@@ -152,11 +158,11 @@ describe('reembedAll', () => {
       'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run('ep-2', 'ep two', emb, 'direct-observation', 0.9, new Date().toISOString());
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-    ).run('ep-1', emb, 'direct-observation', BigInt(0));
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    ).run('ep-1', 'default', emb, 'direct-observation', BigInt(0));
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-    ).run('ep-2', emb, 'direct-observation', BigInt(0));
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    ).run('ep-2', 'default', emb, 'direct-observation', BigInt(0));
 
     let callCount = 0;
     const failingProvider = {
@@ -205,11 +211,11 @@ describe('reembedAll', () => {
       'INSERT INTO episodes (id, content, embedding, source, source_reliability, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run('ep-2', 'ep two', emb, 'direct-observation', 0.9, new Date().toISOString());
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-    ).run('ep-1', emb, 'direct-observation', BigInt(0));
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    ).run('ep-1', 'default', emb, 'direct-observation', BigInt(0));
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-    ).run('ep-2', emb, 'direct-observation', BigInt(0));
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    ).run('ep-2', 'default', emb, 'direct-observation', BigInt(0));
 
     let embedBatchCalled = false;
     const spyProvider = {

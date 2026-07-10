@@ -42,8 +42,9 @@ describe('applyInterference', () => {
       VALUES (?, ?, ?, 'active', ?, 0, 0.5)
     `,
     ).run('sem-1', semanticContent, buffer, new Date().toISOString());
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'sem-1',
+      'default',
       buffer,
       'active',
     );
@@ -78,8 +79,9 @@ describe('applyInterference', () => {
       VALUES (?, ?, ?, 'active', ?, 0, 0.5)
     `,
     ).run('sem-cook', cookingContent, buffer, new Date().toISOString());
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'sem-cook',
+      'default',
       buffer,
       'active',
     );

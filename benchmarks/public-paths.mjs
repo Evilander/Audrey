@@ -3,9 +3,21 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const WINDOWS_DRIVE_PATTERN = /(^|[^a-z])[A-Z]:[\\/]/i;
+const WINDOWS_DRIVE_PATTERN = /(^|[^a-z])[A-Z]:[\\/](?:$|[^\r\n])/i;
 const EXTENDED_PATH_PATTERN = /\\\\\?\\/;
 const FILE_URL_PATTERN = /file:\/\//i;
+function containsBinaryControl(text) {
+  return Array.from(text).some(character => {
+    const code = character.charCodeAt(0);
+    return (
+      (code >= 0 && code <= 8) ||
+      code === 11 ||
+      code === 12 ||
+      (code >= 14 && code <= 31) ||
+      code === 127
+    );
+  });
+}
 
 function isUrl(value) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
@@ -42,6 +54,7 @@ export function publicArtifactValue(value) {
 }
 
 export function containsLocalPath(text) {
+  if (containsBinaryControl(text)) return false;
   return (
     WINDOWS_DRIVE_PATTERN.test(text) ||
     EXTENDED_PATH_PATTERN.test(text) ||

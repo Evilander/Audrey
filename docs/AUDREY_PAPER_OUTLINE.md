@@ -123,8 +123,10 @@ Metrics:
 - Why tool annotations are hints, not policy guarantees.
 - What Audrey borrows from graph memory without adding a graph database to the core.
 - Limitations:
-  - Claude Code hook config can be applied with a guarded settings merge, but
-    equivalent Codex hook wiring still depends on a stable host hook surface.
+  - Audrey 1.1 applies lifecycle hooks for Claude Code and Codex, but it can
+    inspect only the events and tool paths emitted by each trusted host.
+  - Hooks start short-lived Audrey processes; a persistent local runtime and
+    measured host-version compatibility gates remain production work.
   - Validation lineage is bound to exact preflight event evidence, but feedback
     does not yet tune risk scoring.
   - Local comparative GuardBench numbers exist; no external-system numbers yet.
@@ -134,7 +136,7 @@ Metrics:
 
 - Agent memory should be judged by whether it changes future actions, not just whether it retrieves relevant text.
 - Audrey Guard demonstrates a practical local loop for using memory as a pre-action control layer.
-- The next publishable milestone is live external-adapter GuardBench output plus broader host-hook integration.
+- The next publishable milestone is live external-adapter GuardBench output plus measured real-host coverage and a persistent hook runtime.
 
 ## Figures and Tables
 
@@ -168,6 +170,7 @@ Metrics:
 - MCP tool annotations and trust model: https://modelcontextprotocol.io/specification/2025-11-25/server/tools and https://modelcontextprotocol.io/specification/2025-11-25/schema
 - MCP annotation risk vocabulary: https://blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations/
 - Claude Code hooks: https://code.claude.com/docs/en/hooks
+- Codex hooks: https://developers.openai.com/codex/hooks
 - Mem0 token-efficient memory algorithm: https://mem0.ai/blog/mem0-the-token-efficient-memory-algorithm
 - MemOS: https://huggingface.co/papers/2507.03724
 - MCP Security Bench: https://huggingface.co/papers/2510.15994

@@ -76,6 +76,7 @@ import {
 } from './promote.js';
 import { renderAllRules, type RuleDoc } from './rules-compiler.js';
 import { insertEvent } from './events.js';
+import { requireAgent, resolveMemoryScope } from './utils.js';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import {
   dirname,
@@ -88,10 +89,7 @@ import { ProfileRecorder, type ProfileDiagnostics } from './profile.js';
 import { performance } from 'node:perf_hooks';
 
 export type ValidateErrorCode =
-  | 'PREFLIGHT_NOT_FOUND'
-  | 'PREFLIGHT_WRONG_TYPE'
-  | 'LINEAGE_REJECTED'
-  | 'ACTION_KEY_MISMATCH';
+  'PREFLIGHT_NOT_FOUND' | 'PREFLIGHT_WRONG_TYPE' | 'LINEAGE_REJECTED' | 'ACTION_KEY_MISMATCH';
 
 /**
  * Thrown by `Audrey.validate()` when a structural lineage check fails. Carries a
@@ -314,7 +312,7 @@ export class Audrey extends EventEmitter {
       throw new Error(`minEpisodes must be a positive integer, got: ${minEpisodes}`);
     }
 
-    this.agent = agent;
+    this.agent = requireAgent(agent);
     this.dataDir = dataDir;
     this.embeddingProvider = createEmbeddingProvider(embedding);
     const { db, migrated } = createDatabase(dataDir, {
@@ -594,7 +592,7 @@ export class Audrey extends EventEmitter {
 
     const encodeParams = {
       ...params,
-      agent: params.agent ?? this.agent,
+      agent: requireAgent(params.agent, this.agent),
       arousalWeight: this.affectConfig.arousalWeight,
     };
     let encodedVector: number[] | undefined;
@@ -619,9 +617,9 @@ export class Audrey extends EventEmitter {
     this.emit('encode', { id, ...params });
     const postEncodeTask = profile
       ? profile.measureSync('encode.enqueue_background', () =>
-          this._enqueuePostEncode(id, params, encodedEmbedding),
+          this._enqueuePostEncode(id, encodeParams, encodedEmbedding),
         )
-      : this._enqueuePostEncode(id, params, encodedEmbedding);
+      : this._enqueuePostEncode(id, encodeParams, encodedEmbedding);
     if (params.waitForConsolidation) {
       if (profile) await profile.measure('encode.wait_for_consolidation', () => postEncodeTask);
       else await postEncodeTask;
@@ -690,7 +688,7 @@ export class Audrey extends EventEmitter {
 
     const normalized = paramsList.map(params => ({
       ...params,
-      agent: params.agent ?? this.agent,
+      agent: requireAgent(params.agent, this.agent),
       arousalWeight: this.affectConfig.arousalWeight,
     }));
     const vectors = await this.embeddingProvider.embedBatch(
@@ -718,7 +716,7 @@ export class Audrey extends EventEmitter {
       ids.push(id);
       this.emit('encode', { id, ...paramsList[i] });
       const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
-      tasks.push(this._enqueuePostEncode(id, paramsList[i]!, encodedEmbedding));
+      tasks.push(this._enqueuePostEncode(id, encodeParams, encodedEmbedding));
     }
 
     if (paramsList.some(p => p.waitForConsolidation)) {
@@ -788,11 +786,10 @@ export class Audrey extends EventEmitter {
     options: Partial<ConsolidationOptions> = {},
   ): Promise<ConsolidationResult & { status: string }> {
     await this._ensureMigrated();
-    // Use ?? throughout so 0 / '' are not silently replaced with the default.
     const result = await runConsolidation(this.db, this.embeddingProvider, {
       minClusterSize: options.minClusterSize ?? this.consolidationConfig.minEpisodes,
       similarityThreshold: options.similarityThreshold ?? 0.8,
-      agent: options.agent ?? this.agent,
+      agent: requireAgent(options.agent, this.agent),
       extractPrinciple: options.extractPrinciple,
       llmProvider: options.llmProvider ?? this.llmProvider ?? undefined,
     });
@@ -802,10 +799,13 @@ export class Audrey extends EventEmitter {
     return output;
   }
 
-  decay(options: { dormantThreshold?: number; halfLives?: Partial<HalfLives> } = {}): DecayResult {
+  decay(
+    options: { dormantThreshold?: number; halfLives?: Partial<HalfLives>; agent?: string } = {},
+  ): DecayResult {
     const result = applyDecay(this.db, {
       dormantThreshold: options.dormantThreshold ?? this.decayConfig.dormantThreshold,
       halfLives: options.halfLives ?? this.confidenceConfig.halfLives,
+      agent: requireAgent(options.agent, this.agent),
     });
     this.emit('decay', result);
     return result;
@@ -817,7 +817,10 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  async resolveTruth(contradictionId: string): Promise<TruthResolution> {
+  async resolveTruth(
+    contradictionId: string,
+    options: { agent?: string } = {},
+  ): Promise<TruthResolution> {
     if (!this.llmProvider) {
       throw new Error('resolveTruth requires an LLM provider');
     }
@@ -829,8 +832,15 @@ export class Audrey extends EventEmitter {
       | undefined;
     if (!contradiction) throw new Error(`Contradiction not found: ${contradictionId}`);
 
-    const claimA = this._loadClaimContent(contradiction.claim_a_id, contradiction.claim_a_type);
-    const claimB = this._loadClaimContent(contradiction.claim_b_id, contradiction.claim_b_type);
+    const agent = requireAgent(options.agent, this.agent);
+    let claimA: string;
+    let claimB: string;
+    try {
+      claimA = this._loadClaimContent(contradiction.claim_a_id, contradiction.claim_a_type, agent);
+      claimB = this._loadClaimContent(contradiction.claim_b_id, contradiction.claim_b_type, agent);
+    } catch {
+      throw new Error(`Contradiction not found: ${contradictionId}`);
+    }
 
     const messages = buildContextResolutionPrompt(claimA, claimB);
     const result = (await this.llmProvider.json(messages)) as TruthResolution;
@@ -867,17 +877,19 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  _loadClaimContent(claimId: string, claimType: string): string {
+  _loadClaimContent(claimId: string, claimType: string, agent?: string): string {
+    const agentClause = agent ? ' AND agent = ?' : '';
+    const params = agent ? [claimId, agent] : [claimId];
     if (claimType === 'semantic') {
-      const row = this.db.prepare('SELECT content FROM semantics WHERE id = ?').get(claimId) as
-        | ContentRow
-        | undefined;
+      const row = this.db
+        .prepare(`SELECT content FROM semantics WHERE id = ?${agentClause}`)
+        .get(...params) as ContentRow | undefined;
       if (!row) throw new Error(`Semantic memory not found: ${claimId}`);
       return row.content;
     } else if (claimType === 'episodic') {
-      const row = this.db.prepare('SELECT content FROM episodes WHERE id = ?').get(claimId) as
-        | ContentRow
-        | undefined;
+      const row = this.db
+        .prepare(`SELECT content FROM episodes WHERE id = ?${agentClause}`)
+        .get(...params) as ContentRow | undefined;
       if (!row) throw new Error(`Episode not found: ${claimId}`);
       return row.content;
     }
@@ -976,9 +988,12 @@ export class Audrey extends EventEmitter {
     principleLimit = 5,
     identityLimit = 5,
     scope = 'agent',
+    agent = this.agent,
   }: GreetingOptions = {}): Promise<GreetingResult> {
-    const agentClause = scope === 'agent' ? 'AND agent = ?' : '';
-    const agentParam = scope === 'agent' ? [this.agent] : [];
+    const memoryScope = resolveMemoryScope(scope, 'agent');
+    const memoryAgent = requireAgent(agent, this.agent);
+    const agentClause = memoryScope === 'agent' ? 'AND agent = ?' : '';
+    const agentParam = memoryScope === 'agent' ? [memoryAgent] : [];
     const recent = this.db
       .prepare(
         `SELECT id, content, source, tags, salience, created_at FROM episodes WHERE "private" = 0 ${agentClause} ORDER BY created_at DESC LIMIT ?`,
@@ -1035,7 +1050,12 @@ export class Audrey extends EventEmitter {
     const result: GreetingResult = { recent, principles, mood, unresolved, identity };
 
     if (context) {
-      result.contextual = await this.recall(context, { limit: 5, includePrivate: true, scope });
+      result.contextual = await this.recall(context, {
+        limit: 5,
+        includePrivate: true,
+        scope: memoryScope,
+        agent: memoryAgent,
+      });
     }
 
     return result;
@@ -1046,17 +1066,21 @@ export class Audrey extends EventEmitter {
       minClusterSize?: number;
       similarityThreshold?: number;
       dormantThreshold?: number;
+      agent?: string;
     } = {},
   ): Promise<DreamResult> {
     await this._ensureMigrated();
+    const agent = requireAgent(options.agent, this.agent);
 
     const consolidation = await this.consolidate({
       minClusterSize: options.minClusterSize,
       similarityThreshold: options.similarityThreshold,
+      agent,
     });
 
     const decay = this.decay({
       dormantThreshold: options.dormantThreshold,
+      agent,
     });
 
     const stats = this.introspect();
@@ -1110,11 +1134,13 @@ export class Audrey extends EventEmitter {
   }
 
   validate(input: MemoryValidateInput): MemoryValidateResult | null {
+    input = { ...input, agent: requireAgent(input.agent, this.agent) };
     let preflightMetadata: Record<string, unknown> | null = null;
     if (input.preflightEventId) {
       const preflightEvent = this.db
-        .prepare('SELECT event_type, metadata FROM memory_events WHERE id = ?')
-        .get(input.preflightEventId) as { event_type: string; metadata: string | null } | undefined;
+        .prepare('SELECT event_type, metadata FROM memory_events WHERE id = ? AND actor_agent = ?')
+        .get(input.preflightEventId, input.agent) as
+        { event_type: string; metadata: string | null } | undefined;
       if (!preflightEvent) {
         throw new ValidateLineageError(
           'PREFLIGHT_NOT_FOUND',
@@ -1178,7 +1204,7 @@ export class Audrey extends EventEmitter {
       insertEvent(this.db, {
         eventType: 'Validate',
         source: 'memory_validate',
-        actorAgent: this.agent,
+        actorAgent: input.agent,
         outcome: eventOutcome,
         redactionState: 'clean',
         metadata: {
@@ -1197,8 +1223,17 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  impact(options: { windowDays?: number; limit?: number } = {}): ImpactReport {
-    return buildImpactReport(this.db, options.windowDays ?? 7, options.limit ?? 5);
+  impact(
+    options: {
+      windowDays?: number;
+      limit?: number;
+      scope?: RecallOptions['scope'];
+      agent?: string;
+    } = {},
+  ): ImpactReport {
+    const scope = resolveMemoryScope(options.scope, 'agent');
+    const agent = scope === 'agent' ? requireAgent(options.agent, this.agent) : undefined;
+    return buildImpactReport(this.db, options.windowDays ?? 7, options.limit ?? 5, agent);
   }
 
   forget(id: string, options: { purge?: boolean } = {}): ForgetResult {
@@ -1257,7 +1292,7 @@ export class Audrey extends EventEmitter {
   observeTool(input: ObserveToolInput): ObserveToolResult {
     const result = observeTool(this.db, {
       ...input,
-      actorAgent: input.actorAgent ?? this.agent,
+      actorAgent: requireAgent(input.actorAgent, this.agent),
     });
     this.emit('tool-observed', result.event);
     return result;
@@ -1271,8 +1306,20 @@ export class Audrey extends EventEmitter {
     return countEvents(this.db, query);
   }
 
-  recentFailures(options: { since?: string; limit?: number } = {}): FailurePattern[] {
-    return recentFailures(this.db, options);
+  recentFailures(
+    options: {
+      since?: string;
+      limit?: number;
+      actorAgent?: string;
+      scope?: RecallOptions['scope'];
+    } = {},
+  ): FailurePattern[] {
+    const scope = resolveMemoryScope(options.scope, 'agent');
+    return recentFailures(this.db, {
+      since: options.since,
+      limit: options.limit,
+      ...(scope === 'agent' ? { actorAgent: requireAgent(options.actorAgent, this.agent) } : {}),
+    });
   }
 
   async capsule(query: string, options: CapsuleOptions = {}): Promise<MemoryCapsule> {
@@ -1306,7 +1353,7 @@ export class Audrey extends EventEmitter {
   }
 
   findPromotionCandidates(options: FindCandidatesOptions = {}): PromotionCandidate[] {
-    return findPromotionCandidates(this.db, options);
+    return findPromotionCandidates(this.db, { ...options, agent: options.agent ?? this.agent });
   }
 
   async promote(options: PromoteOptions = {}): Promise<PromoteResult> {
@@ -1322,6 +1369,7 @@ export class Audrey extends EventEmitter {
       minEvidence: options.minEvidence,
       limit: options.limit,
       target,
+      agent: this.agent,
     });
 
     const dryRun = options.dryRun ?? !options.yes;
@@ -1455,6 +1503,5 @@ export type { RuleDoc };
 
 function db_prepare_get_status(db: Database.Database, runId: string): StatusRow | undefined {
   return db.prepare('SELECT status FROM consolidation_runs WHERE id = ?').get(runId) as
-    | StatusRow
-    | undefined;
+    StatusRow | undefined;
 }

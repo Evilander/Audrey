@@ -6,9 +6,9 @@ Security fixes are best-effort for the current published release line and the cu
 
 | Version | Supported |
 |---|---|
-| `0.23.x` | Yes |
-| `0.22.x` | Best effort |
-| `< 0.22.0` | No |
+| `1.1.x` | Yes |
+| `1.0.x` | Best effort |
+| `< 1.0.0` | No |
 
 ## Reporting a Vulnerability
 

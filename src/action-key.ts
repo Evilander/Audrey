@@ -1,31 +1,20 @@
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, normalize, resolve } from 'node:path';
-import { redact, truncateRedactedText, type RedactionHit } from './redact.js';
+import { redact } from './redact.js';
 
 export interface GuardActionFingerprintInput {
   tool?: string;
   command?: string;
   action: string;
+  actionDigest?: string;
   cwd?: string;
   files?: string[];
 }
 
-function compact(
-  value: string | undefined,
-  max = 2000,
-  redactions: RedactionHit[] = [],
-): string | undefined {
-  if (!value) return undefined;
-  const text = value.replace(/\s+/g, ' ').trim();
-  if (text.length <= max) return text;
-  return truncateRedactedText(text, max, redactions);
-}
-
 function redactedText(value: string | undefined): string | undefined {
   if (!value) return undefined;
-  const result = redact(value);
-  return compact(result.text, 2000, result.redactions);
+  return redact(value).text.replace(/\s+/g, ' ').trim();
 }
 
 function normalizePathForKey(value: string | undefined, base?: string): string {
@@ -49,7 +38,9 @@ function normalizePathForKey(value: string | undefined, base?: string): string {
 export function guardActionKey(action: GuardActionFingerprintInput): string {
   const tool = action.tool ?? 'unknown';
   const commandOrAction = action.command ?? action.action;
-  const safeCommand = redactedText(commandOrAction) ?? commandOrAction;
+  const actionIdentity = action.actionDigest
+    ? `digest:${action.actionDigest.trim().toLowerCase()}`
+    : (redactedText(commandOrAction) ?? commandOrAction);
   const cwd = normalizePathForKey(action.cwd);
   const files = [...(action.files ?? [])]
     .map(file => file.trim())
@@ -59,9 +50,12 @@ export function guardActionKey(action: GuardActionFingerprintInput): string {
     .join('\n');
   return createHash('sha256')
     .update(
-      [tool.toLowerCase(), safeCommand.replace(/\s+/g, ' ').trim().toLowerCase(), cwd, files].join(
-        '\n',
-      ),
+      [
+        tool.toLowerCase(),
+        actionIdentity.replace(/\s+/g, ' ').trim().toLowerCase(),
+        cwd,
+        files,
+      ].join('\n'),
     )
     .digest('hex');
 }

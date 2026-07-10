@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { EmbeddingProvider } from './types.js';
 import { insertFTSEpisode, insertFTSSemantic, insertFTSProcedure } from './fts.js';
 import { sourceReliability } from './confidence.js';
+import { requireAgent } from './utils.js';
 
 export const MAX_IMPORT_CONTENT_LENGTH = 50_000;
 export const MAX_IMPORT_ROWS_PER_SECTION = 25_000;
@@ -267,7 +268,7 @@ export async function importMemories(
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVecEpisode = db.prepare(
-    'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
+    'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
   );
 
   const insertSemantic = db.prepare(`
@@ -279,7 +280,7 @@ export async function importMemories(
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVecSemantic = db.prepare(
-    'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)',
+    'INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
   );
 
   const insertProcedure = db.prepare(`
@@ -289,7 +290,7 @@ export async function importMemories(
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVecProcedure = db.prepare(
-    'INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)',
+    'INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
   );
 
   const insertCausalLink = db.prepare(`
@@ -331,13 +332,14 @@ export async function importMemories(
   const writeImport = db.transaction(() => {
     for (let i = 0; i < episodes.length; i++) {
       const ep = episodes[i]!;
+      const ownerAgent = requireAgent(ep.agent, 'default');
       const embeddingBuffer = embeddingProvider.vectorToBuffer(episodeVectors[i]!);
       insertEpisode.run(
         ep.id,
         ep.content,
         embeddingBuffer,
         ep.source,
-        ep.agent ?? 'default',
+        ownerAgent,
         ep.source_reliability ?? sourceReliability(ep.source),
         ep.salience ?? 0.5,
         jsonOrNull(ep.context ?? {}),
@@ -353,17 +355,24 @@ export async function importMemories(
         ep.consolidated ?? 0,
         ep.private ?? 0,
       );
-      insertVecEpisode.run(ep.id, embeddingBuffer, ep.source, BigInt(ep.consolidated ?? 0));
+      insertVecEpisode.run(
+        ep.id,
+        ownerAgent,
+        embeddingBuffer,
+        ep.source,
+        BigInt(ep.consolidated ?? 0),
+      );
       insertFTSEpisode(db, ep.id, ep.content, ep.tags ?? null);
     }
 
     for (let i = 0; i < semantics.length; i++) {
       const sem = semantics[i]!;
+      const ownerAgent = requireAgent(sem.agent, 'default');
       const embeddingBuffer = embeddingProvider.vectorToBuffer(semanticVectors[i]!);
       insertSemantic.run(
         sem.id,
         sem.content,
-        sem.agent ?? 'default',
+        ownerAgent,
         embeddingBuffer,
         sem.state,
         sem.conditions ?? null,
@@ -384,17 +393,18 @@ export async function importMemories(
         sem.interference_count ?? 0,
         sem.salience ?? 0.5,
       );
-      insertVecSemantic.run(sem.id, embeddingBuffer, sem.state);
+      insertVecSemantic.run(sem.id, ownerAgent, embeddingBuffer, sem.state);
       insertFTSSemantic(db, sem.id, sem.content);
     }
 
     for (let i = 0; i < procedures.length; i++) {
       const proc = procedures[i]!;
+      const ownerAgent = requireAgent(proc.agent, 'default');
       const embeddingBuffer = embeddingProvider.vectorToBuffer(procedureVectors[i]!);
       insertProcedure.run(
         proc.id,
         proc.content,
-        proc.agent ?? 'default',
+        ownerAgent,
         embeddingBuffer,
         proc.state,
         proc.trigger_conditions ?? null,
@@ -409,7 +419,7 @@ export async function importMemories(
         proc.interference_count ?? 0,
         proc.salience ?? 0.5,
       );
-      insertVecProcedure.run(proc.id, embeddingBuffer, proc.state);
+      insertVecProcedure.run(proc.id, ownerAgent, embeddingBuffer, proc.state);
       insertFTSProcedure(db, proc.id, proc.content);
     }
 

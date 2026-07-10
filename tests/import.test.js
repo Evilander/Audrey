@@ -69,9 +69,11 @@ describe('import', () => {
     await agentDest.import(snapshot);
 
     const ep = agentDest.db
-      .prepare("SELECT agent FROM episodes WHERE content = 'Agent-owned memory'")
+      .prepare("SELECT id, agent FROM episodes WHERE content = 'Agent-owned memory'")
       .get();
     expect(ep.agent).toBe('agent-alpha');
+    const vecEp = agentDest.db.prepare('SELECT agent FROM vec_episodes WHERE id = ?').get(ep.id);
+    expect(vecEp.agent).toBe('agent-alpha');
 
     agentSource.close();
     agentDest.close();
@@ -109,9 +111,13 @@ describe('import', () => {
     await agentDest.import(snapshot);
 
     const sem = agentDest.db
-      .prepare("SELECT agent FROM semantics WHERE content = 'Agent-owned consolidated semantic'")
+      .prepare(
+        "SELECT id, agent FROM semantics WHERE content = 'Agent-owned consolidated semantic'",
+      )
       .get();
     expect(sem.agent).toBe('agent-alpha');
+    const vecSem = agentDest.db.prepare('SELECT agent FROM vec_semantics WHERE id = ?').get(sem.id);
+    expect(vecSem.agent).toBe('agent-alpha');
 
     agentSource.close();
     agentDest.close();

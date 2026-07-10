@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 const ROOT = process.cwd();
 const DEFAULT_REPOSITORY = 'Evilander/Audrey';
 const DEFAULT_BRANCH = 'master';
-const DEFAULT_VERSION = '1.0.0';
+const DEFAULT_VERSION = '1.1.0';
 const DEFAULT_TOKEN_ENV = 'GITHUB_TOKEN';
 const API_VERSION = '2022-11-28';
 

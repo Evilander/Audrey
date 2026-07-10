@@ -5,6 +5,7 @@
 
 import Database from 'better-sqlite3';
 import { generateId } from './ulid.js';
+import { requireAgent } from './utils.js';
 
 export type EventType =
   | 'PreToolUse'
@@ -18,10 +19,6 @@ export type EventType =
   | 'SubagentStop'
   | 'Observation';
 
-// A known EventType, or any other string for forward-compatibility. The
-// `string & {}` keeps the EventType literals visible to autocomplete instead of
-// collapsing the whole union down to `string` (callers such as `validate` and
-// `promote` record extension event types like `Validate` and `Promotion`).
 export type EventTypeLike = EventType | (string & {});
 
 export type EventOutcome = 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown';
@@ -68,6 +65,7 @@ export interface EventQuery {
   toolName?: string;
   eventType?: string;
   outcome?: EventOutcome;
+  actorAgent?: string;
   since?: string;
   limit?: number;
 }
@@ -156,6 +154,10 @@ export function listEvents(db: Database.Database, query: EventQuery = {}): Memor
     conditions.push('outcome = @outcome');
     params.outcome = query.outcome;
   }
+  if (query.actorAgent !== undefined) {
+    conditions.push('actor_agent = @actorAgent');
+    params.actorAgent = requireAgent(query.actorAgent);
+  }
   if (query.since) {
     conditions.push('created_at >= @since');
     params.since = query.since;
@@ -188,6 +190,10 @@ export function countEvents(db: Database.Database, query: EventQuery = {}): numb
     conditions.push('outcome = @outcome');
     params.outcome = query.outcome;
   }
+  if (query.actorAgent !== undefined) {
+    conditions.push('actor_agent = @actorAgent');
+    params.actorAgent = requireAgent(query.actorAgent);
+  }
   if (query.since) {
     conditions.push('created_at >= @since');
     params.since = query.since;
@@ -213,10 +219,14 @@ export interface FailurePattern {
  */
 export function recentFailures(
   db: Database.Database,
-  options: { since?: string; limit?: number } = {},
+  options: { since?: string; limit?: number; actorAgent?: string } = {},
 ): FailurePattern[] {
   const since = options.since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const limit = Math.max(1, Math.min(options.limit ?? 20, 200));
+  const actorAgent =
+    options.actorAgent === undefined ? undefined : requireAgent(options.actorAgent);
+  const actorClause = actorAgent ? 'AND actor_agent = @actorAgent' : '';
+  const nestedActorClause = actorAgent ? 'AND e2.actor_agent = @actorAgent' : '';
 
   return db
     .prepare(
@@ -229,18 +239,20 @@ export function recentFailures(
              WHERE e2.tool_name = e1.tool_name
                AND e2.outcome = 'failed'
                AND e2.created_at >= @since
+               ${nestedActorClause}
              ORDER BY e2.created_at DESC LIMIT 1
            ) AS last_error_summary
     FROM memory_events e1
     WHERE outcome = 'failed'
       AND tool_name IS NOT NULL
       AND created_at >= @since
+      ${actorClause}
     GROUP BY tool_name
     ORDER BY last_failed_at DESC
     LIMIT ${limit}
   `,
     )
-    .all({ since }) as FailurePattern[];
+    .all({ since, ...(actorAgent ? { actorAgent } : {}) }) as FailurePattern[];
 }
 
 export function deleteEventsBefore(db: Database.Database, cutoffIso: string): number {

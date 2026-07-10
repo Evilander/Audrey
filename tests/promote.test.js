@@ -17,12 +17,12 @@ function seedProcedural(
     .prepare(
       `
     INSERT INTO procedures (
-      id, content, state, trigger_conditions, evidence_episode_ids,
+      id, content, agent, state, trigger_conditions, evidence_episode_ids,
       success_count, failure_count, embedding_model, embedding_version,
       created_at, last_reinforced_at, retrieval_count, interference_count,
       salience, usage_count, last_used_at
     ) VALUES (
-      @id, @content, 'active', @triggers, '[]',
+      @id, @content, @agent, 'active', @triggers, '[]',
       @successes, @failures, 'mock', '1',
       @created, @created, @retrieval, 0,
       0.7, @usage, NULL
@@ -32,6 +32,7 @@ function seedProcedural(
     .run({
       id,
       content,
+      agent: audrey.agent,
       triggers: JSON.stringify(triggers),
       successes,
       failures,
@@ -59,13 +60,13 @@ function seedSemantic(
     .prepare(
       `
     INSERT INTO semantics (
-      id, content, state, evidence_episode_ids, evidence_count,
+      id, content, agent, state, evidence_episode_ids, evidence_count,
       supporting_count, contradicting_count, source_type_diversity,
       embedding_model, embedding_version, created_at, last_reinforced_at,
       retrieval_count, challenge_count, interference_count, salience,
       usage_count, last_used_at
     ) VALUES (
-      @id, @content, 'active', '[]', @evidence,
+      @id, @content, @agent, 'active', '[]', @evidence,
       @supporting, @contradicting, 1,
       'mock', '1', @created, @created,
       @retrieval, 0, 0, 0.7,
@@ -76,6 +77,7 @@ function seedSemantic(
     .run({
       id,
       content,
+      agent: audrey.agent,
       evidence,
       supporting,
       contradicting,

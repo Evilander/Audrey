@@ -8,6 +8,24 @@ import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-recall-data';
 
+function captureEpisodeKnnCandidates(db) {
+  const observedK = [];
+  const originalPrepare = db.prepare.bind(db);
+  db.prepare = sql => {
+    const statement = originalPrepare(sql);
+    const normalized = String(sql).replace(/\s+/g, ' ').trim();
+    if (normalized.includes('FROM vec_episodes v') && normalized.includes('v.embedding MATCH')) {
+      const originalAll = statement.all.bind(statement);
+      statement.all = (...params) => {
+        observedK.push(Number(params[1]));
+        return originalAll(...params);
+      };
+    }
+    return statement;
+  };
+  return observedK;
+}
+
 describe('recall', () => {
   let db, embedding;
 
@@ -55,8 +73,9 @@ describe('recall', () => {
       embedding.modelName,
       embedding.modelVersion,
     );
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       semId1,
+      'default',
       semBuf1,
       'active',
     );
@@ -83,8 +102,9 @@ describe('recall', () => {
       embedding.modelName,
       embedding.modelVersion,
     );
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       semId2,
+      'default',
       semBuf2,
       'active',
     );
@@ -112,8 +132,9 @@ describe('recall', () => {
       embedding.modelName,
       embedding.modelVersion,
     );
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       semId3,
+      'default',
       semBuf3,
       'dormant',
     );
@@ -140,8 +161,9 @@ describe('recall', () => {
       embedding.modelName,
       embedding.modelVersion,
     );
-    db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       procId,
+      'default',
       procBuf,
       'active',
     );
@@ -190,21 +212,105 @@ describe('recall', () => {
     expect(vectorCountQueries).toBe(1);
   });
 
-  it('increments retrieval_count on recalled semantic memories', async () => {
+  it('partitions before KNN so foreign rows beyond the old cap cannot starve local recall', async () => {
+    const query = 'bounded scoped retrieval target';
+    const queryVector = await embedding.embed(query);
+    const exactBuffer = embedding.vectorToBuffer(queryVector);
+    const targetVector = [...queryVector];
+    targetVector[0] += 0.05;
+    targetVector[1] -= 0.05;
+    const targetMagnitude = Math.sqrt(targetVector.reduce((sum, value) => sum + value * value, 0));
+    const targetBuffer = embedding.vectorToBuffer(
+      targetVector.map(value => value / targetMagnitude),
+    );
+    const now = new Date().toISOString();
+    const targetId = 'agent-scope-target';
+    const insertEpisode = db.prepare(`
+      INSERT INTO episodes (id, content, embedding, source, agent, source_reliability, salience,
+        created_at, embedding_model, embedding_version)
+      VALUES (?, ?, ?, 'direct-observation', ?, 0.95, 0.5, ?, ?, ?)
+    `);
+    const insertVector = db.prepare(
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    );
+
+    db.transaction(() => {
+      for (let i = 0; i < 300; i++) {
+        const id = `agent-scope-near-${i}`;
+        const agent = `other-agent-${i % 4}`;
+        insertEpisode.run(
+          id,
+          `near memory ${i}`,
+          exactBuffer,
+          agent,
+          now,
+          embedding.modelName,
+          embedding.modelVersion,
+        );
+        insertVector.run(id, agent, exactBuffer, 'direct-observation', BigInt(0));
+      }
+
+      insertEpisode.run(
+        targetId,
+        'the scoped target memory',
+        targetBuffer,
+        'target-agent',
+        now,
+        embedding.modelName,
+        embedding.modelVersion,
+      );
+      insertVector.run(targetId, 'target-agent', targetBuffer, 'direct-observation', BigInt(0));
+    })();
+
+    const corpusSize = db.prepare('SELECT COUNT(*) AS count FROM vec_episodes').get().count;
+    const observedK = captureEpisodeKnnCandidates(db);
+    const results = await recall(db, embedding, query, {
+      types: ['episodic'],
+      retrieval: 'vector',
+      scope: 'agent',
+      agent: 'target-agent',
+      limit: 1,
+    });
+
+    expect(results.map(result => result.id)).toEqual([targetId]);
+    expect(corpusSize).toBeGreaterThan(256);
+    expect(observedK).toEqual([1]);
+  });
+
+  it('does not widen agent-scoped KNN when the first pass fills the limit', async () => {
+    const observedK = captureEpisodeKnnCandidates(db);
+    const results = await recall(db, embedding, 'Stripe API returned 429 rate limit error', {
+      types: ['episodic'],
+      retrieval: 'vector',
+      scope: 'agent',
+      agent: 'default',
+      limit: 1,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(observedK).toHaveLength(1);
+  });
+
+  it('reinforces only semantic memories returned after ranking and limit', async () => {
     const before = db
       .prepare('SELECT id, retrieval_count FROM semantics WHERE state = ?')
       .all('active');
     const beforeMap = Object.fromEntries(before.map(r => [r.id, r.retrieval_count]));
 
-    await recall(db, embedding, 'Stripe rate limit', { types: ['semantic'] });
+    const results = await recall(db, embedding, 'Stripe rate limit', {
+      types: ['semantic'],
+      retrieval: 'hybrid',
+      limit: 1,
+    });
 
     const after = db
       .prepare('SELECT id, retrieval_count FROM semantics WHERE state = ?')
       .all('active');
-    const afterMap = Object.fromEntries(after.map(r => [r.id, r.retrieval_count]));
-
-    const incremented = after.some(r => afterMap[r.id] > (beforeMap[r.id] || 0));
-    expect(incremented).toBe(true);
+    expect(results).toHaveLength(1);
+    for (const row of after) {
+      const expectedIncrement = row.id === results[0].id ? 1 : 0;
+      expect(row.retrieval_count).toBe(beforeMap[row.id] + expectedIncrement);
+    }
   });
 
   it('filters by memory type (episodic-only)', async () => {
@@ -236,6 +342,31 @@ describe('recall', () => {
     expect(dormantResults.length).toBe(1);
   });
 
+  it('uses current memory state instead of stale vector metadata', async () => {
+    db.prepare("UPDATE semantics SET state = 'disputed' WHERE content = ?").run(
+      'Stripe rate limits are 100 requests per second',
+    );
+    db.prepare("UPDATE procedures SET state = 'dormant' WHERE content = ?").run(
+      'When rate limited, implement exponential backoff',
+    );
+
+    const semantics = await recall(db, embedding, 'Stripe rate limits', {
+      types: ['semantic'],
+      retrieval: 'vector',
+    });
+    const procedures = await recall(db, embedding, 'exponential backoff', {
+      types: ['procedural'],
+      retrieval: 'vector',
+    });
+
+    expect(semantics.map(entry => entry.content)).not.toContain(
+      'Stripe rate limits are 100 requests per second',
+    );
+    expect(procedures.map(entry => entry.content)).not.toContain(
+      'When rate limited, implement exponential backoff',
+    );
+  });
+
   it('includes provenance when includeProvenance: true', async () => {
     const results = await recall(db, embedding, 'Stripe rate limit', {
       includeProvenance: true,
@@ -262,21 +393,51 @@ describe('recall', () => {
     }
   });
 
-  it('also increments retrieval_count on recalled procedural memories', async () => {
+  it('reinforces only procedural memories returned after ranking and limit', async () => {
+    const now = new Date().toISOString();
+    const secondId = generateId();
+    const secondVector = await embedding.embed('Restart the worker after changing configuration');
+    const secondBuffer = embedding.vectorToBuffer(secondVector);
+    db.prepare(
+      `
+      INSERT INTO procedures (id, content, embedding, state, success_count, failure_count,
+        retrieval_count, created_at, embedding_model, embedding_version)
+      VALUES (?, ?, ?, 'active', 2, 0, 0, ?, ?, ?)
+    `,
+    ).run(
+      secondId,
+      'Restart the worker after changing configuration',
+      secondBuffer,
+      now,
+      embedding.modelName,
+      embedding.modelVersion,
+    );
+    db.prepare('INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
+      secondId,
+      'default',
+      secondBuffer,
+      'active',
+    );
+
     const before = db
       .prepare('SELECT id, retrieval_count FROM procedures WHERE state = ?')
       .all('active');
     const beforeMap = Object.fromEntries(before.map(r => [r.id, r.retrieval_count]));
 
-    await recall(db, embedding, 'backoff strategy', { types: ['procedural'] });
+    const results = await recall(db, embedding, 'backoff strategy', {
+      types: ['procedural'],
+      retrieval: 'hybrid',
+      limit: 1,
+    });
 
     const after = db
       .prepare('SELECT id, retrieval_count FROM procedures WHERE state = ?')
       .all('active');
-    const afterMap = Object.fromEntries(after.map(r => [r.id, r.retrieval_count]));
-
-    const incremented = after.some(r => afterMap[r.id] > (beforeMap[r.id] || 0));
-    expect(incremented).toBe(true);
+    expect(results).toHaveLength(1);
+    for (const row of after) {
+      const expectedIncrement = row.id === results[0].id ? 1 : 0;
+      expect(row.retrieval_count).toBe(beforeMap[row.id] + expectedIncrement);
+    }
   });
 
   it('surfaces partial failures when a recall path breaks', async () => {
@@ -333,6 +494,32 @@ describe('recall', () => {
       if (results.length >= 2) break;
     }
     expect(results.length).toBe(2);
+  });
+
+  it('reinforces only stream results consumed before an early break', async () => {
+    const before = db
+      .prepare('SELECT id, retrieval_count FROM semantics WHERE state = ?')
+      .all('active');
+    const beforeMap = Object.fromEntries(before.map(row => [row.id, row.retrieval_count]));
+    let surfacedId;
+
+    for await (const entry of recallStream(db, embedding, 'rate limit', {
+      types: ['semantic'],
+      retrieval: 'vector',
+      limit: 2,
+    })) {
+      surfacedId = entry.id;
+      break;
+    }
+
+    const after = db
+      .prepare('SELECT id, retrieval_count FROM semantics WHERE state = ?')
+      .all('active');
+    expect(surfacedId).toBeDefined();
+    for (const row of after) {
+      const expectedIncrement = row.id === surfacedId ? 1 : 0;
+      expect(row.retrieval_count).toBe(beforeMap[row.id] + expectedIncrement);
+    }
   });
 
   it('respects custom halfLives passed via confidenceConfig', async () => {
@@ -593,8 +780,9 @@ describe('recall', () => {
         embedding.modelName,
         embedding.modelVersion,
       );
-      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
         semId,
+        'default',
         semBuf,
         'active',
       );
@@ -722,8 +910,9 @@ describe('recall', () => {
         embedding.modelName,
         embedding.modelVersion,
       );
-      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
         loId,
+        'default',
         loBuf,
         'active',
       );
@@ -745,8 +934,9 @@ describe('recall', () => {
         embedding.modelName,
         embedding.modelVersion,
       );
-      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
         hiId,
+        'default',
         hiBuf,
         'active',
       );
@@ -787,8 +977,8 @@ describe('recall', () => {
         embedding.modelVersion,
       );
       db.prepare(
-        'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-      ).run(loId, loBuf, 'direct-observation', BigInt(0));
+        'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+      ).run(loId, 'default', loBuf, 'direct-observation', BigInt(0));
 
       const hiId = generateId();
       const hiVec = await embedding.embed('high salience episode memory');
@@ -807,8 +997,8 @@ describe('recall', () => {
         embedding.modelVersion,
       );
       db.prepare(
-        'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-      ).run(hiId, hiBuf, 'direct-observation', BigInt(0));
+        'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+      ).run(hiId, 'default', hiBuf, 'direct-observation', BigInt(0));
 
       const loResults = await recall(db, embedding, 'low salience episode memory', {
         types: ['episodic'],
@@ -845,8 +1035,9 @@ describe('recall', () => {
         embedding.modelName,
         embedding.modelVersion,
       );
-      db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+      db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
         semId,
+        'default',
         semBuf,
         'active',
       );

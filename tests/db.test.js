@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase, closeDatabase, readStoredDimensions } from '../dist/src/db.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
+import Database from 'better-sqlite3';
+import * as sqliteVec from 'sqlite-vec';
 
 const TEST_DIR = './test-audrey-data';
 
@@ -239,8 +241,10 @@ describe('dimension migration', () => {
         new Date().toISOString(),
       );
     db1
-      .prepare(`INSERT INTO vec_episodes (id, embedding, source, consolidated) VALUES (?, ?, ?, ?)`)
-      .run('ep-1', Buffer.from(embedding.buffer), 'direct-observation', BigInt(0));
+      .prepare(
+        `INSERT INTO vec_episodes (id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run('ep-1', 'default', Buffer.from(embedding.buffer), 'direct-observation', BigInt(0));
     closeDatabase(db1);
 
     const { db: db2, migrated } = createDatabase(TEST_DIR, { dimensions: 1536 });
@@ -249,6 +253,116 @@ describe('dimension migration', () => {
     const vecCount = db2.prepare('SELECT COUNT(*) as c FROM vec_episodes').get().c;
     expect(vecCount).toBe(0);
     closeDatabase(db2);
+  });
+});
+
+describe('agent partition migration', () => {
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  it('losslessly rebuilds legacy vec0 tables with agent partition keys', () => {
+    const dimensions = 8;
+    const embedding = Buffer.from(new Float32Array(dimensions).fill(0.25).buffer);
+    const { db } = createDatabase(TEST_DIR, { dimensions });
+    const now = new Date().toISOString();
+    db.prepare(
+      `
+      INSERT INTO episodes (id, content, agent, embedding, source, source_reliability, consolidated, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    ).run(
+      'ep-alpha',
+      'alpha episode',
+      'agent-alpha',
+      embedding,
+      'direct-observation',
+      0.95,
+      1,
+      now,
+    );
+    db.prepare(
+      `
+      INSERT INTO semantics (id, content, agent, embedding, state, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `,
+    ).run('sem-beta', 'beta semantic', 'agent-beta', embedding, 'active', now);
+    db.prepare(
+      `
+      INSERT INTO procedures (id, content, agent, embedding, state, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `,
+    ).run('proc-alpha', 'alpha procedure', 'agent-alpha', embedding, 'active', now);
+    closeDatabase(db);
+
+    const legacy = new Database(`${TEST_DIR}/audrey.db`);
+    sqliteVec.load(legacy);
+    legacy.exec(`
+      DROP TABLE vec_episodes;
+      DROP TABLE vec_semantics;
+      DROP TABLE vec_procedures;
+      CREATE VIRTUAL TABLE vec_episodes USING vec0(
+        id text primary key,
+        embedding float[8] distance_metric=cosine,
+        source text,
+        consolidated integer
+      );
+      CREATE VIRTUAL TABLE vec_semantics USING vec0(
+        id text primary key,
+        embedding float[8] distance_metric=cosine,
+        state text
+      );
+      CREATE VIRTUAL TABLE vec_procedures USING vec0(
+        id text primary key,
+        embedding float[8] distance_metric=cosine,
+        state text
+      );
+    `);
+    legacy
+      .prepare('INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)')
+      .run('ep-alpha', embedding, 'direct-observation', BigInt(1));
+    legacy
+      .prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)')
+      .run('sem-beta', embedding, 'active');
+    legacy
+      .prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)')
+      .run('proc-alpha', embedding, 'active');
+    legacy.close();
+
+    const { db: migrated, migrated: requiresReembed } = createDatabase(TEST_DIR, { dimensions });
+    expect(requiresReembed).toBe(false);
+    expect(
+      migrated.prepare('SELECT id, agent, source, consolidated FROM vec_episodes').get(),
+    ).toMatchObject({
+      id: 'ep-alpha',
+      agent: 'agent-alpha',
+      source: 'direct-observation',
+      consolidated: 1,
+    });
+    expect(migrated.prepare('SELECT id, agent, state FROM vec_semantics').get()).toMatchObject({
+      id: 'sem-beta',
+      agent: 'agent-beta',
+      state: 'active',
+    });
+    expect(migrated.prepare('SELECT id, agent, state FROM vec_procedures').get()).toMatchObject({
+      id: 'proc-alpha',
+      agent: 'agent-alpha',
+      state: 'active',
+    });
+    for (const table of ['vec_episodes', 'vec_semantics', 'vec_procedures']) {
+      const { sql } = migrated.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(table);
+      expect(sql).toMatch(/agent\s+text\s+partition\s+key/i);
+    }
+    closeDatabase(migrated);
+
+    const { db: reopened } = createDatabase(TEST_DIR, { dimensions });
+    expect(reopened.prepare('SELECT COUNT(*) AS c FROM vec_episodes').get().c).toBe(1);
+    closeDatabase(reopened);
   });
 });
 
@@ -314,9 +428,9 @@ describe('null-dimension guard', () => {
     expect(() => {
       db2
         .prepare(
-          'INSERT INTO vec_episodes (id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
+          'INSERT INTO vec_episodes (id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
         )
-        .run('test-vec', Buffer.from(embedding.buffer), 'direct-observation', BigInt(0));
+        .run('test-vec', 'default', Buffer.from(embedding.buffer), 'direct-observation', BigInt(0));
     }).not.toThrow();
 
     closeDatabase(db2);

@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import type { DecayResult, HalfLives } from './types.js';
 import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier } from './confidence.js';
 import { interferenceModifier } from './interference.js';
-import { daysBetween } from './utils.js';
+import { daysBetween, requireAgent } from './utils.js';
 
 interface DecaySemanticRow {
   id: string;
@@ -31,30 +31,43 @@ export function applyDecay(
   {
     dormantThreshold = 0.1,
     halfLives,
-  }: { dormantThreshold?: number; halfLives?: Partial<HalfLives> } = {},
+    agent,
+  }: {
+    dormantThreshold?: number;
+    halfLives?: Partial<HalfLives>;
+    agent?: string;
+  } = {},
 ): DecayResult {
   const now = new Date();
+  const scopedAgent = agent === undefined ? undefined : requireAgent(agent);
+  const agentClause = scopedAgent ? ' AND agent = ?' : '';
+  const selectParams = scopedAgent ? [scopedAgent] : [];
   let totalEvaluated = 0;
   let transitionedToDormant = 0;
 
   const selectActiveSemantics = db.prepare(`
     SELECT id, supporting_count, contradicting_count, created_at,
            last_reinforced_at, retrieval_count, interference_count, salience
-    FROM semantics WHERE state = 'active'
+    FROM semantics WHERE state = 'active'${agentClause}
   `);
   const selectActiveProcedures = db.prepare(`
     SELECT id, success_count, failure_count, created_at,
            last_reinforced_at, retrieval_count, interference_count, salience
-    FROM procedures WHERE state = 'active'
+    FROM procedures WHERE state = 'active'${agentClause}
   `);
-  const markDormantSem = db.prepare('UPDATE semantics SET state = ? WHERE id = ?');
-  const markDormantProc = db.prepare('UPDATE procedures SET state = ? WHERE id = ?');
+  const updateAgentClause = scopedAgent ? ' AND agent = ?' : '';
+  const markDormantSem = db.prepare(
+    `UPDATE semantics SET state = ? WHERE id = ?${updateAgentClause}`,
+  );
+  const markDormantProc = db.prepare(
+    `UPDATE procedures SET state = ? WHERE id = ?${updateAgentClause}`,
+  );
 
   // Read inside the transaction so concurrent writes can't race the dormant
   // marking — we must transition the same rows we just evaluated.
   const decayTxn = db.transaction(() => {
-    const semantics = selectActiveSemantics.all() as DecaySemanticRow[];
-    const procedures = selectActiveProcedures.all() as DecayProceduralRow[];
+    const semantics = selectActiveSemantics.all(...selectParams) as DecaySemanticRow[];
+    const procedures = selectActiveProcedures.all(...selectParams) as DecayProceduralRow[];
     for (const sem of semantics) {
       totalEvaluated++;
       const ageDays = daysBetween(sem.created_at, now);
@@ -76,7 +89,7 @@ export function applyDecay(
       confidence = Math.max(0, Math.min(1, confidence));
 
       if (confidence < dormantThreshold) {
-        markDormantSem.run('dormant', sem.id);
+        markDormantSem.run('dormant', sem.id, ...selectParams);
         transitionedToDormant++;
       }
     }
@@ -102,7 +115,7 @@ export function applyDecay(
       confidence = Math.max(0, Math.min(1, confidence));
 
       if (confidence < dormantThreshold) {
-        markDormantProc.run('dormant', proc.id);
+        markDormantProc.run('dormant', proc.id, ...selectParams);
         transitionedToDormant++;
       }
     }

@@ -1,7 +1,7 @@
 {
   "name": "audrey",
-  "version": "1.0.3",
-  "description": "Local-first memory runtime for AI agents with recall, consolidation, memory reflexes, contradiction detection, and tool-trace learning",
+  "version": "1.1.0",
+  "description": "Automatic, evidence-backed memory and pre-action Guard for Codex, Claude Code, and custom AI agents",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -176,6 +176,9 @@
     "local-first-memory",
     "rag",
     "claude",
+    "claude-code",
+    "codex",
+    "agent-memory-autopilot",
     "agent-framework",
     "rest-api",
     "http-server"
