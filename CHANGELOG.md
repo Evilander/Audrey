@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1 - 2026-07-10
+
+### npm 12 install compatibility
+
+- Documents and emits a least-privilege global install command that explicitly allows only Audrey's four required dependency lifecycle scripts. This keeps SQLite and local inference working under npm 12's new default-deny install-script policy without enabling arbitrary package scripts.
+- Adds pinned project-level npm 12 approvals for Audrey's current native/runtime dependencies and regression coverage for the CLI guidance.
+- Pins the trusted npm publisher to npm 11.14.1 so the immutable 1.1.0 tag can be recovered safely after npm 12 withheld `better-sqlite3`'s native binding during its first publish attempt.
+
 ## 1.1.0 - 2026-07-09
 
 ### Audrey Autopilot

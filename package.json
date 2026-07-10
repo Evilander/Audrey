@@ -1,6 +1,6 @@
 {
   "name": "audrey",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Automatic, evidence-backed memory and pre-action Guard for Codex, Claude Code, and custom AI agents",
   "type": "module",
   "main": "dist/src/index.js",

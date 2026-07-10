@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = process.cwd();
-const DEFAULT_VERSION = '1.1.0';
+const DEFAULT_VERSION = '1.1.1';
 const DEFAULT_REMOTE = 'https://github.com/Evilander/Audrey.git';
 
 function defaultReleaseBundle(version = DEFAULT_VERSION) {
