@@ -34,9 +34,11 @@ The model does not have to remember that a memory tool exists. That is the point
 Install Audrey once, review the hooks once, and then use Codex or Claude Code normally.
 
 ```bash
-npm install -g audrey
+npm install -g audrey --allow-scripts=better-sqlite3,onnxruntime-node,sharp,protobufjs
 audrey install --host auto
 ```
+
+The explicit install-script list is for npm 12's safer dependency policy. It permits only the four packages Audrey needs for SQLite, local inference, and their generated runtime files. With npm 11 or earlier, the shorter `npm install -g audrey` is equivalent.
 
 `auto` configures whichever supported CLIs are installed. You can choose one explicitly:
 
@@ -76,7 +78,7 @@ This is more useful than “the vector search found a vaguely similar error.” 
 Try the complete loop without an API key or network call:
 
 ```bash
-npx audrey demo --scenario repeated-failure
+audrey demo --scenario repeated-failure
 ```
 
 ## What Audrey remembers
@@ -127,12 +129,10 @@ Vector candidates are partitioned by agent before nearest-neighbor ranking, so o
 ## See it before installing anything
 
 ```bash
-npx audrey doctor
-npx audrey demo
-npx audrey install --host auto --dry-run
+npm exec --yes --package=audrey --allow-scripts=better-sqlite3,onnxruntime-node,sharp,protobufjs -- audrey demo --scenario repeated-failure
 ```
 
-The dry run prints the MCP and lifecycle-hook configuration for both hosts without changing files.
+That command runs from the npm cache, exercises the full SQLite-backed Guard loop, and leaves host configuration unchanged.
 
 <div align="center">
   <img src="docs/assets/audrey-feature-grid.jpg" alt="Audrey memory continuity, recall, evidence, local storage, and memory-before-action" width="760">
@@ -163,6 +163,13 @@ Everything below is the machinery. The short version above is the product.
 ```bash
 npm install audrey
 pip install audrey-memory
+```
+
+For a project install with npm 12, approve Audrey's reviewed dependency scripts in the project root and rebuild once if npm reported that it blocked them:
+
+```bash
+npm install-scripts approve better-sqlite3 onnxruntime-node sharp protobufjs
+npm rebuild
 ```
 
 For Autopilot, prefer a global or otherwise stable installation. Hook and MCP configuration pins the actual Node executable and Audrey entrypoint; an ephemeral `npx` cache is not a durable production runtime.
@@ -381,7 +388,7 @@ npm run pack:check
 GuardBench currently contains ten local, deterministic pre-action scenarios covering repeated failures, procedures, scope changes, recovery, redaction, conflicting instructions, and noisy stores. The checked-in v1 methodology uses a mock 64-dimensional embedding provider and exists to catch regressions. A perfect local pass is not a claim about real-provider latency or production false-positive rates.
 
 <!-- guardbench-summary:start -->
-Latest local result in this checkout: 10/10 scenarios passed, 100% prevention rate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks, and 3.892ms / 15.215ms p50/p95 Guard latency under the mock-provider methodology.
+Latest local result in this checkout: 10/10 scenarios passed, 100% prevention rate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks, and 3.805ms / 13.445ms p50/p95 Guard latency under the mock-provider methodology.
 <!-- guardbench-summary:end -->
 
 `benchmarks/perf-snapshot.js` measures encode and hybrid-recall p50/p95/p99 at configurable corpus sizes with machine and provider provenance. Run it on the hardware and embedding provider you plan to operate; hosted-provider latency is dominated by its network round trip.

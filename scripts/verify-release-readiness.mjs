@@ -13,7 +13,7 @@ import { verifyPaperSubmissionBundle } from './verify-paper-submission-bundle.mj
 import { verifyPublicationPack } from './verify-publication-pack.mjs';
 
 const ROOT = process.cwd();
-const DEFAULT_TARGET_VERSION = '1.1.0';
+const DEFAULT_TARGET_VERSION = '1.1.1';
 const PYPI_CREDENTIAL_ENVS = ['TWINE_PASSWORD', 'PYPI_API_TOKEN', 'UV_PUBLISH_TOKEN'];
 const NPM_REGISTRY = 'https://registry.npmjs.org/';
 const PYPI_JSON_BASE = 'https://pypi.org/pypi';

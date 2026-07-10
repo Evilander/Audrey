@@ -229,8 +229,7 @@ export async function buildPreflight(
       severity: 'high',
       message: 'Audrey memory index is unhealthy; recall may be incomplete or stale.',
       reason: 'memoryStatus().healthy is false.',
-      recommended_action:
-        'Run npx audrey status and npx audrey reembed before depending on memory.',
+      recommended_action: 'Run audrey status and audrey reembed before depending on memory.',
     });
   } else if (status?.reembed_recommended) {
     addWarning(warnings, seen, {
@@ -238,7 +237,7 @@ export async function buildPreflight(
       severity: 'medium',
       message: 'Audrey recommends re-embedding before recall-sensitive work.',
       reason: 'memoryStatus().reembed_recommended is true.',
-      recommended_action: 'Run npx audrey reembed during a safe maintenance window.',
+      recommended_action: 'Run audrey reembed during a safe maintenance window.',
     });
   }
 
@@ -250,7 +249,7 @@ export async function buildPreflight(
       reason: shorten(error.message, 220),
       evidence_id: `recall:${error.type}:${error.stage}`,
       recommended_action:
-        'Run npx audrey status and repair the degraded recall path before relying on Guard.',
+        'Run audrey status and repair the degraded recall path before relying on Guard.',
     });
   }
 
