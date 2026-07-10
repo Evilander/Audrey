@@ -26,6 +26,7 @@ export default tseslint.config(
       '.tmp-vitest/**',
       '.tmp/**',
       '.archive/**',
+      '.worktrees/**',
       'coverage/**',
       'benchmarks/output/**',
       'benchmarks/.tmp/**',

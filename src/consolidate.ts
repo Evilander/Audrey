@@ -58,7 +58,7 @@ function clusterViaKNN(
       SELECT v.id, v.distance
       FROM vec_episodes v
       JOIN episodes e ON e.id = v.id
-      WHERE v.embedding MATCH ? AND k = ? AND v.consolidated = 0 AND e.agent = ?
+      WHERE v.embedding MATCH ? AND k = ? AND v.agent = ? AND v.consolidated = 0 AND e.agent = ?
     `)
     : db.prepare(`
       SELECT id, distance
@@ -72,7 +72,7 @@ function clusterViaKNN(
     if (!vecRow) continue;
 
     const neighbors = (
-      agent ? knnQuery.all(vecRow.embedding, k, agent) : knnQuery.all(vecRow.embedding, k)
+      agent ? knnQuery.all(vecRow.embedding, k, agent, agent) : knnQuery.all(vecRow.embedding, k)
     ) as KnnRow[];
     for (const neighbor of neighbors) {
       if (neighbor.id === ep.id) continue;
@@ -103,7 +103,7 @@ function clusterViaKNN(
 
 export function clusterEpisodes(
   db: Database.Database,
-  embeddingProvider: EmbeddingProvider,
+  _embeddingProvider: EmbeddingProvider,
   options: { similarityThreshold?: number; minClusterSize?: number; agent?: string } = {},
 ): EpisodeRow[][] {
   const { similarityThreshold = 0.85, minClusterSize = 3, agent } = options;
@@ -209,7 +209,7 @@ export async function runConsolidation(
       ) VALUES (?, ?, ?, ?, 'active', ?, ?, 0, 0, ?, ?, ?, ?)
     `);
     const insertVecProcedure = db.prepare(
-      'INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)',
+      'INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
     );
     const insertSemantic = db.prepare(`
       INSERT INTO semantics (
@@ -220,7 +220,7 @@ export async function runConsolidation(
       ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertVecSemantic = db.prepare(
-      'INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)',
+      'INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
     );
     const updateRunCompleted = db.prepare(`
       UPDATE consolidation_runs
@@ -296,7 +296,7 @@ export async function runConsolidation(
             prepared.createdAt,
             prepared.maxSalience,
           );
-          insertVecProcedure.run(prepared.memoryId, prepared.embeddingBuffer, 'active');
+          insertVecProcedure.run(prepared.memoryId, agent, prepared.embeddingBuffer, 'active');
           insertFTSProcedure(db, prepared.memoryId, prepared.principle.content);
           proceduresExtracted++;
         } else {
@@ -316,17 +316,24 @@ export async function runConsolidation(
             prepared.createdAt,
             prepared.maxSalience,
           );
-          insertVecSemantic.run(prepared.memoryId, prepared.embeddingBuffer, 'active');
+          insertVecSemantic.run(prepared.memoryId, agent, prepared.embeddingBuffer, 'active');
           insertFTSSemantic(db, prepared.memoryId, prepared.principle.content);
         }
 
         db.prepare(`UPDATE episodes SET consolidated = 1 WHERE id IN (${placeholders})`).run(
           ...prepared.clusterIds,
         );
-        db.prepare(`UPDATE vec_episodes SET consolidated = ? WHERE id IN (${placeholders})`).run(
-          BigInt(1),
+        db.prepare(`DELETE FROM vec_episodes WHERE id IN (${placeholders})`).run(
           ...prepared.clusterIds,
         );
+        db.prepare(
+          `
+          INSERT INTO vec_episodes(id, agent, embedding, source, consolidated)
+          SELECT id, agent, embedding, source, consolidated
+          FROM episodes
+          WHERE id IN (${placeholders}) AND embedding IS NOT NULL
+        `,
+        ).run(...prepared.clusterIds);
 
         allInputIds.push(...prepared.clusterIds);
         allOutputIds.push(prepared.memoryId);

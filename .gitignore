@@ -21,6 +21,7 @@ memorybench/
 windows-smoke-job-*.log
 gcm-diagnose.log
 *.log
+*.audrey-*.bak
 audrey-arxiv-preview.png
 
 # Node build output

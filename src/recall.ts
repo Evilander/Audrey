@@ -20,7 +20,7 @@ import {
 import { interferenceModifier } from './interference.js';
 import { contextMatchRatio, contextModifier } from './context.js';
 import { moodCongruenceModifier, affectSimilarity } from './affect.js';
-import { daysBetween, safeJsonParse } from './utils.js';
+import { daysBetween, requireAgent, resolveMemoryScope, safeJsonParse } from './utils.js';
 import { ftsIdsByType, fuseResults } from './hybrid-recall.js';
 import type { ProfileRecorder } from './profile.js';
 
@@ -464,10 +464,10 @@ function buildProceduralEntry(
   return entry;
 }
 
-function stateClause(includeDormant: boolean): string {
+function stateClause(alias: 's' | 'p', includeDormant: boolean): string {
   return includeDormant
-    ? "AND (v.state = 'active' OR v.state = 'context_dependent' OR v.state = 'dormant')"
-    : "AND (v.state = 'active' OR v.state = 'context_dependent')";
+    ? `AND (${alias}.state = 'active' OR ${alias}.state = 'context_dependent' OR ${alias}.state = 'dormant')`
+    : `AND (${alias}.state = 'active' OR ${alias}.state = 'context_dependent')`;
 }
 
 function matchesDateFilters(createdAt: string, filters: RecallFilters): boolean {
@@ -480,27 +480,60 @@ function safeKForCount(rowCount: number, candidateK: number): number {
   return rowCount > 0 ? Math.min(candidateK, rowCount) : 0;
 }
 
+function initialCandidateK(limit: number, hasFilters: boolean): number {
+  return limit * (hasFilters ? 5 : 3);
+}
+
+function retryCandidateK(initialK: number, maxVectorCount: number): number {
+  return Math.min(initialK * 4, maxVectorCount);
+}
+
+function prepareRetrievalUpdate(
+  db: Database.Database,
+  table: 'semantics' | 'procedures',
+): (timestamp: string, id: string) => void {
+  const statement = db.prepare(
+    `UPDATE ${table} SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id = ?`,
+  );
+  return (timestamp: string, id: string): void => {
+    statement.run(timestamp, id);
+  };
+}
+
 function countVectorTable(
   db: Database.Database,
   table: 'vec_episodes' | 'vec_semantics' | 'vec_procedures',
+  agent?: string,
 ): number {
   try {
-    return (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as CountRow).c || 0;
+    const row = agent
+      ? db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE agent = ?`).get(agent)
+      : db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get();
+    return (row as CountRow).c || 0;
   } catch {
     return 0;
   }
 }
 
-function countVectorTables(db: Database.Database, searchTypes: MemoryType[]): VectorTableCounts {
+function countVectorTables(
+  db: Database.Database,
+  searchTypes: MemoryType[],
+  agent?: string,
+): VectorTableCounts {
+  const agentClause = agent ? ' WHERE agent = ?' : '';
+  const params: string[] = [];
   const selectEpisodic = searchTypes.includes('episodic')
-    ? '(SELECT COUNT(*) FROM vec_episodes) AS episodic'
+    ? `(SELECT COUNT(*) FROM vec_episodes${agentClause}) AS episodic`
     : '0 AS episodic';
+  if (agent && searchTypes.includes('episodic')) params.push(agent);
   const selectSemantic = searchTypes.includes('semantic')
-    ? '(SELECT COUNT(*) FROM vec_semantics) AS semantic'
+    ? `(SELECT COUNT(*) FROM vec_semantics${agentClause}) AS semantic`
     : '0 AS semantic';
+  if (agent && searchTypes.includes('semantic')) params.push(agent);
   const selectProcedural = searchTypes.includes('procedural')
-    ? '(SELECT COUNT(*) FROM vec_procedures) AS procedural'
+    ? `(SELECT COUNT(*) FROM vec_procedures${agentClause}) AS procedural`
     : '0 AS procedural';
+  if (agent && searchTypes.includes('procedural')) params.push(agent);
   try {
     const row = db
       .prepare(
@@ -511,7 +544,7 @@ function countVectorTables(db: Database.Database, searchTypes: MemoryType[]): Ve
         ${selectProcedural}
     `,
       )
-      .get() as VectorCountsRow;
+      .get(...params) as VectorCountsRow;
     return {
       episodic: row.episodic || 0,
       semantic: row.semantic || 0,
@@ -519,9 +552,11 @@ function countVectorTables(db: Database.Database, searchTypes: MemoryType[]): Ve
     };
   } catch {
     return {
-      episodic: searchTypes.includes('episodic') ? countVectorTable(db, 'vec_episodes') : 0,
-      semantic: searchTypes.includes('semantic') ? countVectorTable(db, 'vec_semantics') : 0,
-      procedural: searchTypes.includes('procedural') ? countVectorTable(db, 'vec_procedures') : 0,
+      episodic: searchTypes.includes('episodic') ? countVectorTable(db, 'vec_episodes', agent) : 0,
+      semantic: searchTypes.includes('semantic') ? countVectorTable(db, 'vec_semantics', agent) : 0,
+      procedural: searchTypes.includes('procedural')
+        ? countVectorTable(db, 'vec_procedures', agent)
+        : 0,
     };
   }
 }
@@ -541,8 +576,10 @@ function knnEpisodic(
   const safeK = safeKForCount(tableCount, candidateK);
   if (safeK === 0) return [];
   const privateClause = includePrivate ? '' : 'AND e."private" = 0';
-  const agentClause = filters.agent ? 'AND e.agent = ?' : '';
-  const params = filters.agent ? [queryBuffer, safeK, filters.agent] : [queryBuffer, safeK];
+  const agentClause = filters.agent ? 'AND v.agent = ? AND e.agent = ?' : '';
+  const params = filters.agent
+    ? [queryBuffer, safeK, filters.agent, filters.agent]
+    : [queryBuffer, safeK];
   const rows = db
     .prepare(
       `
@@ -612,11 +649,13 @@ function knnSemantic(
   includeDormant: boolean,
   confidenceConfig: Partial<ConfidenceConfig>,
   filters: RecallFilters = {},
-): { results: RecallResult[]; matchedIds: string[] } {
+): RecallResult[] {
   const safeK = safeKForCount(tableCount, candidateK);
-  if (safeK === 0) return { results: [], matchedIds: [] };
-  const agentClause = filters.agent ? 'AND s.agent = ?' : '';
-  const params = filters.agent ? [queryBuffer, safeK, filters.agent] : [queryBuffer, safeK];
+  if (safeK === 0) return [];
+  const agentClause = filters.agent ? 'AND v.agent = ? AND s.agent = ?' : '';
+  const params = filters.agent
+    ? [queryBuffer, safeK, filters.agent, filters.agent]
+    : [queryBuffer, safeK];
   const rows = db
     .prepare(
       `
@@ -625,23 +664,21 @@ function knnSemantic(
     JOIN semantics s ON s.id = v.id
     WHERE v.embedding MATCH ?
       AND k = ?
-      ${stateClause(includeDormant)}
+      ${stateClause('s', includeDormant)}
       ${agentClause}
   `,
     )
     .all(...params) as SemanticWithSimilarity[];
 
   const results: RecallResult[] = [];
-  const matchedIds: string[] = [];
   for (const row of rows) {
     if (!matchesDateFilters(row.created_at, filters)) continue;
     const confidence = computeSemanticConfidence(row, now, confidenceConfig);
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
-    matchedIds.push(row.id);
     results.push(buildSemanticEntry(row, confidence, score, includeProvenance));
   }
-  return { results, matchedIds };
+  return results;
 }
 
 function knnProcedural(
@@ -655,11 +692,13 @@ function knnProcedural(
   includeDormant: boolean,
   confidenceConfig: Partial<ConfidenceConfig>,
   filters: RecallFilters = {},
-): { results: RecallResult[]; matchedIds: string[] } {
+): RecallResult[] {
   const safeK = safeKForCount(tableCount, candidateK);
-  if (safeK === 0) return { results: [], matchedIds: [] };
-  const agentClause = filters.agent ? 'AND p.agent = ?' : '';
-  const params = filters.agent ? [queryBuffer, safeK, filters.agent] : [queryBuffer, safeK];
+  if (safeK === 0) return [];
+  const agentClause = filters.agent ? 'AND v.agent = ? AND p.agent = ?' : '';
+  const params = filters.agent
+    ? [queryBuffer, safeK, filters.agent, filters.agent]
+    : [queryBuffer, safeK];
   const rows = db
     .prepare(
       `
@@ -668,23 +707,21 @@ function knnProcedural(
     JOIN procedures p ON p.id = v.id
     WHERE v.embedding MATCH ?
       AND k = ?
-      ${stateClause(includeDormant)}
+      ${stateClause('p', includeDormant)}
       ${agentClause}
   `,
     )
     .all(...params) as ProceduralWithSimilarity[];
 
   const results: RecallResult[] = [];
-  const matchedIds: string[] = [];
   for (const row of rows) {
     if (!matchesDateFilters(row.created_at, filters)) continue;
     const confidence = computeProceduralConfidence(row, now, confidenceConfig);
     if (confidence < minConfidence) continue;
     const score = row.similarity * confidence;
-    matchedIds.push(row.id);
     results.push(buildProceduralEntry(row, confidence, score, includeProvenance));
   }
-  return { results, matchedIds };
+  return results;
 }
 
 export async function* recallStream(
@@ -712,33 +749,21 @@ export async function* recallStream(
   const searchTypes: MemoryType[] = types || ['episodic', 'semantic', 'procedural'];
   const now = new Date();
   const hasFilters = tags?.length || sources?.length || after || before;
-  const agentFilter = options.scope === 'agent' ? options.agent : undefined;
+  const scope = resolveMemoryScope(options.scope, 'shared');
+  const agentFilter = scope === 'agent' ? requireAgent(options.agent) : undefined;
   const filters: RecallFilters = { tags, sources, after, before, agent: agentFilter };
 
-  const allResults: RecallResult[] = [];
+  let vectorResults: RecallResult[] = [];
+  let queryBuffer: Buffer | undefined;
+  let vectorCounts: VectorTableCounts | undefined;
+  let vectorCandidateK = 0;
 
-  // Vector pass — skipped entirely in 'keyword' mode. Still runs in 'hybrid'
-  // (default) and 'vector' modes so the underlying similarity + confidence
-  // scoring fires as before.
-  if (retrieval !== 'keyword') {
-    reportMissingVectorTables(db, searchTypes, options);
-    const queryVector = profile
-      ? await profile.measure('recall.embedding', () => embeddingProvider.embed(query))
-      : await embeddingProvider.embed(query);
-    const queryBuffer = profile
-      ? profile.measureSync('recall.vector_to_buffer', () =>
-          embeddingProvider.vectorToBuffer(queryVector),
-        )
-      : embeddingProvider.vectorToBuffer(queryVector);
-    const vectorCounts = profile
-      ? profile.measureSync('recall.vector_counts', () => countVectorTables(db, searchTypes))
-      : countVectorTables(db, searchTypes);
-    const maxVectorCount = Math.max(
-      vectorCounts.episodic,
-      vectorCounts.semantic,
-      vectorCounts.procedural,
-    );
-    const candidateK = agentFilter ? maxVectorCount : hasFilters ? limit * 5 : limit * 3;
+  const runVectorPass = (
+    buffer: Buffer,
+    counts: VectorTableCounts,
+    candidateK: number,
+  ): RecallResult[] => {
+    const passResults: RecallResult[] = [];
 
     if (searchTypes.includes('episodic')) {
       try {
@@ -746,9 +771,9 @@ export async function* recallStream(
           ? profile.measureSync('recall.episodic_knn', () =>
               knnEpisodic(
                 db,
-                queryBuffer,
+                buffer,
                 candidateK,
-                vectorCounts.episodic,
+                counts.episodic,
                 now,
                 minConfidence,
                 includeProvenance,
@@ -759,9 +784,9 @@ export async function* recallStream(
             )
           : knnEpisodic(
               db,
-              queryBuffer,
+              buffer,
               candidateK,
-              vectorCounts.episodic,
+              counts.episodic,
               now,
               minConfidence,
               includeProvenance,
@@ -769,7 +794,7 @@ export async function* recallStream(
               filters,
               includePrivate,
             );
-        allResults.push(...episodic);
+        passResults.push(...episodic);
       } catch (err) {
         recordPartialFailure(options, 'episodic', 'recall.episodic_knn', err);
       }
@@ -777,13 +802,13 @@ export async function* recallStream(
 
     if (searchTypes.includes('semantic')) {
       try {
-        const { results: semResults, matchedIds: semIds } = profile
+        const semantic = profile
           ? profile.measureSync('recall.semantic_knn', () =>
               knnSemantic(
                 db,
-                queryBuffer,
+                buffer,
                 candidateK,
-                vectorCounts.semantic,
+                counts.semantic,
                 now,
                 minConfidence,
                 includeProvenance,
@@ -794,9 +819,9 @@ export async function* recallStream(
             )
           : knnSemantic(
               db,
-              queryBuffer,
+              buffer,
               candidateK,
-              vectorCounts.semantic,
+              counts.semantic,
               now,
               minConfidence,
               includeProvenance,
@@ -804,19 +829,7 @@ export async function* recallStream(
               confidenceConfig || {},
               filters,
             );
-        allResults.push(...semResults);
-
-        if (semIds.length > 0) {
-          const nowISO = now.toISOString();
-          const placeholders = semIds.map(() => '?').join(',');
-          const updateSemantic = (): void => {
-            db.prepare(
-              `UPDATE semantics SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`,
-            ).run(nowISO, ...semIds);
-          };
-          if (profile) profile.measureSync('recall.semantic_reinforce', updateSemantic);
-          else updateSemantic();
-        }
+        passResults.push(...semantic);
       } catch (err) {
         recordPartialFailure(options, 'semantic', 'recall.semantic_knn', err);
       }
@@ -824,13 +837,13 @@ export async function* recallStream(
 
     if (searchTypes.includes('procedural')) {
       try {
-        const { results: procResults, matchedIds: procIds } = profile
+        const procedural = profile
           ? profile.measureSync('recall.procedural_knn', () =>
               knnProcedural(
                 db,
-                queryBuffer,
+                buffer,
                 candidateK,
-                vectorCounts.procedural,
+                counts.procedural,
                 now,
                 minConfidence,
                 includeProvenance,
@@ -841,9 +854,9 @@ export async function* recallStream(
             )
           : knnProcedural(
               db,
-              queryBuffer,
+              buffer,
               candidateK,
-              vectorCounts.procedural,
+              counts.procedural,
               now,
               minConfidence,
               includeProvenance,
@@ -851,60 +864,117 @@ export async function* recallStream(
               confidenceConfig || {},
               filters,
             );
-        allResults.push(...procResults);
-
-        if (procIds.length > 0) {
-          const nowISO = now.toISOString();
-          const placeholders = procIds.map(() => '?').join(',');
-          const updateProcedural = (): void => {
-            db.prepare(
-              `UPDATE procedures SET retrieval_count = retrieval_count + 1, last_reinforced_at = ? WHERE id IN (${placeholders})`,
-            ).run(nowISO, ...procIds);
-          };
-          if (profile) profile.measureSync('recall.procedural_reinforce', updateProcedural);
-          else updateProcedural();
-        }
+        passResults.push(...procedural);
       } catch (err) {
         recordPartialFailure(options, 'procedural', 'recall.procedural_knn', err);
       }
     }
+
+    return passResults;
+  };
+
+  // Vector pass — skipped entirely in 'keyword' mode. Still runs in 'hybrid'
+  // (default) and 'vector' modes so the underlying similarity + confidence
+  // scoring fires as before.
+  if (retrieval !== 'keyword') {
+    reportMissingVectorTables(db, searchTypes, options);
+    const queryVector = profile
+      ? await profile.measure('recall.embedding', () => embeddingProvider.embed(query))
+      : await embeddingProvider.embed(query);
+    queryBuffer = profile
+      ? profile.measureSync('recall.vector_to_buffer', () =>
+          embeddingProvider.vectorToBuffer(queryVector),
+        )
+      : embeddingProvider.vectorToBuffer(queryVector);
+    vectorCounts = profile
+      ? profile.measureSync('recall.vector_counts', () =>
+          countVectorTables(db, searchTypes, agentFilter),
+        )
+      : countVectorTables(db, searchTypes, agentFilter);
+    vectorCandidateK = initialCandidateK(limit, Boolean(hasFilters));
+    vectorResults = runVectorPass(queryBuffer, vectorCounts, vectorCandidateK);
   }
 
-  let resultsToGuard = allResults;
-
+  let ftsIds = new Map<MemoryType, string[]>();
+  let ftsLookupSucceeded = false;
   if (retrieval !== 'vector') {
-    const candidateK = agentFilter ? 10_000 : hasFilters ? limit * 5 : limit * 3;
+    const candidateK = initialCandidateK(limit, Boolean(hasFilters));
     try {
-      const ftsIds = profile
+      ftsIds = profile
         ? profile.measureSync('recall.fts_lookup', () =>
             ftsIdsByType(db, query, searchTypes, candidateK, agentFilter),
           )
         : ftsIdsByType(db, query, searchTypes, candidateK, agentFilter);
-      const fuse = (): RecallResult[] =>
-        fuseResults(db, {
-          vectorResults: allResults,
-          ftsIds,
-          mode: retrieval,
-          includePrivate,
-          includeDormant,
-          minConfidence,
-          filters,
-          agentFilter,
-        });
-      const fused = profile ? profile.measureSync('recall.fuse_results', fuse) : fuse();
-      resultsToGuard = fused;
+      ftsLookupSucceeded = true;
     } catch (err) {
       recordPartialFailure(options, 'fts', 'recall.fts_lookup', err);
-      if (retrieval === 'keyword') resultsToGuard = [];
     }
   }
 
-  const top = profile
-    ? profile.measureSync('recall.result_guards', () =>
-        applyResultGuards(query, resultsToGuard, limit),
-      )
-    : applyResultGuards(query, resultsToGuard, limit);
+  const fuseAndGuard = (candidates: RecallResult[]): RecallResult[] => {
+    let resultsToGuard = candidates;
+    if (retrieval !== 'vector') {
+      if (ftsLookupSucceeded) {
+        const fuse = (): RecallResult[] =>
+          fuseResults(db, {
+            vectorResults: candidates,
+            ftsIds,
+            mode: retrieval,
+            includePrivate,
+            includeDormant,
+            minConfidence,
+            filters,
+            agentFilter,
+          });
+        resultsToGuard = profile ? profile.measureSync('recall.fuse_results', fuse) : fuse();
+      } else if (retrieval === 'keyword') {
+        resultsToGuard = [];
+      }
+    }
+
+    return profile
+      ? profile.measureSync('recall.result_guards', () =>
+          applyResultGuards(query, resultsToGuard, limit),
+        )
+      : applyResultGuards(query, resultsToGuard, limit);
+  };
+
+  let top = fuseAndGuard(vectorResults);
+
+  if (agentFilter && queryBuffer && vectorCounts && top.length < limit) {
+    const maxPartitionCount = Math.max(
+      vectorCounts.episodic,
+      vectorCounts.semantic,
+      vectorCounts.procedural,
+    );
+    const retryK = retryCandidateK(vectorCandidateK, maxPartitionCount);
+    if (retryK > vectorCandidateK) {
+      vectorResults = runVectorPass(queryBuffer, vectorCounts, retryK);
+      top = fuseAndGuard(vectorResults);
+    }
+  }
+
+  const reinforcedAt = now.toISOString();
+  let updateSemantic: ((timestamp: string, id: string) => void) | undefined;
+  let updateProcedural: ((timestamp: string, id: string) => void) | undefined;
+
   for (const entry of top) {
+    if (entry.type !== 'episodic') {
+      const stage = `recall.${entry.type}_reinforce`;
+      try {
+        const update =
+          entry.type === 'semantic'
+            ? (updateSemantic ??= prepareRetrievalUpdate(db, 'semantics'))
+            : (updateProcedural ??= prepareRetrievalUpdate(db, 'procedures'));
+        const reinforce = (): void => {
+          update(reinforcedAt, entry.id);
+        };
+        if (profile) profile.measureSync(stage, reinforce);
+        else reinforce();
+      } catch (err) {
+        recordPartialFailure(options, entry.type, stage, err);
+      }
+    }
     yield entry;
   }
 }

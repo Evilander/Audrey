@@ -135,9 +135,10 @@ describe('encodeEpisode', () => {
       content: 'vec test episode',
       source: 'direct-observation',
     });
-    const row = db.prepare('SELECT id, source FROM vec_episodes WHERE id = ?').get(id);
+    const row = db.prepare('SELECT id, agent, source FROM vec_episodes WHERE id = ?').get(id);
     expect(row).toBeDefined();
     expect(row.id).toBe(id);
+    expect(row.agent).toBe('default');
     expect(row.source).toBe('direct-observation');
   });
 

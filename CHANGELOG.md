@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.1.0 - 2026-07-09
+
+### Audrey Autopilot
+
+- Adds one normalized lifecycle runtime for current Codex and Claude Code hooks. Session and prompt hooks inject bounded memory context; pre-tool hooks run exact-action Guard checks; post-tool hooks close the matching receipt by `session_id + tool_use_id`; explicitly reported failures form redacted durable memories; stop/compact hooks run due-only consolidation. Opaque Codex Bash results without exit status remain `unknown` rather than being mislabeled as success.
+- Adds deterministic capture for explicit durable user language such as “remember that…”, “I prefer…”, and “from now on…”. Raw prompt events remain hash-only, secrets are rejected, and injected memory is redacted and labeled as evidence rather than authority.
+- Adds host-specific, idempotent hook configuration for Codex and Claude Code with documented scopes, exact side-effectful tool matchers, timeouts, Windows-safe commands, legacy Audrey-hook replacement, private backups, dry runs, and owned-hook uninstall.
+- `audrey install` now defaults to `--host auto`, configures installed Codex and/or Claude Code CLIs, installs Autopilot hooks, warms the pinned local runtime, and rolls MCP configuration back if registration fails. Scope validation happens before any host mutation, and MCP-only installs no longer claim Autopilot readiness. Uninstall has a non-mutating preview, understands Claude's project-keyed local registration, preserves hooks in MCP-only mode, and propagates real CLI failures instead of reporting false success. Codex still requires one-time trust through `/hooks`.
+
+### Isolation and retrieval correctness
+
+- Agent ownership now scopes validation, reinforcement, contradiction detection, interference, affective resonance, recent failures, capsules, greetings, preflight, Guard outcome actors, consolidation, and agent-routed REST calls inside a shared store.
+- Cross-agent and legacy mixed-agent contradictions are excluded from scoped capsules. Explicit `scope: "shared"` remains available where cross-agent recall is intentional.
+- Agent-scoped vector retrieval now uses native `sqlite-vec` partition keys before nearest-neighbor ranking, with a single bounded partition-local retry. Existing vector stores migrate losslessly and transactionally. Agent FTS no longer requests 10,000 candidates.
+- Explicit cross-agent REST recall is disabled unless `AUDREY_ENABLE_SHARED_SCOPE=1` or admin routes are enabled; the agent-selection header remains routing metadata rather than an authentication boundary.
+- Semantic and procedural retrieval bookkeeping now updates only final results actually yielded. Hidden, deduplicated, over-limit, and unconsumed stream candidates no longer gain authority merely because a query ran.
+
+### Guard and provider compatibility
+
+- Automatic tool outcomes inherit the Guard action fingerprint, so exact failed actions block, successful recovery clears stale failure behavior, and parallel tool calls retain correct lineage. Retrieval queries remain bounded for large prompts and writes while exact identity hashes the full normalized, redacted action rather than a truncated prefix.
+- Adds `AUDREY_LLM_MODEL` plumbing to generated MCP environments.
+- OpenAI chat completions use `max_completion_tokens` with reasoning headroom for GPT-5 and o-series models while retaining `max_tokens` for older chat models.
+- Refreshes Hono and the affected `protobufjs`, `qs`, and `tar` dependency chain to patched releases; the production dependency audit is clean at the release cut.
+- MCP server instructions describe the memory capsule and Guard receipt loop for hosts where lifecycle hooks are unavailable.
+
+### Documentation
+
+- Rewrites the README as a human-first product landing page, moves implementation detail into a technical reference, documents honest install/trust boundaries, and states current production limitations explicitly.
+- Updates the supported security release lines for 1.x.
+
 ## 1.0.3 - 2026-05-28
 
 Housekeeping release. Nothing about how Audrey behaves has changed — this is

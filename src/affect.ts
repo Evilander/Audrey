@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import type { Affect, EmbeddingProvider, ResonanceConfig } from './types.js';
+import { requireAgent } from './utils.js';
 
 export interface ResonanceResult {
   priorEpisodeId: string;
@@ -43,7 +44,7 @@ export async function detectResonance(
   db: Database.Database,
   embeddingProvider: EmbeddingProvider,
   episodeId: string,
-  params: { content: string; affect?: Affect },
+  params: { content: string; affect?: Affect; agent?: string },
   config: ResonanceConfig = {},
   embedding?: { vector?: number[]; buffer?: Buffer },
 ): Promise<ResonanceResult[]> {
@@ -55,19 +56,29 @@ export async function detectResonance(
     embedding?.buffer ??
     embeddingProvider.vectorToBuffer(embedding?.vector ?? (await embeddingProvider.embed(content)));
 
+  const agent = requireAgent(
+    params.agent ??
+      (
+        db.prepare('SELECT agent FROM episodes WHERE id = ?').get(episodeId) as
+          { agent: string } | undefined
+      )?.agent,
+    'default',
+  );
   const matches = db
     .prepare(
       `
-    SELECT e.*, (1.0 - v.distance) AS similarity
+    SELECT e.*, (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
     FROM vec_episodes v
     JOIN episodes e ON e.id = v.id
-    WHERE v.embedding MATCH ?
-      AND k = ?
+    WHERE v.agent = ?
       AND e.id != ?
       AND e.superseded_by IS NULL
+      AND e.agent = ?
+    ORDER BY similarity DESC
+    LIMIT ?
   `,
     )
-    .all(buffer, k, episodeId) as Array<{
+    .all(buffer, agent, episodeId, agent, k) as Array<{
     id: string;
     content: string;
     affect: string;

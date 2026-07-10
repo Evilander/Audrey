@@ -34,6 +34,10 @@ describe('sqlite-vec foundation', () => {
     expect(tables).toContain('vec_episodes');
     expect(tables).toContain('vec_semantics');
     expect(tables).toContain('vec_procedures');
+    for (const table of ['vec_episodes', 'vec_semantics', 'vec_procedures']) {
+      const { sql } = db.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(table);
+      expect(sql).toMatch(/agent\s+text\s+partition\s+key/i);
+    }
     closeDatabase(db);
   });
 
@@ -87,14 +91,14 @@ describe('sqlite-vec foundation', () => {
     const v3 = makeVector(dims, 1.01); // very similar to v1
 
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-    ).run('ep-1', Buffer.from(v1.buffer), 'direct-observation', BigInt(0));
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    ).run('ep-1', 'default', Buffer.from(v1.buffer), 'direct-observation', BigInt(0));
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-    ).run('ep-2', Buffer.from(v2.buffer), 'inference', BigInt(0));
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    ).run('ep-2', 'default', Buffer.from(v2.buffer), 'inference', BigInt(0));
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-    ).run('ep-3', Buffer.from(v3.buffer), 'direct-observation', BigInt(1));
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    ).run('ep-3', 'default', Buffer.from(v3.buffer), 'direct-observation', BigInt(1));
 
     // KNN: find 2 nearest to v1
     const results = db
@@ -108,6 +112,52 @@ describe('sqlite-vec foundation', () => {
     closeDatabase(db);
   });
 
+  it('prefilters KNN candidates by agent partition while preserving shared search', () => {
+    const dims = 8;
+    const { db } = createDatabase(TEST_DIR, { dimensions: dims });
+    const query = makeVector(dims, 1.0);
+    const local = makeVector(dims, 1.01);
+
+    const insert = db.prepare(
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    );
+    insert.run(
+      'foreign-exact',
+      'agent-beta',
+      Buffer.from(query.buffer),
+      'direct-observation',
+      BigInt(0),
+    );
+    insert.run(
+      'local-near',
+      'agent-alpha',
+      Buffer.from(local.buffer),
+      'direct-observation',
+      BigInt(0),
+    );
+
+    const scoped = db
+      .prepare(
+        `
+      SELECT id FROM vec_episodes
+      WHERE embedding MATCH ? AND k = 1 AND agent = ?
+    `,
+      )
+      .all(Buffer.from(query.buffer), 'agent-alpha');
+    const shared = db
+      .prepare(
+        `
+      SELECT id FROM vec_episodes
+      WHERE embedding MATCH ? AND k = 1
+    `,
+      )
+      .all(Buffer.from(query.buffer));
+
+    expect(scoped.map(row => row.id)).toEqual(['local-near']);
+    expect(shared.map(row => row.id)).toEqual(['foreign-exact']);
+    closeDatabase(db);
+  });
+
   it('supports metadata filtering in KNN queries', () => {
     const dims = 8;
     const { db } = createDatabase(TEST_DIR, { dimensions: dims });
@@ -117,14 +167,14 @@ describe('sqlite-vec foundation', () => {
     const v3 = makeVector(dims, 1.02);
 
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-    ).run('ep-1', Buffer.from(v1.buffer), 'direct-observation', BigInt(0));
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    ).run('ep-1', 'default', Buffer.from(v1.buffer), 'direct-observation', BigInt(0));
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-    ).run('ep-2', Buffer.from(v2.buffer), 'inference', BigInt(0));
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    ).run('ep-2', 'default', Buffer.from(v2.buffer), 'inference', BigInt(0));
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-    ).run('ep-3', Buffer.from(v3.buffer), 'direct-observation', BigInt(1));
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    ).run('ep-3', 'default', Buffer.from(v3.buffer), 'direct-observation', BigInt(1));
 
     // Filter by source
     const results = db
@@ -149,13 +199,15 @@ describe('sqlite-vec foundation', () => {
     const v1 = makeVector(dims, 1.0);
     const v2 = makeVector(dims, 1.01);
 
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'sem-1',
+      'default',
       Buffer.from(v1.buffer),
       'active',
     );
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'sem-2',
+      'default',
       Buffer.from(v2.buffer),
       'dormant',
     );
@@ -179,13 +231,15 @@ describe('sqlite-vec foundation', () => {
     const v1 = makeVector(dims, 1.0);
     const v2 = makeVector(dims, 1.01);
 
-    db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'proc-1',
+      'default',
       Buffer.from(v1.buffer),
       'active',
     );
-    db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       'proc-2',
+      'default',
       Buffer.from(v2.buffer),
       'superseded',
     );

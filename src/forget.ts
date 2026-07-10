@@ -32,8 +32,7 @@ export function forgetMemory(
     }
 
     const semantic = db.prepare('SELECT id FROM semantics WHERE id = ?').get(id) as
-      | IdRow
-      | undefined;
+      IdRow | undefined;
     if (semantic) {
       if (purge) {
         db.prepare('DELETE FROM vec_semantics WHERE id = ?').run(id);
@@ -47,8 +46,7 @@ export function forgetMemory(
     }
 
     const procedure = db.prepare('SELECT id FROM procedures WHERE id = ?').get(id) as
-      | IdRow
-      | undefined;
+      IdRow | undefined;
     if (procedure) {
       if (purge) {
         db.prepare('DELETE FROM vec_procedures WHERE id = ?').run(id);

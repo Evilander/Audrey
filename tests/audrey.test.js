@@ -548,17 +548,24 @@ describe('Audrey with LLM', () => {
 
     brain.db
       .prepare(
-        `INSERT INTO semantics (id, content, state, created_at, evidence_count,
+        `INSERT INTO semantics (id, content, agent, state, created_at, evidence_count,
       supporting_count, source_type_diversity, evidence_episode_ids)
-      VALUES (?, ?, 'active', ?, 1, 1, 1, '[]')`,
+      VALUES (?, ?, ?, 'active', ?, 1, 1, 1, '[]')`,
       )
-      .run('sem-a', 'Claim A content', new Date().toISOString());
+      .run('sem-a', 'Claim A content', brain.agent, new Date().toISOString());
     brain.db
       .prepare(
-        `INSERT INTO episodes (id, content, source, source_reliability, created_at)
-      VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO episodes (id, content, agent, source, source_reliability, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run('ep-b', 'Claim B content', 'direct-observation', 0.95, new Date().toISOString());
+      .run(
+        'ep-b',
+        'Claim B content',
+        brain.agent,
+        'direct-observation',
+        0.95,
+        new Date().toISOString(),
+      );
 
     const result = await brain.resolveTruth('con-1');
     expect(result.resolution).toBe('context_dependent');
@@ -812,9 +819,11 @@ describe('dream()', () => {
     expect(consolidateSpy).toHaveBeenCalledWith({
       minClusterSize: 4,
       similarityThreshold: 0.91,
+      agent: brain.agent,
     });
     expect(decaySpy).toHaveBeenCalledWith({
       dormantThreshold: 0.27,
+      agent: brain.agent,
     });
   });
 });
@@ -1523,8 +1532,8 @@ describe('interference on encode', () => {
       )
       .run('sem-int', sharedContent, vecBuf, new Date().toISOString());
     brain.db
-      .prepare('INSERT INTO vec_semantics (id, embedding, state) VALUES (?, ?, ?)')
-      .run('sem-int', vecBuf, 'active');
+      .prepare('INSERT INTO vec_semantics (id, agent, embedding, state) VALUES (?, ?, ?, ?)')
+      .run('sem-int', 'default', vecBuf, 'active');
 
     const events = [];
     brain.on('interference', e => events.push(e));
@@ -2183,6 +2192,27 @@ describe('Audrey impact report', () => {
     const report = brain.impact();
     expect(report.weakest[0].id).toBe(lowId);
     expect(report.weakest[0].salience).toBeCloseTo(0.1, 5);
+  });
+
+  it('keeps report content agent-scoped unless shared scope is explicit', async () => {
+    const other = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'other-impact-agent',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    try {
+      await brain.encode({ content: 'alpha impact memory', source: 'direct-observation' });
+      await other.encode({ content: 'beta impact memory', source: 'direct-observation' });
+
+      const scoped = brain.impact();
+      expect(scoped.totals.episodic).toBe(1);
+      expect(scoped.weakest.map(row => row.content)).not.toContain('beta impact memory');
+
+      const shared = brain.impact({ scope: 'shared' });
+      expect(shared.totals.episodic).toBe(2);
+    } finally {
+      other.close();
+    }
   });
 });
 

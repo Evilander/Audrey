@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
-import { Audrey } from '../dist/src/index.js';
+import { Audrey, MemoryController } from '../dist/src/index.js';
 
 const TEST_DIR = './test-controller-data';
 
@@ -122,6 +122,25 @@ describe('Audrey Guard controller', () => {
 
     expect(next.decision).toBe('caution');
     expect(next.warnings.some(w => w.type === 'recent_failure')).toBe(true);
+  });
+
+  it('does not collide exact-action fingerprints after a shared 2k prefix', async () => {
+    const controller = new MemoryController(audrey);
+    const prefix = 'x'.repeat(2500);
+    const failedAction = { tool: 'Write', action: `${prefix}-first`, files: ['large.txt'] };
+    const differentAction = { tool: 'Write', action: `${prefix}-second`, files: ['large.txt'] };
+
+    await controller.beforeAction(failedAction);
+    await controller.afterAction({
+      action: failedAction,
+      outcome: 'failed',
+      errorSummary: 'first write failed',
+    });
+
+    const different = await controller.beforeAction(differentAction);
+    const repeated = await controller.beforeAction(failedAction);
+    expect(different.decision).not.toBe('block');
+    expect(repeated.decision).toBe('block');
   });
 
   it('afterAction validates real evidence ids and skips synthetic failure ids', async () => {

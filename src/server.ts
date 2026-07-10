@@ -8,6 +8,7 @@ export interface ServerOptions {
   hostname?: string;
   config: AudreyConfig;
   apiKey?: string;
+  sharedScopeEnabled?: boolean;
 }
 
 export async function startServer(options: ServerOptions) {
@@ -15,7 +16,7 @@ export async function startServer(options: ServerOptions) {
   // default (the prior 0.0.0.0) means any same-network process could read
   // memories, purge by query, or import poisoned snapshots. Operators that
   // genuinely need network exposure must set AUDREY_HOST explicitly.
-  const { port = 7437, hostname = '127.0.0.1', config, apiKey } = options;
+  const { port = 7437, hostname = '127.0.0.1', config, apiKey, sharedScopeEnabled } = options;
   // Refuse to start without auth on a non-loopback bind. The escape hatch is
   // explicit so a misconfigured deploy can't silently expose memories.
   const isLoopback = hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
@@ -37,7 +38,7 @@ export async function startServer(options: ServerOptions) {
     await audrey.embeddingProvider.ready();
   }
 
-  const app = createApp(audrey, { apiKey });
+  const app = createApp(audrey, { apiKey, sharedScopeEnabled });
 
   const server = serve({ fetch: app.fetch, port, hostname }, info => {
     console.error(`[audrey-http] listening on ${hostname}:${info.port}`);

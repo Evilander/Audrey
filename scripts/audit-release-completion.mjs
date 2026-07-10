@@ -10,7 +10,7 @@ import { verifyBrowserLaunchResults } from './verify-browser-launch-results.mjs'
 import { verifyReleaseReadiness } from './verify-release-readiness.mjs';
 
 const ROOT = process.cwd();
-const DEFAULT_VERSION = '1.0.0';
+const DEFAULT_VERSION = '1.1.0';
 const DEFAULT_OUT = '.tmp/release-artifacts/completion-audit.json';
 const NPM_REGISTRY = 'https://registry.npmjs.org/';
 
@@ -214,7 +214,7 @@ export async function auditReleaseCompletion(options = {}) {
   checklist.push(
     checklistItem(
       'code-release-local-readiness',
-      'Audrey codebase is cut to 1.0.0 and local release gates are coherent.',
+      `Audrey codebase is cut to ${version} and local release gates are coherent.`,
       statusFromGaps(versionGaps, readiness.ok),
       [
         `package.json version=${pkg.version}`,
@@ -241,7 +241,7 @@ export async function auditReleaseCompletion(options = {}) {
   checklist.push(
     checklistItem(
       'source-control-release-state',
-      'Final release commit and v1.0.0 tag are present on the public repository.',
+      `Final release commit and v${version} tag are present on the public repository.`,
       statusFromGaps(sourceGaps, bundleVerify.ok && remoteRefsResult.ok),
       [
         commandEvidence(bundleVerify),
@@ -262,7 +262,7 @@ export async function auditReleaseCompletion(options = {}) {
   checklist.push(
     checklistItem(
       'npm-package-publication',
-      'audrey@1.0.0 npm package is packaged and published.',
+      `audrey@${version} npm package is packaged and published.`,
       statusFromGaps(npmGaps),
       [JSON.stringify(npmArtifact), commandEvidence(npmView)],
       npmGaps,
@@ -279,7 +279,7 @@ export async function auditReleaseCompletion(options = {}) {
   checklist.push(
     checklistItem(
       'python-package-publication',
-      'audrey-memory 1.0.0 Python package is built and published.',
+      `audrey-memory ${version} Python package is built and published.`,
       statusFromGaps(pypiGaps),
       [JSON.stringify(wheel), JSON.stringify(sdist), `PyPI status=${pypi.status}`],
       pypiGaps,
@@ -373,10 +373,10 @@ export async function auditReleaseCompletion(options = {}) {
     schemaVersion: '1.0.0',
     suite: 'Audrey release completion audit',
     generatedAt: new Date().toISOString(),
-    objective: 'audrey 1.0 release + published audrey research paper',
+    objective: `audrey ${version} release + published audrey research paper`,
     successCriteria: [
-      'Audrey code is cut to 1.0.0 with local gates passing.',
-      'Final release commit and v1.0.0 tag are on the public repository.',
+      `Audrey code is cut to ${version} with local gates passing.`,
+      `Final release commit and v${version} tag are on the public repository.`,
       'npm and Python packages are packaged and publicly published.',
       'Paper artifacts verify locally and compile for arXiv.',
       'Paper publication targets are publicly submitted and operator verified.',
