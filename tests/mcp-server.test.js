@@ -102,6 +102,9 @@ describe('CLI surface', () => {
     expect(r.stdout).toContain('demo');
     expect(r.stdout).toContain('guard');
     expect(r.stdout).toContain('guard-after');
+    expect(r.stdout).toContain(
+      'npm install -g audrey --allow-scripts=better-sqlite3,onnxruntime-node,sharp,protobufjs',
+    );
   });
 
   it('--version prints version and exits 0', () => {
@@ -574,7 +577,7 @@ describe('MCP CLI: install guidance', () => {
     expect(text).toContain('No host config files were modified');
     expect(text).toContain(`[mcp_servers.${SERVER_NAME}]`);
     expect(text).toContain('AUDREY_AGENT = "codex"');
-    expect(text).toContain('npx audrey doctor');
+    expect(text).toContain('audrey doctor');
   });
 
   it('prints a Claude Code dry-run path before invoking the installer', () => {
@@ -686,8 +689,8 @@ describe('MCP CLI: demo command', () => {
     expect(output).toContain('Audrey 60-second memory demo');
     expect(output).toContain('Capsule highlights:');
     expect(output).toContain('Recall proof:');
-    expect(output).toContain('npx audrey doctor');
-    expect(output).toContain('npx audrey mcp-config codex');
+    expect(output).toContain('audrey doctor');
+    expect(output).toContain('audrey mcp-config codex');
   });
 
   it('prints the deterministic repeated-failure guard demo', async () => {
@@ -1124,7 +1127,7 @@ describe('MCP doctor automation', () => {
     expect(text).toContain('Audrey Doctor');
     expect(text).toContain('Store health: not initialized');
     expect(text).toContain('Verdict: ready');
-    expect(text).toContain('npx audrey install --host codex --dry-run');
+    expect(text).toContain('audrey install --host codex --dry-run');
   });
 
   it('emits JSON and exits non-zero when the store needs repair', async () => {

@@ -20,7 +20,8 @@ python -m pip install -e .
 Start Audrey's REST API:
 
 ```bash
-npx audrey serve
+npm install -g audrey --allow-scripts=better-sqlite3,onnxruntime-node,sharp,protobufjs
+audrey serve
 ```
 
 Then use the client:

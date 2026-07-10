@@ -897,14 +897,14 @@ These numbers measure Audrey's local call path under an in-process mock embeddin
 
 ### Behavioral Regression Result
 
-The current `benchmarks/output/summary.json` was generated on 2026-07-10T14:40:08.781Z with command `node benchmarks/run.js --provider mock --dimensions 64` (Ledger: E24). It reports:
+The current `benchmarks/output/summary.json` was generated on 2026-07-10T15:12:36.339Z with command `node benchmarks/run.js --provider mock --dimensions 64` (Ledger: E24). It reports:
 
 | System | Score Percent | Pass Rate | Average Duration Ms |
 |---|---:|---:|---:|
-| Audrey | 100 | 100 | 16.25 |
+| Audrey | 100 | 100 | 15.916666666666666 |
 | Vector Only | 41.66666666666667 | 25 | 0.08333333333333333 |
-| Keyword + Recency | 41.66666666666667 | 25 | 0.5 |
-| Recent Window | 37.5 | 25 | 0.08333333333333333 |
+| Keyword + Recency | 41.66666666666667 | 25 | 0.5833333333333334 |
+| Recent Window | 37.5 | 25 | 0 |
 
 This output is a regression-gate result. The baselines are toy local baselines used to catch retrieval and lifecycle regressions in the Audrey codebase. They are not external systems, not tuned competitor implementations, and not GuardBench baselines (Ledger: E23-E24). The current suite covers retrieval and operation families such as information extraction, knowledge updates, multi-session reasoning, conflict resolution, procedural learning, privacy boundary, overwrite, delete-and-abstain, semantic merge, and procedural merge (Ledger: E23-E24).
 
@@ -926,7 +926,7 @@ It reports local adapters only, not external-system comparisons (Ledger: E46):
 | Evidence recall | 100% |
 | Redaction leaks | 0 |
 | Recall-degradation detection | 100% |
-| Guard latency p50 / p95 | 3.892 ms / 15.215 ms |
+| Guard latency p50 / p95 | 3.805 ms / 13.445 ms |
 | Published artifact raw-secret leaks | 0 |
 | Audrey Guard decision accuracy | 100% |
 | No-memory decision accuracy | 10% |
