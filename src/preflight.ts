@@ -2,7 +2,9 @@ import type { Audrey } from './audrey.js';
 import { guardActionKey } from './action-key.js';
 import type { CapsuleEntry, CapsuleMode, MemoryCapsule } from './capsule.js';
 import type { FailurePattern } from './events.js';
+import { redact } from './redact.js';
 import type { MemoryStatusResult, RecallOptions, RecallResult } from './types.js';
+import { requireAgent, resolveMemoryScope } from './utils.js';
 
 export type PreflightDecision = 'go' | 'caution' | 'block';
 export type PreflightSeverity = 'info' | 'low' | 'medium' | 'high';
@@ -17,6 +19,7 @@ export type PreflightWarningType =
 
 export interface PreflightOptions {
   tool?: string;
+  actionDigest?: string;
   sessionId?: string;
   cwd?: string;
   files?: string[];
@@ -30,6 +33,7 @@ export interface PreflightOptions {
   includeStatus?: boolean;
   recordEvent?: boolean;
   scope?: RecallOptions['scope'];
+  agent?: string;
 }
 
 export interface PreflightWarning {
@@ -184,9 +188,20 @@ export async function buildPreflight(
   if (!isNonEmptyText(action)) {
     throw new Error('action must be a non-empty string');
   }
+  const scope = resolveMemoryScope(options.scope, 'agent');
+  const agent = requireAgent(options.agent, audrey.agent);
+  const trimmedAction = action.trim();
+  const actionKey = guardActionKey({
+    tool: options.tool,
+    action: trimmedAction,
+    actionDigest: options.actionDigest,
+    cwd: options.cwd,
+    files: options.files,
+  });
+  const queryAction = shorten(redact(trimmedAction.slice(0, 6400)).text, 1600);
 
   const queryParts = [
-    action.trim(),
+    `${queryAction}\naction_sha256:${actionKey}`,
     options.tool ? `tool:${options.tool}` : '',
     options.cwd ? `cwd:${options.cwd}` : '',
   ].filter(Boolean);
@@ -198,7 +213,9 @@ export async function buildPreflight(
     recentChangeWindowHours: options.recentChangeWindowHours ?? 72,
     includeRisks: true,
     includeContradictions: true,
-    recall: { scope: options.scope ?? 'agent' },
+    scope,
+    agent,
+    recall: { scope, agent },
   });
 
   const warnings: PreflightWarning[] = [];
@@ -244,7 +261,8 @@ export async function buildPreflight(
         limit: 50,
         minConfidence: 0.01,
         tags: ['must-follow'],
-        scope: options.scope ?? 'agent',
+        scope,
+        agent,
       });
       const trustedResults = taggedMustFollow.filter(isTrustedControlMemory);
       for (const result of trustedResults.slice(0, 5)) {
@@ -263,7 +281,12 @@ export async function buildPreflight(
   const since = new Date(
     Date.now() - (options.recentFailureWindowHours ?? 168) * 60 * 60 * 1000,
   ).toISOString();
-  const recentFailures = audrey.recentFailures({ since, limit: 20 });
+  const recentFailures = audrey.recentFailures({
+    since,
+    limit: 20,
+    scope,
+    actorAgent: agent,
+  });
   const matchingFailures: FailurePattern[] = [];
   for (const failure of recentFailures) {
     if (!matchesToolOrAction(action, options.tool, failure.tool_name)) continue;
@@ -367,7 +390,8 @@ export async function buildPreflight(
           event: 'PreToolUse',
           tool: options.tool,
           sessionId: options.sessionId,
-          input: { action: action.trim(), tool: options.tool },
+          actorAgent: agent,
+          input: { action: trimmedAction, tool: options.tool },
           outcome: 'unknown',
           cwd: options.cwd,
           files: options.files,
@@ -375,18 +399,13 @@ export async function buildPreflight(
             preflight_decision: decision,
             preflight_warning_count: warnings.length,
             preflight_evidence_ids: evidenceIds,
-            audrey_guard_action_key: guardActionKey({
-              tool: options.tool,
-              action: action.trim(),
-              cwd: options.cwd,
-              files: options.files,
-            }),
+            audrey_guard_action_key: actionKey,
           },
         }).event
       : undefined;
 
   return {
-    action: action.trim(),
+    action: trimmedAction,
     query,
     tool: options.tool,
     cwd: options.cwd,

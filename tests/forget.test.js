@@ -21,8 +21,9 @@ function insertSemantic(db, embedding, id, content, state = 'active') {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     ).run(id, content, buf, state, 1, 1, 0, 0, now, embedding.modelName, embedding.modelVersion);
-    db.prepare('INSERT INTO vec_semantics(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       id,
+      'default',
       buf,
       state,
     );
@@ -41,8 +42,9 @@ function insertProcedure(db, embedding, id, content, state = 'active') {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     ).run(id, content, buf, state, 3, 0, 0, now, embedding.modelName, embedding.modelVersion);
-    db.prepare('INSERT INTO vec_procedures(id, embedding, state) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
       id,
+      'default',
       buf,
       state,
     );

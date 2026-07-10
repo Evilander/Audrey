@@ -7,14 +7,17 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = process.cwd();
-const DEFAULT_VERSION = '1.0.0';
-const DEFAULT_BUNDLE = '.tmp/release-artifacts/audrey-1.0.0.git.bundle';
+const DEFAULT_VERSION = '1.1.0';
 const DEFAULT_REMOTE = 'https://github.com/Evilander/Audrey.git';
+
+function defaultReleaseBundle(version = DEFAULT_VERSION) {
+  return `.tmp/release-artifacts/audrey-${version}.git.bundle`;
+}
 
 function parseArgs(argv = process.argv.slice(2)) {
   const args = {
     version: DEFAULT_VERSION,
-    bundle: DEFAULT_BUNDLE,
+    bundle: undefined,
     remote: DEFAULT_REMOTE,
     apply: false,
     json: false,
@@ -32,6 +35,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     else throw new Error(`Unknown argument: ${token}`);
   }
 
+  args.bundle ??= defaultReleaseBundle(args.version);
   return args;
 }
 
@@ -39,7 +43,7 @@ function usage() {
   return `Usage: node scripts/publish-release-bundle.mjs [options]
 
 Options:
-  --bundle <path>     Release Git bundle. Default: ${DEFAULT_BUNDLE}.
+  --bundle <path>     Release Git bundle. Default: ${defaultReleaseBundle()}.
   --remote <url>      Push remote. Default: ${DEFAULT_REMOTE}.
   --version <version> Release version. Default: ${DEFAULT_VERSION}.
   --apply             Actually push master and v<version>. Dry-run by default.

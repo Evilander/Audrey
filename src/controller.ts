@@ -6,6 +6,7 @@ import type { MemoryValidateOutcome, MemoryValidateResult } from './feedback.js'
 import { buildPreflight, type MemoryPreflight, type PreflightOptions } from './preflight.js';
 import { buildReflexReportFromPreflight, type MemoryReflex } from './reflexes.js';
 import { redact, truncateRedactedText, type RedactionHit } from './redact.js';
+import { requireAgent } from './utils.js';
 
 export interface GuardBeforeOptions extends PreflightOptions {
   recordEvent?: boolean;
@@ -45,6 +46,7 @@ export interface GuardAfterInput {
   files?: string[];
   metadata?: Record<string, unknown>;
   retainDetails?: boolean;
+  actorAgent?: string;
   evidenceFeedback?: Record<string, MemoryValidateOutcome>;
 }
 
@@ -68,6 +70,7 @@ export interface AgentAction {
   tool?: string;
   command?: string;
   action: string;
+  actionDigest?: string;
   cwd?: string;
   files?: string[];
   sessionId?: string;
@@ -125,15 +128,19 @@ function parseMetadata(value: string | null): Record<string, unknown> {
   }
 }
 
-function getPreToolUseReceipt(audrey: Audrey, receiptId: string): MemoryEvent | null {
+function getPreToolUseReceipt(
+  audrey: Audrey,
+  receiptId: string,
+  actorAgent: string,
+): MemoryEvent | null {
   const receipt = audrey.db
     .prepare(
       `
     SELECT * FROM memory_events
-    WHERE id = ? AND event_type = 'PreToolUse'
+    WHERE id = ? AND event_type = 'PreToolUse' AND actor_agent = ?
   `,
     )
-    .get(receiptId) as MemoryEvent | undefined;
+    .get(receiptId, actorAgent) as MemoryEvent | undefined;
   return receipt ?? null;
 }
 
@@ -165,7 +172,11 @@ function evidenceFeedbackEntries(
   return entries as Array<[string, MemoryValidateOutcome]>;
 }
 
-function getGuardOutcomeEvent(audrey: Audrey, receiptId: string): MemoryEvent | null {
+function getGuardOutcomeEvent(
+  audrey: Audrey,
+  receiptId: string,
+  actorAgent: string,
+): MemoryEvent | null {
   const event = audrey.db
     .prepare(
       `
@@ -174,11 +185,12 @@ function getGuardOutcomeEvent(audrey: Audrey, receiptId: string): MemoryEvent | 
       AND metadata IS NOT NULL
       AND json_valid(metadata)
       AND json_extract(metadata, '$.receipt_id') = ?
+      AND actor_agent = ?
     ORDER BY created_at DESC
     LIMIT 1
   `,
     )
-    .get(receiptId) as MemoryEvent | undefined;
+    .get(receiptId, actorAgent) as MemoryEvent | undefined;
   return event ?? null;
 }
 
@@ -293,6 +305,7 @@ export class MemoryController {
   async beforeAction(action: AgentAction): Promise<ControllerGuardResult> {
     const result = await beforeAction(this.audrey, action.action, {
       tool: action.tool,
+      actionDigest: action.actionDigest,
       cwd: action.cwd,
       files: action.files,
       sessionId: action.sessionId,
@@ -429,12 +442,13 @@ export async function beforeAction(
     throw new Error('guard beforeAction could not record a receipt event');
   }
 
-  const receipt = getPreToolUseReceipt(audrey, receiptId);
+  const actorAgent = requireAgent(options.agent, audrey.agent);
+  const receipt = getPreToolUseReceipt(audrey, receiptId, actorAgent);
   if (!receipt) {
     throw new Error(`guard receipt not found: ${receiptId}`);
   }
   const metadata = parseMetadata(receipt.metadata);
-  audrey.db.prepare('UPDATE memory_events SET metadata = ? WHERE id = ?').run(
+  audrey.db.prepare('UPDATE memory_events SET metadata = ? WHERE id = ? AND actor_agent = ?').run(
     JSON.stringify({
       ...metadata,
       guard: true,
@@ -443,6 +457,7 @@ export async function beforeAction(
       reflex_ids: reflexReport.reflexes.map(reflex => reflex.id),
     }),
     receiptId,
+    actorAgent,
   );
 
   return {
@@ -473,7 +488,8 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
     throw new Error('receiptId is required');
   }
 
-  const receipt = getPreToolUseReceipt(audrey, input.receiptId);
+  const actorAgent = requireAgent(input.actorAgent, audrey.agent);
+  const receipt = getPreToolUseReceipt(audrey, input.receiptId, actorAgent);
   if (!receipt) {
     throw new Error(`guard receipt not found: ${input.receiptId}`);
   }
@@ -483,7 +499,7 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
   if (!isGuardBeforeReceipt(receiptMetadata)) {
     throw new Error(`not a guard receipt: ${input.receiptId}`);
   }
-  if (getGuardOutcomeEvent(audrey, input.receiptId)) {
+  if (getGuardOutcomeEvent(audrey, input.receiptId, actorAgent)) {
     throw new Error(`guard receipt already has an outcome: ${input.receiptId}`);
   }
   const feedbackEntries = evidenceFeedbackEntries(input.evidenceFeedback);
@@ -492,6 +508,7 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
     event: postEventTypeFor(outcome),
     tool: input.tool ?? receipt.tool_name ?? 'unknown',
     sessionId: input.sessionId ?? receipt.session_id ?? undefined,
+    actorAgent,
     input: input.input,
     output: input.output,
     outcome,
@@ -506,6 +523,7 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
       preflight_event_id: input.receiptId,
       preflight_decision: receiptMetadata.preflight_decision,
       preflight_warning_count: receiptMetadata.preflight_warning_count,
+      audrey_guard_action_key: receiptMetadata.audrey_guard_action_key,
     },
     retainDetails: input.retainDetails,
   });
@@ -522,7 +540,7 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
       continue;
     }
 
-    const feedback = audrey.validate({ id, outcome: feedbackOutcome });
+    const feedback = audrey.validate({ id, outcome: feedbackOutcome, agent: actorAgent });
     if (feedback) {
       validated.push({ id, outcome: feedbackOutcome, validated: true, result: feedback });
     } else {

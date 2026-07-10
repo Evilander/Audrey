@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import type { EmbeddingProvider, InterferenceConfig } from './types.js';
+import { requireAgent } from './utils.js';
 
 export interface InterferenceHit {
   id: string;
@@ -15,8 +16,8 @@ export function interferenceModifier(interferenceCount: number, weight: number =
 export async function applyInterference(
   db: Database.Database,
   embeddingProvider: EmbeddingProvider,
-  _episodeId: string,
-  params: { content: string },
+  episodeId: string,
+  params: { content: string; agent?: string },
   config: InterferenceConfig = {},
   embedding?: { vector?: number[]; buffer?: Buffer },
 ): Promise<InterferenceHit[]> {
@@ -32,53 +33,87 @@ export async function applyInterference(
       embedding?.vector ?? (await embeddingProvider.embed(params.content)),
     );
 
+  const agent = requireAgent(
+    params.agent ??
+      (
+        db.prepare('SELECT agent FROM episodes WHERE id = ?').get(episodeId) as
+          { agent: string } | undefined
+      )?.agent,
+    'default',
+  );
   // vec_semantics/vec_procedures carry a denormalized state column populated at
   // INSERT time only — it stays stale after UPDATE semantics SET state=...,
   // so always filter through the main table's state.
   const semanticHits = db
     .prepare(
       `
-    SELECT s.id, s.interference_count, (1.0 - v.distance) AS similarity
+    SELECT s.id, (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
     FROM vec_semantics v
     JOIN semantics s ON s.id = v.id
-    WHERE v.embedding MATCH ?
-      AND k = ?
+    WHERE v.agent = ?
       AND (s.state = 'active' OR s.state = 'context_dependent')
+      AND s.agent = ?
+    ORDER BY similarity DESC
+    LIMIT ?
   `,
     )
-    .all(buffer, k) as Array<{ id: string; interference_count: number; similarity: number }>;
+    .all(buffer, agent, agent, k) as Array<{ id: string; similarity: number }>;
 
   const proceduralHits = db
     .prepare(
       `
-    SELECT p.id, p.interference_count, (1.0 - v.distance) AS similarity
+    SELECT p.id, (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
     FROM vec_procedures v
     JOIN procedures p ON p.id = v.id
-    WHERE v.embedding MATCH ?
-      AND k = ?
+    WHERE v.agent = ?
       AND (p.state = 'active' OR p.state = 'context_dependent')
+      AND p.agent = ?
+    ORDER BY similarity DESC
+    LIMIT ?
   `,
     )
-    .all(buffer, k) as Array<{ id: string; interference_count: number; similarity: number }>;
+    .all(buffer, agent, agent, k) as Array<{ id: string; similarity: number }>;
 
   const affected: InterferenceHit[] = [];
 
-  const updateSemantic = db.prepare('UPDATE semantics SET interference_count = ? WHERE id = ?');
-  const updateProcedural = db.prepare('UPDATE procedures SET interference_count = ? WHERE id = ?');
+  const updateSemantic = db.prepare(`
+    UPDATE semantics
+    SET interference_count = interference_count + 1
+    WHERE id = ? AND agent = ?
+    RETURNING interference_count
+  `);
+  const updateProcedural = db.prepare(`
+    UPDATE procedures
+    SET interference_count = interference_count + 1
+    WHERE id = ? AND agent = ?
+    RETURNING interference_count
+  `);
 
   const applyUpdates = db.transaction(() => {
     for (const hit of semanticHits) {
       if (hit.similarity < threshold) continue;
-      const newCount = hit.interference_count + 1;
-      updateSemantic.run(newCount, hit.id);
-      affected.push({ id: hit.id, type: 'semantic', newCount, similarity: hit.similarity });
+      const updated = updateSemantic.get(hit.id, agent) as
+        { interference_count: number } | undefined;
+      if (updated)
+        affected.push({
+          id: hit.id,
+          type: 'semantic',
+          newCount: updated.interference_count,
+          similarity: hit.similarity,
+        });
     }
 
     for (const hit of proceduralHits) {
       if (hit.similarity < threshold) continue;
-      const newCount = hit.interference_count + 1;
-      updateProcedural.run(newCount, hit.id);
-      affected.push({ id: hit.id, type: 'procedural', newCount, similarity: hit.similarity });
+      const updated = updateProcedural.get(hit.id, agent) as
+        { interference_count: number } | undefined;
+      if (updated)
+        affected.push({
+          id: hit.id,
+          type: 'procedural',
+          newCount: updated.interference_count,
+          similarity: hit.similarity,
+        });
     }
   });
 

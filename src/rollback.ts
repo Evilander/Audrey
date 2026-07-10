@@ -19,8 +19,7 @@ export function rollbackConsolidation(
   runId: string,
 ): { rolledBackMemories: number; restoredEpisodes: number } {
   const run = db.prepare('SELECT * FROM consolidation_runs WHERE id = ?').get(runId) as
-    | ConsolidationRunRow
-    | undefined;
+    ConsolidationRunRow | undefined;
   if (!run) throw new Error(`Consolidation run not found: ${runId}`);
   if (run.status === 'rolled_back') throw new Error(`Run already rolled back: ${runId}`);
 

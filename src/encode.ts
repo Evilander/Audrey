@@ -5,6 +5,7 @@ import { sourceReliability } from './confidence.js';
 import { arousalSalienceBoost } from './affect.js';
 import { insertFTSEpisode } from './fts.js';
 import type { ProfileRecorder } from './profile.js';
+import { requireAgent } from './utils.js';
 
 export interface EncodeEpisodeOptions {
   profile?: ProfileRecorder;
@@ -46,6 +47,7 @@ export async function encodeEpisode(
     throw new Error('content must be a non-empty string');
   if (salience < 0 || salience > 1) throw new Error('salience must be between 0 and 1');
   if (tags && !Array.isArray(tags)) throw new Error('tags must be an array');
+  const ownerAgent = requireAgent(agent);
 
   const reliability = sourceReliability(source);
   const profile = options.profile;
@@ -80,7 +82,7 @@ export async function encodeEpisode(
       content,
       embeddingBuffer,
       source,
-      agent,
+      ownerAgent,
       reliability,
       effectiveSalience,
       JSON.stringify(context),
@@ -95,8 +97,8 @@ export async function encodeEpisode(
       isPrivate ? 1 : 0,
     );
     db.prepare(
-      'INSERT INTO vec_episodes(id, embedding, source, consolidated) VALUES (?, ?, ?, ?)',
-    ).run(id, embeddingBuffer, source, BigInt(0));
+      'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
+    ).run(id, ownerAgent, embeddingBuffer, source, BigInt(0));
     insertFTSEpisode(db, id, content, tags ?? null);
     if (supersedes) {
       db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ?').run(id, supersedes);

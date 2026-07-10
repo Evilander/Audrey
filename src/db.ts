@@ -3,6 +3,7 @@ import * as sqliteVec from 'sqlite-vec';
 import { join } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
 import { createFTSTables, backfillFTS } from './fts.js';
+import { requireAgent } from './utils.js';
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS episodes (
@@ -168,10 +169,29 @@ interface CountRow {
 
 interface MigrationRow {
   id: string;
+  agent: string;
   embedding: Buffer;
   source?: string;
   consolidated?: number;
   state?: string;
+}
+
+type Vec0TableName = 'vec_episodes' | 'vec_semantics' | 'vec_procedures';
+
+interface Vec0MigrationSpec {
+  table: Vec0TableName;
+  source: 'episodes' | 'semantics' | 'procedures';
+  stageColumns: string;
+  insertColumns: string;
+  selectColumns: string;
+}
+
+interface SqlDefinitionRow {
+  sql: string | null;
+}
+
+interface InvalidOwnerRow {
+  id: string;
 }
 
 interface PragmaColumn {
@@ -188,29 +208,59 @@ interface MigrateTableOptions {
   dimensions?: number;
 }
 
+const VEC0_MIGRATION_SPECS: Vec0MigrationSpec[] = [
+  {
+    table: 'vec_episodes',
+    source: 'episodes',
+    stageColumns: 'id, embedding, source, consolidated',
+    insertColumns: 'id, agent, embedding, source, consolidated',
+    selectColumns: 'staged.id, owner.agent, staged.embedding, staged.source, staged.consolidated',
+  },
+  {
+    table: 'vec_semantics',
+    source: 'semantics',
+    stageColumns: 'id, embedding, state',
+    insertColumns: 'id, agent, embedding, state',
+    selectColumns: 'staged.id, owner.agent, staged.embedding, staged.state',
+  },
+  {
+    table: 'vec_procedures',
+    source: 'procedures',
+    stageColumns: 'id, embedding, state',
+    insertColumns: 'id, agent, embedding, state',
+    selectColumns: 'staged.id, owner.agent, staged.embedding, staged.state',
+  },
+];
+
+function createVec0Table(db: Database.Database, dimensions: number, table: Vec0TableName): void {
+  if (table === 'vec_episodes') {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(
+        id text primary key,
+        agent text partition key,
+        embedding float[${dimensions}] distance_metric=cosine,
+        source text,
+        consolidated integer
+      );
+    `);
+    return;
+  }
+
+  const stateTable = table === 'vec_semantics' ? 'vec_semantics' : 'vec_procedures';
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS ${stateTable} USING vec0(
+      id text primary key,
+      agent text partition key,
+      embedding float[${dimensions}] distance_metric=cosine,
+      state text
+    );
+  `);
+}
+
 export function createVec0Tables(db: Database.Database, dimensions: number): void {
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(
-      id text primary key,
-      embedding float[${dimensions}] distance_metric=cosine,
-      source text,
-      consolidated integer
-    );
-  `);
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS vec_semantics USING vec0(
-      id text primary key,
-      embedding float[${dimensions}] distance_metric=cosine,
-      state text
-    );
-  `);
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS vec_procedures USING vec0(
-      id text primary key,
-      embedding float[${dimensions}] distance_metric=cosine,
-      state text
-    );
-  `);
+  for (const spec of VEC0_MIGRATION_SPECS) {
+    createVec0Table(db, dimensions, spec.table);
+  }
 }
 
 export function dropVec0Tables(db: Database.Database): void {
@@ -231,11 +281,17 @@ function migrateTable(
     dimensions,
   }: MigrateTableOptions,
 ): void {
-  const count = (db.prepare(`SELECT COUNT(*) as c FROM ${target}`).get() as CountRow).c;
-  if (count > 0) return;
-
   const rows = db
-    .prepare(`SELECT ${selectCols} FROM ${source} WHERE embedding IS NOT NULL`)
+    .prepare(
+      `
+    SELECT ${selectCols}
+    FROM ${source} source_row
+    WHERE source_row.embedding IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM ${target} target_row WHERE target_row.id = source_row.id
+      )
+  `,
+    )
     .all() as MigrationRow[];
   if (rows.length === 0) return;
 
@@ -254,32 +310,98 @@ function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): voi
   migrateTable(db, {
     source: 'episodes',
     target: 'vec_episodes',
-    selectCols: 'id, embedding, source, consolidated',
-    insertCols: 'id, embedding, source, consolidated',
-    placeholders: '?, ?, ?, ?',
-    transform: row => [row.id, row.embedding, row.source, BigInt(row.consolidated ?? 0)],
+    selectCols: 'id, agent, embedding, source, consolidated',
+    insertCols: 'id, agent, embedding, source, consolidated',
+    placeholders: '?, ?, ?, ?, ?',
+    transform: row => [
+      row.id,
+      requireAgent(row.agent, 'default'),
+      row.embedding,
+      row.source,
+      BigInt(row.consolidated ?? 0),
+    ],
     dimensions,
   });
 
   migrateTable(db, {
     source: 'semantics',
     target: 'vec_semantics',
-    selectCols: 'id, embedding, state',
-    insertCols: 'id, embedding, state',
-    placeholders: '?, ?, ?',
-    transform: row => [row.id, row.embedding, row.state],
+    selectCols: 'id, agent, embedding, state',
+    insertCols: 'id, agent, embedding, state',
+    placeholders: '?, ?, ?, ?',
+    transform: row => [row.id, requireAgent(row.agent, 'default'), row.embedding, row.state],
     dimensions,
   });
 
   migrateTable(db, {
     source: 'procedures',
     target: 'vec_procedures',
-    selectCols: 'id, embedding, state',
-    insertCols: 'id, embedding, state',
-    placeholders: '?, ?, ?',
-    transform: row => [row.id, row.embedding, row.state],
+    selectCols: 'id, agent, embedding, state',
+    insertCols: 'id, agent, embedding, state',
+    placeholders: '?, ?, ?, ?',
+    transform: row => [row.id, requireAgent(row.agent, 'default'), row.embedding, row.state],
     dimensions,
   });
+}
+
+function hasAgentPartition(db: Database.Database, table: Vec0TableName): boolean {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(table) as SqlDefinitionRow | undefined;
+  return Boolean(row?.sql && /\bagent\s+text\s+partition\s+key\b/i.test(row.sql));
+}
+
+function migrateVec0AgentPartitions(db: Database.Database, dimensions: number): void {
+  const legacySpecs = VEC0_MIGRATION_SPECS.filter(spec => !hasAgentPartition(db, spec.table));
+  if (legacySpecs.length === 0) return;
+
+  const migrate = db.transaction(() => {
+    for (const spec of legacySpecs) {
+      const stage = `_audrey_${spec.table}_agent_stage`;
+      db.exec(`DROP TABLE IF EXISTS "${stage}"`);
+      db.exec(`CREATE TEMP TABLE "${stage}" AS SELECT ${spec.stageColumns} FROM ${spec.table}`);
+
+      const invalidOwner = db
+        .prepare(
+          `
+        SELECT staged.id
+        FROM "${stage}" staged
+        LEFT JOIN ${spec.source} owner ON owner.id = staged.id
+        WHERE owner.id IS NULL
+          OR typeof(owner.agent) <> 'text'
+          OR length(trim(owner.agent)) = 0
+          OR length(trim(owner.agent)) > 128
+          OR owner.agent <> trim(owner.agent)
+        LIMIT 1
+      `,
+        )
+        .get() as InvalidOwnerRow | undefined;
+      if (invalidOwner) {
+        throw new Error(
+          `Cannot migrate ${spec.table}: vector ${invalidOwner.id} has no valid normalized agent owner in ${spec.source}`,
+        );
+      }
+
+      const oldCount = (db.prepare(`SELECT COUNT(*) AS c FROM "${stage}"`).get() as CountRow).c;
+      db.exec(`DROP TABLE ${spec.table}`);
+      createVec0Table(db, dimensions, spec.table);
+      db.exec(`
+        INSERT INTO ${spec.table}(${spec.insertColumns})
+        SELECT ${spec.selectColumns}
+        FROM "${stage}" staged
+        JOIN ${spec.source} owner ON owner.id = staged.id
+      `);
+
+      const newCount = (db.prepare(`SELECT COUNT(*) AS c FROM ${spec.table}`).get() as CountRow).c;
+      if (newCount !== oldCount) {
+        throw new Error(
+          `Cannot migrate ${spec.table}: expected ${oldCount} vectors, rebuilt ${newCount}`,
+        );
+      }
+      db.exec(`DROP TABLE "${stage}"`);
+    }
+  });
+  migrate();
 }
 
 interface EmbeddingSyncCounts {
@@ -423,8 +545,7 @@ const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
 
 function runMigrations(db: Database.Database): void {
   const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get() as
-    | ConfigRow
-    | undefined;
+    ConfigRow | undefined;
   const currentVersion = row ? Number(row.value) : 0;
 
   if (currentVersion >= SCHEMA_VERSION) return;
@@ -467,8 +588,7 @@ export function createDatabase(
 
   if (dimensions == null) {
     const stored = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as
-      | ConfigRow
-      | undefined;
+      ConfigRow | undefined;
     if (stored) {
       dimensions = parseInt(stored.value, 10);
     }
@@ -501,6 +621,7 @@ export function createDatabase(
     }
 
     createVec0Tables(db, dimensions);
+    migrateVec0AgentPartitions(db, dimensions);
 
     if (!migrated) {
       migrateEmbeddingsToVec0(db, dimensions);
@@ -524,8 +645,7 @@ export function readStoredDimensions(dataDir: string): number | null {
   const db = new Database(dbPath, { readonly: true });
   try {
     const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as
-      | ConfigRow
-      | undefined;
+      ConfigRow | undefined;
     return row ? parseInt(row.value, 10) : null;
   } catch (err: unknown) {
     if (err instanceof Error && err.message?.includes('no such table')) return null;

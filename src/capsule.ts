@@ -20,6 +20,7 @@ import type Database from 'better-sqlite3';
 import type { Audrey } from './audrey.js';
 import type { RecallError, RecallResult, RecallOptions, MemoryType, MemoryState } from './types.js';
 import { recentFailures, type FailurePattern } from './events.js';
+import { requireAgent, resolveMemoryScope } from './utils.js';
 
 export type CapsuleMode = 'balanced' | 'conservative' | 'aggressive';
 
@@ -27,6 +28,8 @@ export interface CapsuleOptions {
   limit?: number;
   budgetChars?: number;
   mode?: CapsuleMode;
+  scope?: RecallOptions['scope'];
+  agent?: string;
   recentChangeWindowHours?: number;
   includeRisks?: boolean;
   includeContradictions?: boolean;
@@ -34,11 +37,7 @@ export interface CapsuleOptions {
 }
 
 export type CapsuleEntryType =
-  | 'episode'
-  | 'semantic'
-  | 'procedural'
-  | 'tool_failure'
-  | 'contradiction';
+  'episode' | 'semantic' | 'procedural' | 'tool_failure' | 'contradiction';
 
 export interface CapsuleEntry {
   memory_id: string;
@@ -240,16 +239,33 @@ function loadProcedureEnrichment(db: Database.Database, id: string): SemanticTag
     .get(id) as SemanticTagRow | undefined;
 }
 
-function loadOpenContradictions(db: Database.Database, limit: number): ContradictionRow[] {
+function loadOpenContradictions(
+  db: Database.Database,
+  limit: number,
+  agent?: string,
+): ContradictionRow[] {
   return db
     .prepare(
-      `SELECT id, claim_a_id, claim_b_id, claim_a_type, claim_b_type, state, created_at
-     FROM contradictions
-     WHERE state = 'open'
-     ORDER BY created_at DESC
-     LIMIT ?`,
+      `
+    WITH claim_agents AS (
+      SELECT id, 'episodic' AS memory_type, agent FROM episodes
+      UNION ALL
+      SELECT id, 'semantic' AS memory_type, agent FROM semantics
+      UNION ALL
+      SELECT id, 'procedural' AS memory_type, agent FROM procedures
     )
-    .all(limit) as ContradictionRow[];
+    SELECT c.id, c.claim_a_id, c.claim_b_id, c.claim_a_type, c.claim_b_type, c.state, c.created_at
+    FROM contradictions c
+    JOIN claim_agents a ON a.id = c.claim_a_id AND a.memory_type = c.claim_a_type
+    JOIN claim_agents b ON b.id = c.claim_b_id AND b.memory_type = c.claim_b_type
+    WHERE c.state = 'open'
+      AND a.agent = b.agent
+      ${agent ? 'AND a.agent = ?' : ''}
+    ORDER BY c.created_at DESC
+    LIMIT ?
+  `,
+    )
+    .all(...(agent ? [agent, limit] : [limit])) as ContradictionRow[];
 }
 
 function categorize(
@@ -324,6 +340,8 @@ export async function buildCapsule(
   const recentWindowMs = recentChangeWindowHours * 60 * 60 * 1000;
   const includeRisks = options.includeRisks ?? true;
   const includeContradictions = options.includeContradictions ?? true;
+  const memoryScope = resolveMemoryScope(options.scope ?? options.recall?.scope, 'agent');
+  const memoryAgent = requireAgent(options.agent ?? options.recall?.agent, audrey.agent);
 
   const sections: MemoryCapsule['sections'] = {
     must_follow: [],
@@ -352,13 +370,11 @@ export async function buildCapsule(
     for (const id of entry.evidence ?? []) evidenceIds.add(id);
   }
 
-  // 1. Primary recall (vector + confidence scoring). Spread the caller's
-  // options first so our agent-scoping wins — capsule must never leak across
-  // agents even if a caller passes scope: 'all' through options.recall.
   const results = await audrey.recall(query, {
     ...(options.recall ?? {}),
     limit: recallLimit,
-    scope: 'agent',
+    scope: memoryScope,
+    agent: memoryAgent,
   });
   const recallErrors = results.errors ?? [];
 
@@ -418,6 +434,7 @@ export async function buildCapsule(
     const failures = recentFailures(db, {
       since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
       limit: 5,
+      ...(memoryScope === 'agent' ? { actorAgent: memoryAgent } : {}),
     });
     for (const failure of failures) {
       push(
@@ -432,7 +449,11 @@ export async function buildCapsule(
 
   // 3. Open contradictions
   if (includeContradictions) {
-    const contradictions = loadOpenContradictions(db, 5);
+    const contradictions = loadOpenContradictions(
+      db,
+      5,
+      memoryScope === 'agent' ? memoryAgent : undefined,
+    );
     for (const row of contradictions) {
       push(
         'contradictions',

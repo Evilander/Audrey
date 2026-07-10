@@ -37,6 +37,27 @@ export function safeJsonParse<T>(str: string | null | undefined, fallback: T): T
   }
 }
 
+export function requireAgent(agent: unknown, fallback?: string): string {
+  const resolved = agent ?? fallback;
+  if (typeof resolved !== 'string' || resolved.trim().length === 0) {
+    throw new Error('agent must be a non-empty string');
+  }
+  const normalized = resolved.trim();
+  if (normalized.length > 128) {
+    throw new Error('agent must be at most 128 characters');
+  }
+  return normalized;
+}
+
+export function resolveMemoryScope(
+  scope: unknown,
+  fallback: 'agent' | 'shared',
+): 'agent' | 'shared' {
+  if (scope === undefined) return fallback;
+  if (scope === 'agent' || scope === 'shared') return scope;
+  throw new Error('scope must be "agent" or "shared"');
+}
+
 export function requireApiKey(
   apiKey: string | undefined | null,
   operation: string,

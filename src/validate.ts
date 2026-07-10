@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import type { EmbeddingProvider, LLMProvider, SemanticRow } from './types.js';
 import { generateId } from './ulid.js';
-import { safeJsonParse } from './utils.js';
+import { requireAgent, safeJsonParse } from './utils.js';
 import { buildContradictionDetectionPrompt } from './prompts.js';
 
 const REINFORCEMENT_THRESHOLD = 0.85;
@@ -15,6 +15,10 @@ interface SourceRow {
   source: string;
 }
 
+interface AgentRow {
+  agent: string;
+}
+
 interface ValidateResult {
   action: string;
   semanticId?: string;
@@ -26,7 +30,7 @@ interface ValidateResult {
 export async function validateMemory(
   db: Database.Database,
   embeddingProvider: EmbeddingProvider,
-  episode: { id: string; content: string; source: string },
+  episode: { id: string; content: string; source: string; agent?: string },
   options: {
     threshold?: number;
     contradictionThreshold?: number;
@@ -49,18 +53,28 @@ export async function validateMemory(
       embeddingVector ?? (await embeddingProvider.embed(episode.content)),
     );
 
+  const episodeAgent = requireAgent(
+    episode.agent ??
+      (
+        db.prepare('SELECT agent FROM episodes WHERE id = ?').get(episode.id) as
+          AgentRow | undefined
+      )?.agent,
+    'default',
+  );
   const nearestSemantic = db
     .prepare(
       `
-    SELECT s.*, (1.0 - v.distance) AS similarity
+    SELECT s.*, (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
     FROM vec_semantics v
     JOIN semantics s ON s.id = v.id
-    WHERE v.embedding MATCH ?
-      AND k = 1
-      AND (v.state = 'active' OR v.state = 'context_dependent')
+    WHERE v.agent = ?
+      AND (s.state = 'active' OR s.state = 'context_dependent')
+      AND s.agent = ?
+    ORDER BY similarity DESC
+    LIMIT 1
   `,
     )
-    .get(episodeBuffer) as SemanticWithSimilarity | undefined;
+    .get(episodeBuffer, episodeAgent, episodeAgent) as SemanticWithSimilarity | undefined;
 
   let bestMatch: SemanticWithSimilarity | null = null;
   let bestSimilarity = 0;
@@ -82,7 +96,7 @@ export async function validateMemory(
       if (wasAdded) {
         existing.push(episode.id);
       }
-      const diversity = computeSourceDiversity(db, existing, episode);
+      const diversity = computeSourceDiversity(db, existing, episode, episodeAgent);
       const now = new Date().toISOString();
       // supporting_count only increments when this is a new piece of evidence;
       // re-validating the same episode shouldn't keep inflating the count.
@@ -185,6 +199,7 @@ function computeSourceDiversity(
   db: Database.Database,
   evidenceIds: string[],
   currentEpisode: { source: string },
+  agent: string,
 ): number {
   const sourceTypes = new Set<string>();
   sourceTypes.add(currentEpisode.source);
@@ -192,8 +207,15 @@ function computeSourceDiversity(
   if (evidenceIds.length > 0) {
     const placeholders = evidenceIds.map(() => '?').join(',');
     const rows = db
-      .prepare(`SELECT DISTINCT source FROM episodes WHERE id IN (${placeholders})`)
-      .all(...evidenceIds) as SourceRow[];
+      .prepare(
+        `
+      SELECT DISTINCT source
+      FROM episodes
+      WHERE id IN (${placeholders})
+        AND agent = ?
+    `,
+      )
+      .all(...evidenceIds, agent) as SourceRow[];
     for (const row of rows) {
       sourceTypes.add(row.source);
     }

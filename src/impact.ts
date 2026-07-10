@@ -49,15 +49,17 @@ function rowsFromTable(
   orderBy: string,
   whereClause: string,
   limit: number,
+  agent?: string,
 ): ImpactRow[] {
+  const agentClause = agent ? ' AND agent = ?' : '';
   const sql = `
     SELECT id, content, salience, usage_count, last_used_at
     FROM ${table}
-    WHERE ${whereClause}
+    WHERE ${whereClause}${agentClause}
     ORDER BY ${orderBy}
     LIMIT ?
   `;
-  const rows = db.prepare(sql).all(limit) as Array<{
+  const rows = db.prepare(sql).all(...(agent ? [agent] : []), limit) as Array<{
     id: string;
     content: string;
     salience: number | null;
@@ -79,9 +81,10 @@ function topAcrossTables(
   orderBy: string,
   whereClause: string,
   limit: number,
+  agent?: string,
 ): ImpactRow[] {
   const all: ImpactRow[] = [
-    ...rowsFromTable(db, 'episodes', 'episodic', orderBy, whereClause, limit),
+    ...rowsFromTable(db, 'episodes', 'episodic', orderBy, whereClause, limit, agent),
     ...rowsFromTable(
       db,
       'semantics',
@@ -89,6 +92,7 @@ function topAcrossTables(
       orderBy,
       whereClause + " AND state != 'rolled_back'",
       limit,
+      agent,
     ),
     ...rowsFromTable(
       db,
@@ -97,6 +101,7 @@ function topAcrossTables(
       orderBy,
       whereClause + " AND state != 'rolled_back'",
       limit,
+      agent,
     ),
   ];
   // Re-sort the merged list and trim. The ORDER BY clause is the same across
@@ -115,63 +120,80 @@ function topAcrossTables(
   return all.slice(0, limit);
 }
 
-export function buildImpactReport(db: Database.Database, windowDays = 7, limit = 5): ImpactReport {
+export function buildImpactReport(
+  db: Database.Database,
+  windowDays = 7,
+  limit = 5,
+  agent?: string,
+): ImpactReport {
   const now = new Date();
   const sinceISO = new Date(now.getTime() - windowDays * 86_400_000).toISOString();
+  const agentClause = agent ? ' AND agent = ?' : '';
+  const agentParams = agent ? [agent] : [];
 
-  const totalEp = (db.prepare('SELECT COUNT(*) as c FROM episodes').get() as CountRow).c;
+  const totalEp = (
+    db
+      .prepare(`SELECT COUNT(*) as c FROM episodes WHERE 1 = 1${agentClause}`)
+      .get(...agentParams) as CountRow
+  ).c;
   const totalSem = (
-    db.prepare("SELECT COUNT(*) as c FROM semantics WHERE state != 'rolled_back'").get() as CountRow
+    db
+      .prepare(`SELECT COUNT(*) as c FROM semantics WHERE state != 'rolled_back'${agentClause}`)
+      .get(...agentParams) as CountRow
   ).c;
   const totalProc = (
     db
-      .prepare("SELECT COUNT(*) as c FROM procedures WHERE state != 'rolled_back'")
-      .get() as CountRow
+      .prepare(`SELECT COUNT(*) as c FROM procedures WHERE state != 'rolled_back'${agentClause}`)
+      .get(...agentParams) as CountRow
   ).c;
 
   const validatedEp = (
-    db.prepare('SELECT COUNT(*) as c FROM episodes WHERE usage_count > 0').get() as CountRow
+    db
+      .prepare(`SELECT COUNT(*) as c FROM episodes WHERE usage_count > 0${agentClause}`)
+      .get(...agentParams) as CountRow
   ).c;
   const validatedSem = (
     db
       .prepare(
-        "SELECT COUNT(*) as c FROM semantics WHERE usage_count > 0 AND state != 'rolled_back'",
+        `SELECT COUNT(*) as c FROM semantics WHERE usage_count > 0 AND state != 'rolled_back'${agentClause}`,
       )
-      .get() as CountRow
+      .get(...agentParams) as CountRow
   ).c;
   const validatedProc = (
     db
       .prepare(
-        "SELECT COUNT(*) as c FROM procedures WHERE usage_count > 0 AND state != 'rolled_back'",
+        `SELECT COUNT(*) as c FROM procedures WHERE usage_count > 0 AND state != 'rolled_back'${agentClause}`,
       )
-      .get() as CountRow
+      .get(...agentParams) as CountRow
   ).c;
 
   const recentEp = (
     db
-      .prepare('SELECT COUNT(*) as c FROM episodes WHERE last_used_at >= ?')
-      .get(sinceISO) as CountRow
+      .prepare(`SELECT COUNT(*) as c FROM episodes WHERE last_used_at >= ?${agentClause}`)
+      .get(sinceISO, ...agentParams) as CountRow
   ).c;
   const recentSem = (
     db
       .prepare(
-        "SELECT COUNT(*) as c FROM semantics WHERE last_used_at >= ? AND state != 'rolled_back'",
+        `SELECT COUNT(*) as c FROM semantics WHERE last_used_at >= ? AND state != 'rolled_back'${agentClause}`,
       )
-      .get(sinceISO) as CountRow
+      .get(sinceISO, ...agentParams) as CountRow
   ).c;
   const recentProc = (
     db
       .prepare(
-        "SELECT COUNT(*) as c FROM procedures WHERE last_used_at >= ? AND state != 'rolled_back'",
+        `SELECT COUNT(*) as c FROM procedures WHERE last_used_at >= ? AND state != 'rolled_back'${agentClause}`,
       )
-      .get(sinceISO) as CountRow
+      .get(sinceISO, ...agentParams) as CountRow
   ).c;
 
   const challenged =
     (
       db
-        .prepare("SELECT SUM(challenge_count) as c FROM semantics WHERE state != 'rolled_back'")
-        .get() as ChallengedRow
+        .prepare(
+          `SELECT SUM(challenge_count) as c FROM semantics WHERE state != 'rolled_back'${agentClause}`,
+        )
+        .get(...agentParams) as ChallengedRow
     ).c ?? 0;
 
   // Per-outcome breakdown comes from the memory_events audit trail. Each
@@ -179,8 +201,11 @@ export function buildImpactReport(db: Database.Database, windowDays = 7, limit =
   // Cumulative counters on the memories tables can't distinguish outcomes,
   // hence the audit trail.
   const validateEvents = db
-    .prepare("SELECT metadata FROM memory_events WHERE event_type = 'Validate' AND created_at >= ?")
-    .all(sinceISO) as Array<{ metadata: string | null }>;
+    .prepare(
+      `SELECT metadata FROM memory_events
+     WHERE event_type = 'Validate' AND created_at >= ?${agent ? ' AND actor_agent = ?' : ''}`,
+    )
+    .all(sinceISO, ...(agent ? [agent] : [])) as Array<{ metadata: string | null }>;
   const outcomeBreakdownInWindow = { helpful: 0, wrong: 0, used: 0 };
   for (const evt of validateEvents) {
     if (!evt.metadata) continue;
@@ -210,8 +235,8 @@ export function buildImpactReport(db: Database.Database, windowDays = 7, limit =
       procedural: { validated: validatedProc, recent: recentProc },
     },
     outcomeBreakdownInWindow,
-    topUsed: topAcrossTables(db, 'usage_count DESC, id', 'usage_count > 0', limit),
-    weakest: topAcrossTables(db, 'salience ASC, id', 'salience IS NOT NULL', limit),
+    topUsed: topAcrossTables(db, 'usage_count DESC, id', 'usage_count > 0', limit, agent),
+    weakest: topAcrossTables(db, 'salience ASC, id', 'salience IS NOT NULL', limit, agent),
     // sinceISO is generated by new Date().toISOString() so the embedded literal is
     // safe; topAcrossTables doesn't accept bound params.
     recentActivity: topAcrossTables(
@@ -219,6 +244,7 @@ export function buildImpactReport(db: Database.Database, windowDays = 7, limit =
       'last_used_at DESC, id',
       `last_used_at >= '${sinceISO}'`,
       limit,
+      agent,
     ),
   };
 }

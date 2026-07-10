@@ -77,6 +77,19 @@ export type {
   GuardValidatedEvidence,
   ToolOutcome,
 } from './controller.js';
+export {
+  extractExplicitMemories,
+  inferAutopilotOutcome,
+  renderAutopilotCapsule,
+  runAutopilotHook,
+} from './autopilot.js';
+export type {
+  AutopilotHookOptions,
+  AutopilotHookResult,
+  AutopilotHost,
+  AutopilotScope,
+  ExplicitMemoryCandidate,
+} from './autopilot.js';
 
 export type {
   Affect,

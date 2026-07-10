@@ -40,6 +40,7 @@ export interface FindCandidatesOptions {
   limit?: number;
   target?: PromotionTarget;
   since?: string;
+  agent?: string;
 }
 
 interface SemanticRow {
@@ -74,13 +75,18 @@ interface EventRow {
   metadata: string | null;
 }
 
-function loadPromotedMemoryIds(db: Database.Database, target: PromotionTarget): Set<string> {
+function loadPromotedMemoryIds(
+  db: Database.Database,
+  target: PromotionTarget,
+  agent?: string,
+): Set<string> {
   const rows = db
     .prepare(
       `SELECT metadata FROM memory_events
-     WHERE event_type = 'Promotion' AND tool_name = ?`,
+     WHERE event_type = 'Promotion' AND tool_name = ?
+       ${agent ? 'AND actor_agent = ?' : ''}`,
     )
-    .all(target) as EventRow[];
+    .all(target, ...(agent ? [agent] : [])) as EventRow[];
 
   const ids = new Set<string>();
   for (const row of rows) {
@@ -161,11 +167,12 @@ export function findPromotionCandidates(
   const minEvidence = options.minEvidence ?? 2;
   const limit = options.limit ?? 20;
   const target: PromotionTarget = options.target ?? 'claude-rules';
-  const alreadyPromoted = loadPromotedMemoryIds(db, target);
+  const alreadyPromoted = loadPromotedMemoryIds(db, target, options.agent);
 
   const failures = recentFailures(db, {
     since: options.since ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
     limit: 20,
+    actorAgent: options.agent,
   });
 
   const candidates: PromotionCandidate[] = [];
@@ -176,9 +183,10 @@ export function findPromotionCandidates(
       `SELECT id, content, state, success_count, failure_count, retrieval_count,
             usage_count, salience, created_at, last_reinforced_at, trigger_conditions
      FROM procedures
-     WHERE state = 'active'`,
+     WHERE state = 'active'
+       ${options.agent ? 'AND agent = ?' : ''}`,
     )
-    .all() as ProceduralRow[];
+    .all(...(options.agent ? [options.agent] : [])) as ProceduralRow[];
 
   for (const row of procedurals) {
     if (alreadyPromoted.has(row.id)) continue;
@@ -240,9 +248,10 @@ export function findPromotionCandidates(
       `SELECT id, content, state, evidence_count, supporting_count, contradicting_count,
             retrieval_count, usage_count, salience, created_at, last_reinforced_at
      FROM semantics
-     WHERE state = 'active'`,
+     WHERE state = 'active'
+       ${options.agent ? 'AND agent = ?' : ''}`,
     )
-    .all() as SemanticRow[];
+    .all(...(options.agent ? [options.agent] : [])) as SemanticRow[];
 
   for (const row of semantics) {
     if (alreadyPromoted.has(row.id)) continue;

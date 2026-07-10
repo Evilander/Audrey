@@ -152,11 +152,21 @@ export class OpenAILLMProvider implements LLMProvider {
     options: LLMCompletionOptions = {},
   ): Promise<LLMCompletionResult> {
     requireApiKey(this.apiKey, 'OpenAI LLM', 'OPENAI_API_KEY');
-    const body = {
+    // GPT-5 / o-series reject `max_tokens` and require `max_completion_tokens`,
+    // which also counts hidden reasoning tokens — give those models extra headroom
+    // so reasoning doesn't starve the visible completion (and yield empty content).
+    // Older chat models (e.g. gpt-4o) keep `max_tokens` behavior unchanged.
+    const requestedMaxTokens = options.maxTokens || this.maxTokens;
+    const usesCompletionTokens = /^(gpt-5|o\d)/.test(this.model);
+    const body: Record<string, unknown> = {
       model: this.model,
-      max_tokens: options.maxTokens || this.maxTokens,
       messages,
     };
+    if (usesCompletionTokens) {
+      body.max_completion_tokens = Math.max(requestedMaxTokens, 4096);
+    } else {
+      body.max_tokens = requestedMaxTokens;
+    }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
