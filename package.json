@@ -221,6 +221,12 @@
   "overrides": {
     "qs": "^6.15.2"
   },
+  "allowScripts": {
+    "better-sqlite3@12.9.0": true,
+    "onnxruntime-node@1.21.0": true,
+    "protobufjs@7.6.5": true,
+    "sharp@0.34.5": true
+  },
   "directories": {
     "example": "examples",
     "test": "tests"
