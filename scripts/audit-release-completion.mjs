@@ -10,7 +10,7 @@ import { verifyBrowserLaunchResults } from './verify-browser-launch-results.mjs'
 import { verifyReleaseReadiness } from './verify-release-readiness.mjs';
 
 const ROOT = process.cwd();
-const DEFAULT_VERSION = '1.1.0';
+const DEFAULT_VERSION = '1.1.1';
 const DEFAULT_OUT = '.tmp/release-artifacts/completion-audit.json';
 const NPM_REGISTRY = 'https://registry.npmjs.org/';
 
