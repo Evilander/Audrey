@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.2 - 2026-07-13
+
+### Guard signal quality
+
+- Consolidation now sweeps every real owning agent instead of the CLI utility agent, so `audrey dream` and reflection actually convert episodes into semantic and procedural knowledge on stores that previously reported "evaluated 0 episodes".
+- Failure streaks are self-extinguishing: `failure_count` counts failures since the tool's last success in scope, and a subsequent success retires the warning instead of letting it nag at high confidence for the full window. Same-instant ties order by monotonic event id and fail toward warning. `include_resolved` preserves the raw diagnostic view.
+- Tool-failure signals are project-scoped: `memory_recent_failures`, `memory_capsule`, and preflight accept a `cwd` and exclude failures recorded in other projects. Directionality is asymmetric on purpose — failures without a recorded directory stay visible because they cannot be proven foreign, while only a success provably from the current project can extinguish a local streak. Autopilot passes the working directory even under shared scope, so cross-project semantic knowledge still travels while foreign failure noise does not.
+- Autopilot-learned tool-failure episodes (tool-result source) now categorize as risks, are tool-matched at medium severity in preflight, and cap their error summaries in capsules at 240 characters. User-authored memories that carry the same tag keep full high-severity risk treatment.
+- Redaction no longer destroys machine identifiers such as MCP tool names: consistently-cased word identifiers (three or more separator-delimited all-lowercase or all-uppercase segments) are exempt from the high-entropy secret rule. Title-cased memorable passphrases and digit-bearing tokens still redact.
+
+### Injection efficiency
+
+- Compact packet format (default; `AUDREY_PACKET_FORMAT=verbose` reverts): entries render as `[memory_id confidence] "content"` lines with a one-line safety preamble. Content stays JSON-quoted; injection-safety invariants are unchanged.
+- Session-delta injection (default; `AUDREY_PACKET_DELTA=0` reverts): each memory is injected once per session instead of on every prompt. SessionStart delivers the full packet and seeds the tracker; the tracker clears on session start and compaction — the moments earlier packets can leave the context window. A memory whose state changes after injection (for example, becoming disputed) reinjects with its new standing. Measured on a production store this removed a repeated 3.5k-character packet from every prompt after the first.
+
+### MCP Registry
+
+- Publishes Audrey to the official MCP Registry as `io.github.evilander/audrey` via GitHub OIDC in the release pipeline, after the npm publish gates pass.
+
 ## 1.1.1 - 2026-07-10
 
 ### npm 12 install compatibility

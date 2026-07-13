@@ -260,10 +260,15 @@ function sameActionEvents(audrey: Audrey, action: AgentAction): MemoryEvent[] {
   });
 }
 
+function eventOrder(a: MemoryEvent, b: MemoryEvent): number {
+  // ULID ids are monotonic within a process, breaking same-millisecond ties.
+  return a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id);
+}
+
 function latestSucceededEvent(events: MemoryEvent[]): MemoryEvent | undefined {
   return events
     .filter(event => event.outcome === 'succeeded')
-    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .sort(eventOrder)
     .at(-1);
 }
 
@@ -273,12 +278,12 @@ function matchingFailureEvents(
   failureDecayDays: number,
 ): MemoryEvent[] {
   const events = sameActionEvents(audrey, action);
-  const latestSuccessAt = latestSucceededEvent(events)?.created_at;
+  const latestSuccess = latestSucceededEvent(events);
   const cutoffMs =
     failureDecayDays > 0 ? Date.now() - failureDecayDays * 24 * 60 * 60 * 1000 : -Infinity;
   return events
     .filter(event => event.outcome === 'failed')
-    .filter(event => !latestSuccessAt || event.created_at > latestSuccessAt)
+    .filter(event => !latestSuccess || eventOrder(event, latestSuccess) > 0)
     .filter(event => Date.parse(event.created_at) >= cutoffMs);
 }
 
