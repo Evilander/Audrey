@@ -282,14 +282,24 @@ export function recentFailures(
     });
   }
 
-  const scopedClauses = (alias: string) => {
+  // Failures without a recorded cwd cannot be proven foreign, so they stay
+  // visible (fail toward warning). Successes are held to the opposite
+  // standard: only a success provably from this project may extinguish a
+  // local streak.
+  const scopedClauses = (alias: string, kind: 'failure' | 'success' = 'failure') => {
     const clauses = [actorAgent ? `AND ${alias}.actor_agent = @actorAgent` : ''];
     if (cwdNames !== undefined) {
-      clauses.push(
-        cwdNames.length > 0
-          ? `AND (${alias}.cwd IS NULL OR ${alias}.cwd IN (${cwdNames.join(', ')}))`
-          : `AND ${alias}.cwd IS NULL`,
-      );
+      if (kind === 'failure') {
+        clauses.push(
+          cwdNames.length > 0
+            ? `AND (${alias}.cwd IS NULL OR ${alias}.cwd IN (${cwdNames.join(', ')}))`
+            : `AND ${alias}.cwd IS NULL`,
+        );
+      } else {
+        clauses.push(
+          cwdNames.length > 0 ? `AND ${alias}.cwd IN (${cwdNames.join(', ')})` : 'AND 1 = 0',
+        );
+      }
     }
     return clauses.filter(Boolean).join('\n               ');
   };
@@ -299,7 +309,7 @@ export function recentFailures(
              WHERE s.tool_name = e1.tool_name
                AND s.outcome = 'succeeded'
                AND s.created_at >= @since
-               ${scopedClauses('s')}
+               ${scopedClauses('s', 'success')}
   `;
 
   return db
@@ -322,7 +332,21 @@ export function recentFailures(
       AND e1.tool_name IS NOT NULL
       AND e1.created_at >= @since
       ${scopedClauses('e1')}
-      ${options.includeResolved ? '' : `AND e1.created_at > COALESCE((${lastSuccessSubquery}), '')`}
+      ${
+        // A failure is active while no success postdates it. Same-millisecond
+        // ties order by ULID id, which is monotonic within a process.
+        options.includeResolved
+          ? ''
+          : `AND NOT EXISTS (
+            SELECT 1 FROM memory_events later_s
+            WHERE later_s.tool_name = e1.tool_name
+              AND later_s.outcome = 'succeeded'
+              AND later_s.created_at >= @since
+              ${scopedClauses('later_s', 'success')}
+              AND (later_s.created_at > e1.created_at
+                OR (later_s.created_at = e1.created_at AND later_s.id > e1.id))
+          )`
+      }
     GROUP BY e1.tool_name
     ORDER BY last_failed_at DESC
     LIMIT ${limit}

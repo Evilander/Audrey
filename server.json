@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.evilander/audrey",
+  "description": "Local-first biological memory for coding agents: episodic encoding, consolidation into semantic and procedural knowledge, evidence-backed recall, and pre-action Guard checks over SQLite.",
+  "repository": {
+    "url": "https://github.com/Evilander/Audrey",
+    "source": "github"
+  },
+  "version": "1.1.2",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "audrey",
+      "version": "1.1.2",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "AUDREY_DATA_DIR",
+          "description": "Directory for the SQLite memory store (defaults to ~/.audrey/data)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "AUDREY_AGENT",
+          "description": "Logical memory owner used for scoped operations (defaults to the host name)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

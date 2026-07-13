@@ -223,11 +223,17 @@ function shannonEntropy(value: string): number {
  * or more purely alphabetic runs. Redacting identifiers destroys the guard
  * signals that reference them ("[REDACTED] failed 2x recently"), so exempt
  * this shape explicitly.
+ *
+ * Each segment must be consistently cased (all-lowercase or all-uppercase)
+ * the way machine identifiers are. Memorable passphrases such as
+ * "Falcon-River-Cobalt-Meadow" use title-cased words and stay redactable.
  */
 function looksLikeWordIdentifier(value: string): boolean {
   const segments = value.split(/[_\-.]+/).filter(Boolean);
   if (segments.length < 3) return false;
-  return segments.every(segment => /^[A-Za-z]+$/.test(segment) && segment.length <= 20);
+  return segments.every(
+    segment => (/^[a-z]+$/.test(segment) || /^[A-Z]+$/.test(segment)) && segment.length <= 20,
+  );
 }
 
 function looksLikeHighEntropySecret(value: string): boolean {

@@ -230,7 +230,7 @@ describe('Audrey Autopilot', () => {
     expect(afterCompact.output.hookSpecificOutput.additionalContext).toContain('migrations first');
   });
 
-  it('SessionStart resets the delta tracker for resumed sessions', async () => {
+  it('SessionStart delivers a full packet, seeds the tracker, and resets on resume', async () => {
     await audrey.encode({
       content: 'Deploys must run migrations first',
       source: 'told-by-user',
@@ -245,16 +245,21 @@ describe('Audrey Autopilot', () => {
       expectedEvent: 'UserPromptSubmit',
     });
 
-    // Resume: a new context window under the same session id.
-    await runAutopilotHook(audrey, payload('SessionStart'), {
+    // Resume: a new context window under the same session id gets the full
+    // packet at SessionStart...
+    const resumed = await runAutopilotHook(audrey, payload('SessionStart'), {
       host: 'codex',
       expectedEvent: 'SessionStart',
     });
-    const resumed = await runAutopilotHook(audrey, prompt(), {
+    expect(resumed.output.hookSpecificOutput.additionalContext).toContain('migrations first');
+
+    // ...and the first prompt afterward does not duplicate what SessionStart
+    // already injected.
+    const firstPrompt = await runAutopilotHook(audrey, prompt(), {
       host: 'codex',
       expectedEvent: 'UserPromptSubmit',
     });
-    expect(resumed.output.hookSpecificOutput.additionalContext).toContain('migrations first');
+    expect(JSON.stringify(firstPrompt.output)).not.toContain('migrations first');
   });
 
   it('injects prompt-aware context and persists explicit memories without storing a raw prompt event', async () => {
