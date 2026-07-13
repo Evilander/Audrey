@@ -505,8 +505,7 @@ async function reflect(): Promise<void> {
         `${totals.clustersFound} clusters, ${totals.principlesExtracted} principles`,
     );
     console.log(
-      `[audrey] Decay: ${totals.decayEvaluated} evaluated, ` +
-        `${totals.decayDormant} dormant`,
+      `[audrey] Decay: ${totals.decayEvaluated} evaluated, ` + `${totals.decayDormant} dormant`,
     );
     console.log(
       `[audrey] Status: ${stats.episodic} episodic, ${stats.semantic} semantic, ` +
