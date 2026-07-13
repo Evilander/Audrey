@@ -157,6 +157,14 @@ describe('redact', () => {
     expect(result.text).not.toContain(token);
   });
 
+  it('still redacts title-cased memorable passphrases', () => {
+    // Mixed-case segments are passphrase-shaped, not identifier-shaped.
+    const passphrase = 'Falcon-River-Cobalt-Meadow-Quartz';
+    const result = redact(`leaked ${passphrase} in output`);
+    expect(result.redactions.find(r => r.class === 'high_entropy_secret')?.count).toBe(1);
+    expect(result.text).not.toContain(passphrase);
+  });
+
   it('redactJson walks nested structures', () => {
     const result = redactJson({
       config: { password: 'hunter2abcdef' },
