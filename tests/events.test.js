@@ -82,6 +82,13 @@ describe('memory_events CRUD', () => {
 
   it('recentFailures groups failures by tool with most recent error', () => {
     insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'succeeded',
+      createdAt: '2026-04-19T12:00:00Z',
+    });
+    insertEvent(db, {
       eventType: 'PostToolUseFailure',
       source: 'tool-trace',
       toolName: 'Bash',
@@ -105,20 +112,130 @@ describe('memory_events CRUD', () => {
       errorSummary: 'edit failed',
       createdAt: '2026-04-21T10:00:00Z',
     });
-    insertEvent(db, {
-      eventType: 'PostToolUse',
-      source: 'tool-trace',
-      toolName: 'Bash',
-      outcome: 'succeeded',
-      createdAt: '2026-04-22T11:00:00Z',
-    });
 
     const failures = recentFailures(db, { since: '2026-04-19T00:00:00Z' });
     expect(failures).toHaveLength(2);
     const bash = failures.find(f => f.tool_name === 'Bash');
     expect(bash?.failure_count).toBe(2);
     expect(bash?.last_error_summary).toBe('newer error');
+    expect(bash?.last_succeeded_at).toBe('2026-04-19T12:00:00Z');
     expect(failures[0].tool_name).toBe('Bash'); // most recent first
+  });
+
+  it('recentFailures extinguishes a streak once the tool succeeds after it', () => {
+    insertEvent(db, {
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'failed',
+      errorSummary: 'lint loop',
+      createdAt: '2026-04-20T10:00:00Z',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'succeeded',
+      createdAt: '2026-04-20T11:00:00Z',
+    });
+
+    expect(recentFailures(db, { since: '2026-04-19T00:00:00Z' })).toHaveLength(0);
+
+    const resolved = recentFailures(db, {
+      since: '2026-04-19T00:00:00Z',
+      includeResolved: true,
+    });
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0].last_succeeded_at).toBe('2026-04-20T11:00:00Z');
+  });
+
+  it('recentFailures counts only failures after the most recent success', () => {
+    const events = [
+      ['failed', '2026-04-20T08:00:00Z'],
+      ['succeeded', '2026-04-20T09:00:00Z'],
+      ['failed', '2026-04-20T10:00:00Z'],
+      ['failed', '2026-04-20T11:00:00Z'],
+    ];
+    for (const [outcome, createdAt] of events) {
+      insertEvent(db, {
+        eventType: outcome === 'failed' ? 'PostToolUseFailure' : 'PostToolUse',
+        source: 'tool-trace',
+        toolName: 'Bash',
+        outcome,
+        errorSummary: outcome === 'failed' ? `error at ${createdAt}` : undefined,
+        createdAt,
+      });
+    }
+
+    const failures = recentFailures(db, { since: '2026-04-19T00:00:00Z' });
+    expect(failures).toHaveLength(1);
+    expect(failures[0].failure_count).toBe(2);
+    expect(failures[0].last_succeeded_at).toBe('2026-04-20T09:00:00Z');
+  });
+
+  it('recentFailures scopes to the project when cwd is provided', () => {
+    // Distinct .git markers keep the fixtures from resolving up to this
+    // repository's own project root.
+    const projectA = `${TEST_DIR}/project-a`;
+    const projectB = `${TEST_DIR}/project-b`;
+    for (const dir of [projectA, projectB]) mkdirSync(`${dir}/.git`, { recursive: true });
+
+    insertEvent(db, {
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'failed',
+      errorSummary: 'failure in project A',
+      cwd: projectA,
+      createdAt: '2026-04-20T10:00:00Z',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      toolName: 'Edit',
+      outcome: 'failed',
+      errorSummary: 'failure without cwd',
+      createdAt: '2026-04-20T10:30:00Z',
+    });
+
+    const inB = recentFailures(db, { since: '2026-04-19T00:00:00Z', cwd: projectB });
+    // Project A's Bash failure is foreign; the cwd-less Edit failure cannot
+    // be proven foreign and stays.
+    expect(inB.map(f => f.tool_name)).toEqual(['Edit']);
+
+    const inA = recentFailures(db, { since: '2026-04-19T00:00:00Z', cwd: projectA });
+    expect(inA.map(f => f.tool_name).sort()).toEqual(['Bash', 'Edit']);
+  });
+
+  it('recentFailures does not let a success in another project extinguish a local streak', () => {
+    const projectA = `${TEST_DIR}/project-a`;
+    const projectB = `${TEST_DIR}/project-b`;
+    for (const dir of [projectA, projectB]) mkdirSync(`${dir}/.git`, { recursive: true });
+
+    insertEvent(db, {
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'failed',
+      errorSummary: 'still broken here',
+      cwd: projectA,
+      createdAt: '2026-04-20T10:00:00Z',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'succeeded',
+      cwd: projectB,
+      createdAt: '2026-04-20T11:00:00Z',
+    });
+
+    const inA = recentFailures(db, { since: '2026-04-19T00:00:00Z', cwd: projectA });
+    expect(inA).toHaveLength(1);
+    expect(inA[0].last_succeeded_at).toBeNull();
+
+    // Without a cwd filter the cross-project success does resolve the streak.
+    expect(recentFailures(db, { since: '2026-04-19T00:00:00Z' })).toHaveLength(0);
   });
 
   it('deleteEventsBefore removes events older than cutoff', () => {

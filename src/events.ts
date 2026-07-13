@@ -4,6 +4,7 @@
  */
 
 import Database from 'better-sqlite3';
+import { namespaceMatcher } from './project.js';
 import { generateId } from './ulid.js';
 import { requireAgent } from './utils.js';
 
@@ -211,48 +212,123 @@ export interface FailurePattern {
   failure_count: number;
   last_error_summary: string | null;
   last_failed_at: string;
+  last_succeeded_at: string | null;
+}
+
+export interface RecentFailureOptions {
+  since?: string;
+  limit?: number;
+  actorAgent?: string;
+  /**
+   * Scope failure patterns to the project containing this directory. Events
+   * recorded without a cwd are still included — they cannot be proven foreign.
+   */
+  cwd?: string;
+  /**
+   * By default a failure pattern is extinguished once the same tool succeeds
+   * after it (within the same scope): the streak is over, so the warning would
+   * be stale noise. Pass true to see resolved patterns too (diagnostics).
+   */
+  includeResolved?: boolean;
+}
+
+function matchingCwds(
+  db: Database.Database,
+  cwd: string,
+  since: string,
+  actorAgent: string | undefined,
+): string[] {
+  const rows = db
+    .prepare(
+      `
+    SELECT DISTINCT cwd FROM memory_events
+    WHERE cwd IS NOT NULL
+      AND tool_name IS NOT NULL
+      AND outcome IN ('failed', 'succeeded')
+      AND created_at >= @since
+      ${actorAgent ? 'AND actor_agent = @actorAgent' : ''}
+  `,
+    )
+    .all({ since, ...(actorAgent ? { actorAgent } : {}) }) as Array<{ cwd: string }>;
+  const matches = namespaceMatcher(cwd);
+  return rows.map(row => row.cwd).filter(matches);
 }
 
 /**
- * Tools that have failed recently, most recent first. Feeds PreToolUse
+ * Tools with an unresolved failure streak, most recent first. Feeds PreToolUse
  * preflight warnings: "this command failed last time — here's what fixed it."
+ *
+ * failure_count counts failures since the tool's last success in scope
+ * (extinction: disconfirming evidence retires the warning), not raw failures
+ * in the window.
  */
 export function recentFailures(
   db: Database.Database,
-  options: { since?: string; limit?: number; actorAgent?: string } = {},
+  options: RecentFailureOptions = {},
 ): FailurePattern[] {
   const since = options.since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const limit = Math.max(1, Math.min(options.limit ?? 20, 200));
   const actorAgent =
     options.actorAgent === undefined ? undefined : requireAgent(options.actorAgent);
-  const actorClause = actorAgent ? 'AND actor_agent = @actorAgent' : '';
-  const nestedActorClause = actorAgent ? 'AND e2.actor_agent = @actorAgent' : '';
+
+  const params: Record<string, unknown> = { since };
+  if (actorAgent) params.actorAgent = actorAgent;
+
+  let cwdNames: string[] | undefined;
+  if (options.cwd) {
+    cwdNames = matchingCwds(db, options.cwd, since, actorAgent).map((value, index) => {
+      params[`cwd${index}`] = value;
+      return `@cwd${index}`;
+    });
+  }
+
+  const scopedClauses = (alias: string) => {
+    const clauses = [actorAgent ? `AND ${alias}.actor_agent = @actorAgent` : ''];
+    if (cwdNames !== undefined) {
+      clauses.push(
+        cwdNames.length > 0
+          ? `AND (${alias}.cwd IS NULL OR ${alias}.cwd IN (${cwdNames.join(', ')}))`
+          : `AND ${alias}.cwd IS NULL`,
+      );
+    }
+    return clauses.filter(Boolean).join('\n               ');
+  };
+
+  const lastSuccessSubquery = `
+             SELECT MAX(s.created_at) FROM memory_events s
+             WHERE s.tool_name = e1.tool_name
+               AND s.outcome = 'succeeded'
+               AND s.created_at >= @since
+               ${scopedClauses('s')}
+  `;
 
   return db
     .prepare(
       `
-    SELECT tool_name,
+    SELECT e1.tool_name,
            COUNT(*) AS failure_count,
-           MAX(created_at) AS last_failed_at,
+           MAX(e1.created_at) AS last_failed_at,
            (
              SELECT error_summary FROM memory_events e2
              WHERE e2.tool_name = e1.tool_name
                AND e2.outcome = 'failed'
                AND e2.created_at >= @since
-               ${nestedActorClause}
+               ${scopedClauses('e2')}
              ORDER BY e2.created_at DESC LIMIT 1
-           ) AS last_error_summary
+           ) AS last_error_summary,
+           (${lastSuccessSubquery}) AS last_succeeded_at
     FROM memory_events e1
-    WHERE outcome = 'failed'
-      AND tool_name IS NOT NULL
-      AND created_at >= @since
-      ${actorClause}
-    GROUP BY tool_name
+    WHERE e1.outcome = 'failed'
+      AND e1.tool_name IS NOT NULL
+      AND e1.created_at >= @since
+      ${scopedClauses('e1')}
+      ${options.includeResolved ? '' : `AND e1.created_at > COALESCE((${lastSuccessSubquery}), '')`}
+    GROUP BY e1.tool_name
     ORDER BY last_failed_at DESC
     LIMIT ${limit}
   `,
     )
-    .all({ since, ...(actorAgent ? { actorAgent } : {}) }) as FailurePattern[];
+    .all(params) as FailurePattern[];
 }
 
 export function deleteEventsBefore(db: Database.Database, cutoffIso: string): number {
