@@ -21,6 +21,11 @@ on:
         required: true
         default: true
         type: boolean
+      publish_mcp:
+        description: Publish server metadata to the MCP Registry
+        required: true
+        default: true
+        type: boolean
 
 env:
   RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
@@ -117,16 +122,26 @@ jobs:
     needs:
       - validate-release
       - publish-npm
-    if: github.event_name == 'release' || inputs.publish_npm
+    # Registry publishes are metadata-only and must be re-runnable after a
+    # rejected submission without republishing npm (which is immutable), so a
+    # dispatch with publish_mcp can run even when publish-npm is skipped.
+    if: >-
+      !cancelled() && needs.validate-release.result == 'success' &&
+      ((github.event_name == 'release' && needs.publish-npm.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_mcp &&
+        contains(fromJSON('["success", "skipped"]'), needs.publish-npm.result)))
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # GitHub OIDC auth claims the io.github.evilander/* namespace
 
     steps:
+      # Release events publish the tagged server.json; dispatches publish the
+      # dispatched ref's server.json so metadata fixes don't require retagging.
+      # The version is always stamped from the validated release tag.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.validate-release.outputs.tag }}
+          ref: ${{ github.event_name == 'release' && needs.validate-release.outputs.tag || github.ref }}
 
       - name: Install mcp-publisher
         run: |
