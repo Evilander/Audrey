@@ -135,6 +135,28 @@ describe('redact', () => {
     expect(result.text).toContain('[REDACTED:high_entropy_secret');
   });
 
+  it('does not redact long snake_case tool identifiers', () => {
+    const tools = [
+      'mcp__plugin_playwright_playwright__browser_navigate',
+      'mcp__plugin_playwright_playwright__browser_take_screenshot',
+      'mcp__audrey-memory__memory_observe_tool',
+      'AUDREY_AUTOPILOT_MAINTENANCE_INTERVAL_HOURS',
+    ];
+    for (const tool of tools) {
+      const result = redact(`${tool} failed 2x recently`);
+      expect(result.state, tool).toBe('clean');
+      expect(result.text, tool).toContain(tool);
+    }
+  });
+
+  it('still redacts secrets that contain separators', () => {
+    // base64url-style token with underscores/hyphens but digit-bearing segments
+    const token = 'q9V1nZ4L_kP7sD2fGh8-JmR3tY6uW0xAbC5eF1gH';
+    const result = redact(`leaked ${token} in output`);
+    expect(result.redactions.find(r => r.class === 'high_entropy_secret')?.count).toBe(1);
+    expect(result.text).not.toContain(token);
+  });
+
   it('redactJson walks nested structures', () => {
     const result = redactJson({
       config: { password: 'hunter2abcdef' },

@@ -2486,10 +2486,20 @@ async function main(): Promise<void> {
         .max(200)
         .optional()
         .describe('Max rows to return (defaults to 20)'),
+      cwd: z
+        .string()
+        .optional()
+        .describe('Scope failures to the project containing this directory'),
+      include_resolved: z
+        .boolean()
+        .optional()
+        .describe('Include failure streaks already resolved by a later success (default false)'),
     },
-    async ({ since, limit }) => {
+    async ({ since, limit, cwd, include_resolved }) => {
       try {
-        return toolResult(audrey.recentFailures({ since, limit }));
+        return toolResult(
+          audrey.recentFailures({ since, limit, cwd, includeResolved: include_resolved }),
+        );
       } catch (err) {
         return toolError(err);
       }
@@ -2541,6 +2551,10 @@ async function main(): Promise<void> {
         .describe(
           'agent restricts memory recall to this MCP server agent identity. shared searches the whole store. Defaults to agent.',
         ),
+      cwd: z
+        .string()
+        .optional()
+        .describe('Scope tool-failure risks to the project containing this directory.'),
     },
     async ({
       query,
@@ -2551,6 +2565,7 @@ async function main(): Promise<void> {
       include_risks,
       include_contradictions,
       scope,
+      cwd,
     }) => {
       try {
         const capsule = await audrey.capsule(query, {
@@ -2560,6 +2575,7 @@ async function main(): Promise<void> {
           recentChangeWindowHours: recent_change_window_hours,
           includeRisks: include_risks,
           includeContradictions: include_contradictions,
+          cwd,
           recall: { scope: scope ?? 'agent' },
         });
         return toolResult(capsule);
