@@ -1312,12 +1312,16 @@ export class Audrey extends EventEmitter {
       limit?: number;
       actorAgent?: string;
       scope?: RecallOptions['scope'];
+      cwd?: string;
+      includeResolved?: boolean;
     } = {},
   ): FailurePattern[] {
     const scope = resolveMemoryScope(options.scope, 'agent');
     return recentFailures(this.db, {
       since: options.since,
       limit: options.limit,
+      cwd: options.cwd,
+      includeResolved: options.includeResolved,
       ...(scope === 'agent' ? { actorAgent: requireAgent(options.actorAgent, this.agent) } : {}),
     });
   }

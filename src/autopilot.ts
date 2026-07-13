@@ -1,9 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, realpathSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
 import type { Audrey } from './audrey.js';
 import type { MemoryCapsule, CapsuleEntry } from './capsule.js';
 import { MemoryController, type ControllerGuardResult } from './controller.js';
+import { projectNamespace } from './project.js';
 import { redact } from './redact.js';
 
 export type AutopilotHost = 'claude-code' | 'codex';
@@ -90,31 +89,6 @@ function quotedMemoryText(value: string, maxChars = 800): string {
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-function canonicalDirectory(value: string): string {
-  const absolute = resolve(value);
-  try {
-    return realpathSync(absolute).replace(/^\\\\\?\\/, '');
-  } catch {
-    return absolute;
-  }
-}
-
-function projectRoot(cwd: string): string {
-  let current = canonicalDirectory(cwd);
-  while (true) {
-    if (existsSync(join(current, '.git'))) return current;
-    const parent = dirname(current);
-    if (parent === current) return canonicalDirectory(cwd);
-    current = parent;
-  }
-}
-
-function projectNamespace(cwd: string): string {
-  const root = projectRoot(cwd).replace(/\\/g, '/');
-  const stableRoot = process.platform === 'win32' ? root.toLowerCase() : root;
-  return `project:${sha256(stableRoot)}`;
 }
 
 function payloadProjectNamespace(payload: JsonRecord): string {
@@ -678,10 +652,14 @@ async function contextForHook(
     metadata: { autopilot: true, host: options.host },
   });
   const namespace = payloadProjectNamespace(payload);
+  // cwd scopes tool-failure risks even under scope: 'shared' — semantic
+  // knowledge is worth sharing across projects, but a failure streak in
+  // another repo says nothing about this one.
   const unscopedCapsule = await audrey.capsule(contextQuery(event, payload), {
     budgetChars: options.contextBudgetChars ?? 3200,
     mode: 'conservative',
     scope: options.scope ?? 'agent',
+    cwd: text(payload.cwd) ?? process.cwd(),
     recall: {
       scope: options.scope ?? 'agent',
       context: {

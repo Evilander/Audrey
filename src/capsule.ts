@@ -20,6 +20,7 @@ import type Database from 'better-sqlite3';
 import type { Audrey } from './audrey.js';
 import type { RecallError, RecallResult, RecallOptions, MemoryType, MemoryState } from './types.js';
 import { recentFailures, type FailurePattern } from './events.js';
+import { projectNamespace } from './project.js';
 import { requireAgent, resolveMemoryScope } from './utils.js';
 
 export type CapsuleMode = 'balanced' | 'conservative' | 'aggressive';
@@ -34,6 +35,8 @@ export interface CapsuleOptions {
   includeRisks?: boolean;
   includeContradictions?: boolean;
   recall?: RecallOptions;
+  /** Scope tool-failure risks to the project containing this directory. */
+  cwd?: string;
 }
 
 export type CapsuleEntryType =
@@ -80,7 +83,14 @@ export interface MemoryCapsule {
 
 const MUST_FOLLOW_TAGS = new Set(['must-follow', 'must', 'required', 'never', 'always', 'policy']);
 const PREFERENCE_TAGS = new Set(['preference', 'prefers', 'user-preference']);
-const RISK_TAGS = new Set(['risk', 'warning', 'failure', 'failure-prevention', 'danger']);
+const RISK_TAGS = new Set([
+  'risk',
+  'warning',
+  'failure',
+  'tool-failure',
+  'failure-prevention',
+  'danger',
+]);
 const PROCEDURE_TAGS = new Set(['procedure', 'playbook', 'howto', 'workflow']);
 
 const SECTION_PRIORITY: readonly (keyof MemoryCapsule['sections'])[] = [
@@ -101,6 +111,7 @@ interface EpisodeTagRow {
   created_at: string;
   private: number;
   agent?: string | null;
+  context: string | null;
 }
 
 interface SemanticTagRow {
@@ -186,11 +197,19 @@ function buildRecallEntry(
   };
 }
 
+function shortenError(value: string, max = 240): string {
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1)}…`;
+}
+
 function buildFailureEntry(f: FailurePattern, reason: string): CapsuleEntry {
   const toolLabel = f.tool_name || 'unknown tool';
   const idLabel = f.tool_name || 'unknown';
+  // The full error lives in the memory_events row; the capsule only needs
+  // enough to recognize the failure, not the whole stack trace.
   const summary = f.last_error_summary
-    ? `${toolLabel} failed ${f.failure_count}x recently — last error: ${f.last_error_summary}`
+    ? `${toolLabel} failed ${f.failure_count}x recently — last error: ${shortenError(f.last_error_summary)}`
     : `${toolLabel} failed ${f.failure_count}x recently`;
   return {
     memory_id: `failure:${idLabel}:${f.last_failed_at}`,
@@ -219,8 +238,24 @@ function buildContradictionEntry(row: ContradictionRow, reason: string): Capsule
 
 function loadEpisodeEnrichment(db: Database.Database, id: string): EpisodeTagRow | undefined {
   return db
-    .prepare(`SELECT id, tags, source, created_at, private, agent FROM episodes WHERE id = ?`)
+    .prepare(
+      `SELECT id, tags, source, created_at, private, agent, context FROM episodes WHERE id = ?`,
+    )
     .get(id) as EpisodeTagRow | undefined;
+}
+
+function episodeProjectNamespace(row: EpisodeTagRow | undefined): string | undefined {
+  if (!row?.context) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(row.context);
+    const namespace =
+      parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)['projectNamespace']
+        : undefined;
+    return typeof namespace === 'string' && namespace ? namespace : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function loadSemanticEnrichment(db: Database.Database, id: string): SemanticTagRow | undefined {
@@ -380,6 +415,8 @@ export async function buildCapsule(
 
   const db = audrey.db;
 
+  const cwdNamespace = options.cwd ? projectNamespace(options.cwd) : undefined;
+
   for (const result of results) {
     let tags: string[] = [];
     let evidence: string[] = [];
@@ -389,6 +426,13 @@ export async function buildCapsule(
       const row = loadEpisodeEnrichment(db, result.id);
       tags = parseTags(row?.tags);
       scope = row?.agent ? `agent:${row.agent}` : undefined;
+      // Tool-failure episodes are project-local operational records (their
+      // durable lessons travel via consolidation instead). A failure recorded
+      // in another project is noise here, even under shared scope.
+      if (cwdNamespace && tags.some(tag => tag.toLowerCase() === 'tool-failure')) {
+        const episodeNamespace = episodeProjectNamespace(row);
+        if (episodeNamespace && episodeNamespace !== cwdNamespace) continue;
+      }
     } else if (result.type === 'semantic') {
       const row = loadSemanticEnrichment(db, result.id);
       evidence = parseEvidence(row?.evidence_episode_ids);
@@ -434,6 +478,7 @@ export async function buildCapsule(
     const failures = recentFailures(db, {
       since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
       limit: 5,
+      ...(options.cwd ? { cwd: options.cwd } : {}),
       ...(memoryScope === 'agent' ? { actorAgent: memoryAgent } : {}),
     });
     for (const failure of failures) {
