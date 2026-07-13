@@ -118,7 +118,17 @@ function warningFromEntry(
 function toolFromFailureEntry(entry: CapsuleEntry): string | undefined {
   const fromId = entry.memory_id.match(/^failure:([^:]+):/)?.[1];
   if (fromId) return fromId;
-  return entry.content.match(/^([^\s]+) failed\b/)?.[1];
+  return (
+    entry.content.match(/^Tool failure: ([^\s]+) failed\b/)?.[1] ??
+    entry.content.match(/^([^\s]+) failed\b/)?.[1]
+  );
+}
+
+function isToolFailureEntry(entry: CapsuleEntry): boolean {
+  return (
+    entry.memory_type === 'tool_failure' ||
+    Boolean(entry.tags?.some(tag => tag.toLowerCase() === 'tool-failure'))
+  );
 }
 
 function addWarning(
@@ -215,6 +225,7 @@ export async function buildPreflight(
     includeContradictions: true,
     scope,
     agent,
+    ...(options.cwd ? { cwd: options.cwd } : {}),
     recall: { scope, agent },
   });
 
@@ -285,6 +296,7 @@ export async function buildPreflight(
     limit: 20,
     scope,
     actorAgent: agent,
+    ...(options.cwd ? { cwd: options.cwd } : {}),
   });
   const matchingFailures: FailurePattern[] = [];
   for (const failure of recentFailures) {
@@ -312,7 +324,8 @@ export async function buildPreflight(
   }
 
   for (const entry of capsule.sections.risks) {
-    if (entry.memory_type === 'tool_failure') {
+    const toolFailure = isToolFailureEntry(entry);
+    if (toolFailure) {
       const failedTool = toolFromFailureEntry(entry);
       if (!matchesToolOrAction(action, options.tool, failedTool)) continue;
     }
@@ -320,8 +333,8 @@ export async function buildPreflight(
       warnings,
       seen,
       warningFromEntry(
-        entry.memory_type === 'tool_failure' ? 'recent_failure' : 'risk',
-        entry.memory_type === 'tool_failure' ? 'medium' : 'high',
+        toolFailure ? 'recent_failure' : 'risk',
+        toolFailure ? 'medium' : 'high',
         entry,
         'Mitigate this remembered risk before proceeding.',
       ),

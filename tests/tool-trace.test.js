@@ -164,7 +164,7 @@ describe('observeTool — end-to-end action trace memory', () => {
     expect(event.file_fingerprints).toBeNull();
   });
 
-  it('recentFailures surfaces previously-failed tools', () => {
+  it('recentFailures surfaces unresolved failures and extinguishes resolved ones', () => {
     audrey.observeTool({
       event: 'PostToolUseFailure',
       tool: 'Bash',
@@ -179,11 +179,18 @@ describe('observeTool — end-to-end action trace memory', () => {
       errorSummary: 'file locked',
     });
 
+    // Bash succeeded after its failure, so the streak is resolved and no
+    // longer warned about; Edit's failure is still live.
     const failures = audrey.recentFailures();
-    expect(failures.map(f => f.tool_name).sort()).toEqual(['Bash', 'Edit']);
-    const bash = failures.find(f => f.tool_name === 'Bash');
-    expect(bash?.failure_count).toBe(1);
+    expect(failures.map(f => f.tool_name)).toEqual(['Edit']);
+    expect(failures[0].failure_count).toBe(1);
+    expect(failures[0].last_error_summary).toContain('file locked');
+
+    const resolved = audrey.recentFailures({ includeResolved: true });
+    expect(resolved.map(f => f.tool_name).sort()).toEqual(['Bash', 'Edit']);
+    const bash = resolved.find(f => f.tool_name === 'Bash');
     expect(bash?.last_error_summary).toContain('missing env var');
+    expect(bash?.last_succeeded_at).not.toBeNull();
   });
 
   it('listEvents filters by toolName and limit', () => {

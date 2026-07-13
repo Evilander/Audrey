@@ -216,8 +216,23 @@ function shannonEntropy(value: string): number {
   return entropy;
 }
 
+/**
+ * Snake_case / kebab-case / dotted identifiers (MCP tool names, env vars,
+ * long function names) can clear the length and entropy bars, but a real
+ * base64/base64url secret essentially never splits on separators into three
+ * or more purely alphabetic runs. Redacting identifiers destroys the guard
+ * signals that reference them ("[REDACTED] failed 2x recently"), so exempt
+ * this shape explicitly.
+ */
+function looksLikeWordIdentifier(value: string): boolean {
+  const segments = value.split(/[_\-.]+/).filter(Boolean);
+  if (segments.length < 3) return false;
+  return segments.every(segment => /^[A-Za-z]+$/.test(segment) && segment.length <= 20);
+}
+
 function looksLikeHighEntropySecret(value: string): boolean {
   if (value.length < 32) return false;
+  if (looksLikeWordIdentifier(value)) return false;
   const classes = [
     /[a-z]/.test(value),
     /[A-Z]/.test(value),
