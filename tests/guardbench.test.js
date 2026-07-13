@@ -652,7 +652,7 @@ describe('GuardBench harness', () => {
   });
 
   it('reports 1.1 release readiness without hiding publish blockers', async () => {
-    const report = await verifyReleaseReadiness({ targetVersion: '1.1.2', allowPending: true });
+    const report = await verifyReleaseReadiness({ targetVersion: '1.1.3', allowPending: true });
 
     expect(report.ok).toBe(true);
     expect(report.ready).toBe(false);
@@ -672,11 +672,11 @@ describe('GuardBench harness', () => {
   });
 
   it('keeps the 1.1 release cut idempotent after it is applied', () => {
-    const report = prepareReleaseCut({ targetVersion: '1.1.2', date: '2026-07-13' });
+    const report = prepareReleaseCut({ targetVersion: '1.1.3', date: '2026-07-13' });
 
     expect(report.ok).toBe(true);
     expect(report.apply).toBe(false);
-    expect(report.currentVersions.packageJson).toBe('1.1.2');
+    expect(report.currentVersions.packageJson).toBe('1.1.3');
     expect(report.files.filter(file => file.changed).map(file => file.path)).toEqual([]);
     expect(report.nextCommands).toContain('npm run release:gate:paper');
   });
