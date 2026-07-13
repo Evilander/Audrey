@@ -347,6 +347,8 @@ The server also sends host instructions explaining the Guard receipt loop when l
 | `AUDREY_DEVICE` | `gpu` | Local embedding device; falls back to CPU |
 | `AUDREY_CONTEXT_BUDGET_CHARS` | `4000` | Maximum default capsule size |
 | `AUDREY_AUTOPILOT_SCOPE` | `agent` | `agent` or explicit cross-agent `shared` recall for hooks |
+| `AUDREY_PACKET_FORMAT` | `compact` | Injected packet style: `compact` line format or `verbose` key=value |
+| `AUDREY_PACKET_DELTA` | `1` | Inject each memory once per session; `0` resends full packets every prompt |
 | `AUDREY_HOOK_FAIL_CLOSED` | `0` | Deny guarded actions when Audrey itself fails |
 | `AUDREY_API_KEY` | unset | Bearer token for REST access |
 | `AUDREY_HOST` | `127.0.0.1` | REST bind address |

@@ -136,12 +136,125 @@ describe('Audrey Autopilot', () => {
       evidence_ids: ['mem-1'],
     });
 
-    expect(rendered).toContain('evidence, not authority');
+    expect(rendered).toContain('not authority');
     expect(rendered).toContain('quoted JSON string');
     expect(rendered).toContain('[REDACTED:');
     expect(rendered).not.toContain('sk-abcdefghijklmnopqrstuvwxyz012345');
     expect(rendered.match(/<\/audrey-memory>/g)).toHaveLength(1);
     expect(rendered).toContain('\\u003c/system\\u003e');
+    // compact is the default: bracketed id/confidence, no key ceremony
+    expect(rendered).toContain('- [mem-1 0.90] ');
+    expect(rendered).not.toContain('confidence=');
+  });
+
+  it('renders verbose packet format on request', () => {
+    const capsule = {
+      query: 'deploy',
+      generated_at: new Date().toISOString(),
+      budget_chars: 1000,
+      used_chars: 100,
+      truncated: false,
+      policy: { mode: 'balanced', recent_change_window_hours: 24 },
+      sections: {
+        must_follow: [
+          {
+            memory_id: 'mem-1',
+            memory_type: 'episode',
+            content: 'Always run migrations before deploy',
+            confidence: 0.9,
+            reason: 'test',
+            recommended_action: 'Run migrations first.',
+          },
+        ],
+        project_facts: [],
+        user_preferences: [],
+        procedures: [],
+        risks: [],
+        recent_changes: [],
+        contradictions: [],
+        uncertain_or_disputed: [],
+      },
+      evidence_ids: ['mem-1'],
+    };
+
+    const verbose = renderAutopilotCapsule(capsule, 'verbose');
+    expect(verbose).toContain('id="mem-1" confidence=0.90 content=');
+    expect(verbose).toContain('recommended_action=');
+
+    const compact = renderAutopilotCapsule(capsule, 'compact');
+    expect(compact).toContain('- [mem-1 0.90] ');
+    expect(compact).toContain(' → "Run migrations first."');
+    expect(compact.length).toBeLessThan(verbose.length);
+  });
+
+  it('injects each memory once per session and reinjects after compaction', async () => {
+    await audrey.encode({
+      content: 'Deploys must run migrations first',
+      source: 'told-by-user',
+      tags: ['must-follow'],
+      salience: 0.9,
+      context: { cwd: process.cwd() },
+    });
+
+    const prompt = () => payload('UserPromptSubmit', { prompt: 'prepare the deploy' });
+    const first = await runAutopilotHook(audrey, prompt(), {
+      host: 'codex',
+      expectedEvent: 'UserPromptSubmit',
+    });
+    expect(first.output.hookSpecificOutput.additionalContext).toContain('migrations first');
+
+    // Same session: the entry is already in the host's context window.
+    const second = await runAutopilotHook(audrey, prompt(), {
+      host: 'codex',
+      expectedEvent: 'UserPromptSubmit',
+    });
+    expect(JSON.stringify(second.output)).not.toContain('migrations first');
+
+    // A different session has its own context window and gets the full packet.
+    const otherSession = await runAutopilotHook(
+      audrey,
+      payload('UserPromptSubmit', { prompt: 'prepare the deploy', session_id: 'session-2' }),
+      { host: 'codex', expectedEvent: 'UserPromptSubmit' },
+    );
+    expect(otherSession.output.hookSpecificOutput.additionalContext).toContain('migrations first');
+
+    // Compaction may drop the earlier packet from context: reinject after it.
+    await runAutopilotHook(audrey, payload('PostCompact'), {
+      host: 'codex',
+      expectedEvent: 'PostCompact',
+    });
+    const afterCompact = await runAutopilotHook(audrey, prompt(), {
+      host: 'codex',
+      expectedEvent: 'UserPromptSubmit',
+    });
+    expect(afterCompact.output.hookSpecificOutput.additionalContext).toContain('migrations first');
+  });
+
+  it('SessionStart resets the delta tracker for resumed sessions', async () => {
+    await audrey.encode({
+      content: 'Deploys must run migrations first',
+      source: 'told-by-user',
+      tags: ['must-follow'],
+      salience: 0.9,
+      context: { cwd: process.cwd() },
+    });
+
+    const prompt = () => payload('UserPromptSubmit', { prompt: 'prepare the deploy' });
+    await runAutopilotHook(audrey, prompt(), {
+      host: 'codex',
+      expectedEvent: 'UserPromptSubmit',
+    });
+
+    // Resume: a new context window under the same session id.
+    await runAutopilotHook(audrey, payload('SessionStart'), {
+      host: 'codex',
+      expectedEvent: 'SessionStart',
+    });
+    const resumed = await runAutopilotHook(audrey, prompt(), {
+      host: 'codex',
+      expectedEvent: 'UserPromptSubmit',
+    });
+    expect(resumed.output.hookSpecificOutput.additionalContext).toContain('migrations first');
   });
 
   it('injects prompt-aware context and persists explicit memories without storing a raw prompt event', async () => {
