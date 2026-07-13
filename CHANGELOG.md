@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.3 - 2026-07-13
+
+### MCP Registry publishing fixes
+
+- Corrects the registry namespace to `io.github.Evilander/audrey`: the registry's GitHub-derived publish permission and its npm `mcpName` ownership check are both case-sensitive exact matches against the GitHub login's display case, and the 1.1.2 tarball carried the lowercase form.
+- Shortens the `server.json` description to the registry's 100-character limit.
+- The registry publish job is re-runnable via a `publish_mcp` workflow dispatch input without republishing npm or PyPI, using the dispatched ref's metadata while stamping the version validated against the release tag.
+
 ## 1.1.2 - 2026-07-13
 
 ### Guard signal quality
