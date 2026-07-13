@@ -192,6 +192,55 @@ async function reembed(): Promise<void> {
   }
 }
 
+interface DreamTotals {
+  episodesEvaluated: number;
+  clustersFound: number;
+  principlesExtracted: number;
+  semanticsCreated: number;
+  proceduresCreated: number;
+  decayEvaluated: number;
+  decayDormant: number;
+  agents: string[];
+}
+
+// The dream/reflect CLIs run under a utility agent name, but memories belong to
+// real agents (claude-code, codex, ...). Consolidate per owning agent so the
+// sweep actually touches stored episodes instead of the utility agent's empty set.
+async function dreamAcrossAgents(audrey: Audrey): Promise<DreamTotals> {
+  const rows = audrey.db
+    .prepare(
+      `SELECT DISTINCT agent FROM episodes
+       WHERE consolidated = 0 AND superseded_by IS NULL AND embedding IS NOT NULL`,
+    )
+    .all() as Array<{ agent: string }>;
+  const agents = rows
+    .map(row => row.agent)
+    .filter(agent => typeof agent === 'string' && agent.trim().length > 0);
+  if (agents.length === 0) agents.push(audrey.agent);
+
+  const totals: DreamTotals = {
+    episodesEvaluated: 0,
+    clustersFound: 0,
+    principlesExtracted: 0,
+    semanticsCreated: 0,
+    proceduresCreated: 0,
+    decayEvaluated: 0,
+    decayDormant: 0,
+    agents,
+  };
+  for (const agent of agents) {
+    const result = await audrey.dream({ agent });
+    totals.episodesEvaluated += result.consolidation.episodesEvaluated;
+    totals.clustersFound += result.consolidation.clustersFound;
+    totals.principlesExtracted += result.consolidation.principlesExtracted;
+    totals.semanticsCreated += result.consolidation.semanticsCreated ?? 0;
+    totals.proceduresCreated += result.consolidation.proceduresCreated ?? 0;
+    totals.decayEvaluated += result.decay.totalEvaluated;
+    totals.decayDormant += result.decay.transitionedToDormant;
+  }
+  return totals;
+}
+
 async function dream(): Promise<void> {
   const dataDir = resolveDataDir(process.env);
   const explicit = process.env['AUDREY_EMBEDDING_PROVIDER'];
@@ -219,20 +268,22 @@ async function dream(): Promise<void> {
     console.log('[audrey] Starting dream cycle...');
     console.log(`[audrey] Embedding: ${embeddingLabel}`);
 
-    const result = await audrey.dream();
+    const totals = await dreamAcrossAgents(audrey);
+    const stats = audrey.introspect();
     const health = audrey.memoryStatus();
 
+    console.log(`[audrey] Agents: ${totals.agents.join(', ')}`);
     console.log(
-      `[audrey] Consolidation: evaluated ${result.consolidation.episodesEvaluated} episodes, ` +
-        `found ${result.consolidation.clustersFound} clusters, extracted ${result.consolidation.principlesExtracted} principles ` +
-        `(${result.consolidation.semanticsCreated ?? 0} semantic, ${result.consolidation.proceduresCreated ?? 0} procedural)`,
+      `[audrey] Consolidation: evaluated ${totals.episodesEvaluated} episodes, ` +
+        `found ${totals.clustersFound} clusters, extracted ${totals.principlesExtracted} principles ` +
+        `(${totals.semanticsCreated} semantic, ${totals.proceduresCreated} procedural)`,
     );
     console.log(
-      `[audrey] Decay: evaluated ${result.decay.totalEvaluated} memories, ` +
-        `${result.decay.transitionedToDormant} transitioned to dormant`,
+      `[audrey] Decay: evaluated ${totals.decayEvaluated} memories, ` +
+        `${totals.decayDormant} transitioned to dormant`,
     );
     console.log(
-      `[audrey] Final: ${result.stats.episodic} episodic, ${result.stats.semantic} semantic, ${result.stats.procedural} procedural ` +
+      `[audrey] Final: ${stats.episodic} episodic, ${stats.semantic} semantic, ${stats.procedural} procedural ` +
         `| ${health.healthy ? 'healthy' : 'unhealthy'}`,
     );
     console.log('[audrey] Dream complete.');
@@ -407,7 +458,7 @@ async function reflect(): Promise<void> {
 
   const config: AudreyConfig = {
     dataDir,
-    agent: 'reflect',
+    agent: process.env['AUDREY_AGENT'] ?? 'reflect',
     embedding,
   };
 
@@ -447,18 +498,18 @@ async function reflect(): Promise<void> {
 
     // Always run dream cycle after reflect
     console.log('[audrey] Starting dream cycle...');
-    const result = await audrey.dream();
+    const totals = await dreamAcrossAgents(audrey);
+    const stats = audrey.introspect();
     console.log(
-      `[audrey] Consolidation: ${result.consolidation.episodesEvaluated} episodes evaluated, ` +
-        `${result.consolidation.clustersFound} clusters, ${result.consolidation.principlesExtracted} principles`,
+      `[audrey] Consolidation: ${totals.episodesEvaluated} episodes evaluated, ` +
+        `${totals.clustersFound} clusters, ${totals.principlesExtracted} principles`,
     );
     console.log(
-      `[audrey] Decay: ${result.decay.totalEvaluated} evaluated, ` +
-        `${result.decay.transitionedToDormant} dormant`,
+      `[audrey] Decay: ${totals.decayEvaluated} evaluated, ` + `${totals.decayDormant} dormant`,
     );
     console.log(
-      `[audrey] Status: ${result.stats.episodic} episodic, ${result.stats.semantic} semantic, ` +
-        `${result.stats.procedural} procedural`,
+      `[audrey] Status: ${stats.episodic} episodic, ${stats.semantic} semantic, ` +
+        `${stats.procedural} procedural`,
     );
     console.log('[audrey] Dream complete.');
   } finally {
