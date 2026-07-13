@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.evilander/audrey",
-  "description": "Local-first biological memory for coding agents: episodic encoding, consolidation into semantic and procedural knowledge, evidence-backed recall, and pre-action Guard checks over SQLite.",
+  "description": "Local-first biological memory for coding agents: recall, consolidation, and pre-action Guard checks.",
   "repository": {
     "url": "https://github.com/Evilander/Audrey",
     "source": "github"
