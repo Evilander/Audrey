@@ -125,8 +125,12 @@ function toolFromFailureEntry(entry: CapsuleEntry): string | undefined {
 }
 
 function isToolFailureEntry(entry: CapsuleEntry): boolean {
+  if (entry.memory_type === 'tool_failure') return true;
+  // Only Autopilot-learned failure episodes (tool-result source) get the
+  // tool-matched medium-severity treatment. A user-authored memory that
+  // happens to carry the tag stays a full high-severity risk.
   return (
-    entry.memory_type === 'tool_failure' ||
+    entry.source === 'tool-result' &&
     Boolean(entry.tags?.some(tag => tag.toLowerCase() === 'tool-failure'))
   );
 }

@@ -57,6 +57,27 @@ describe('Memory Preflight', () => {
     expect(result.recommended_actions.length).toBeGreaterThan(0);
   });
 
+  it('keeps user-authored risks at high severity even when tagged tool-failure', async () => {
+    await audrey.encode({
+      content: 'Deploying without draining the queue corrupts in-flight jobs',
+      source: 'told-by-user',
+      tags: ['risk', 'tool-failure'],
+      salience: 0.9,
+    });
+
+    const result = await audrey.preflight('deploy the queue worker', {
+      tool: 'Bash',
+      strict: true,
+    });
+
+    // The user's warning does not parse as an Autopilot failure record, so it
+    // must not be tool-matched away or downgraded to medium.
+    const risk = result.warnings.find(w => w.type === 'risk');
+    expect(risk).toBeDefined();
+    expect(risk.severity).toBe('high');
+    expect(risk.message).toContain('draining the queue');
+  });
+
   it('does not warn on unrelated recent tool failures from the capsule', async () => {
     audrey.observeTool({
       event: 'PostToolUseFailure',

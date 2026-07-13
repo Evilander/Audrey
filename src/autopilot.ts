@@ -616,22 +616,36 @@ function clearInjectedIds(audrey: Audrey, host: AutopilotHost, payload: JsonReco
     .run(injectedIdsKey(audrey, host, session));
 }
 
+/**
+ * State is part of the tracked key so a memory that gets disputed or
+ * reclassified after injection reinjects with its new standing instead of
+ * leaving the session holding the stale version.
+ */
+function injectedEntryKey(entry: CapsuleEntry): string {
+  return entry.state ? `${entry.memory_id}@${entry.state}` : entry.memory_id;
+}
+
 function filterInjectedEntries(
   capsule: MemoryCapsule,
   seen: Set<string>,
-): { capsule: MemoryCapsule; renderedIds: string[] } {
+): { capsule: MemoryCapsule; renderedKeys: string[] } {
   const sections = {} as MemoryCapsule['sections'];
-  const renderedIds: string[] = [];
+  const renderedKeys: string[] = [];
   for (const [section, entries] of Object.entries(capsule.sections) as Array<
     [keyof MemoryCapsule['sections'], CapsuleEntry[]]
   >) {
     sections[section] = entries.filter(entry => {
-      if (seen.has(entry.memory_id)) return false;
-      renderedIds.push(entry.memory_id);
+      const key = injectedEntryKey(entry);
+      if (seen.has(key)) return false;
+      renderedKeys.push(key);
       return true;
     });
   }
-  return { capsule: { ...capsule, sections }, renderedIds };
+  return { capsule: { ...capsule, sections }, renderedKeys };
+}
+
+function allEntryKeys(capsule: MemoryCapsule): string[] {
+  return Object.values(capsule.sections).flatMap(entries => entries.map(injectedEntryKey));
 }
 
 function contextQuery(event: string, payload: JsonRecord): string {
@@ -779,18 +793,30 @@ async function contextForHook(
   // previous window already received so this one starts from a full packet.
   if (event === 'SessionStart') clearInjectedIds(audrey, options.host, payload);
 
+  // SubagentStart is excluded: subagents run in their own context window but
+  // share the parent's session id, so they must neither be filtered by the
+  // parent's tracker nor pollute it.
   const session = sessionId(payload);
   const deltaEnabled =
-    process.env['AUDREY_PACKET_DELTA'] !== '0' && event === 'UserPromptSubmit' && Boolean(session);
+    process.env['AUDREY_PACKET_DELTA'] !== '0' &&
+    (event === 'UserPromptSubmit' || event === 'SessionStart') &&
+    Boolean(session);
   if (deltaEnabled && session) {
     const now = options.now ?? new Date();
     const key = injectedIdsKey(audrey, options.host, session);
-    const seen = loadInjectedIds(audrey, key, now);
-    const filtered = filterInjectedEntries(capsule, seen);
-    capsule = filtered.capsule;
-    if (filtered.renderedIds.length > 0) {
-      for (const id of filtered.renderedIds) seen.add(id);
-      saveInjectedIds(audrey, key, seen, now);
+    if (event === 'UserPromptSubmit') {
+      const seen = loadInjectedIds(audrey, key, now);
+      const filtered = filterInjectedEntries(capsule, seen);
+      capsule = filtered.capsule;
+      if (filtered.renderedKeys.length > 0) {
+        for (const id of filtered.renderedKeys) seen.add(id);
+        saveInjectedIds(audrey, key, seen, now);
+      }
+    } else {
+      // SessionStart injects the full packet and seeds the tracker so the
+      // first prompt doesn't immediately duplicate it.
+      const keys = allEntryKeys(capsule);
+      if (keys.length > 0) saveInjectedIds(audrey, key, new Set(keys), now);
     }
   }
 

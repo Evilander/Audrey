@@ -112,6 +112,39 @@ jobs:
           fi
       - run: npm publish
 
+  publish-mcp-registry:
+    name: Publish to MCP Registry
+    needs:
+      - validate-release
+      - publish-npm
+    if: github.event_name == 'release' || inputs.publish_npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC auth claims the io.github.evilander/* namespace
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-release.outputs.tag }}
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Sync server.json version to the release
+        run: |
+          set -euo pipefail
+          version="${{ needs.validate-release.outputs.version }}"
+          jq --arg v "$version" '.version = $v | .packages[0].version = $v' server.json > server.tmp
+          mv server.tmp server.json
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish
+
   build-python:
     name: Build Python distributions
     needs: validate-release
