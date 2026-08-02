@@ -3,6 +3,7 @@ import { existsSync, rmSync, mkdirSync } from 'node:fs';
 import { createApp } from '../dist/src/routes.js';
 import { startServer } from '../dist/src/server.js';
 import { Audrey } from '../dist/src/index.js';
+import { TRUST_CONTEXT_KEY, USER_VERIFIED_TRUST } from '../dist/src/trust.js';
 
 const TEST_DIR = './test-http-data';
 
@@ -194,9 +195,13 @@ describe('HTTP API', () => {
     });
     expect(denied.status).toBe(403);
 
+    // Content is deliberately worded so alpha's and beta's entries share few
+    // enough tokens to stay under recall's near-duplicate suppression
+    // threshold — otherwise the dedup guard collapses them to one result and
+    // this test would no longer be exercising cross-agent shared-scope access.
     for (const [agent, content] of [
-      ['alpha', 'Shared-scope alpha release marker'],
-      ['beta', 'Shared-scope beta release marker'],
+      ['alpha', 'Shared-scope alpha release: nightly deploy pipeline green'],
+      ['beta', 'Shared-scope beta rollout: canary dashboard fix live'],
     ]) {
       await app.request('/v1/encode', {
         method: 'POST',
@@ -209,7 +214,7 @@ describe('HTTP API', () => {
     const allowed = await sharedApp.request('/v1/recall', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'alpha' },
-      body: JSON.stringify({ query: 'Shared-scope release marker', scope: 'shared', limit: 10 }),
+      body: JSON.stringify({ query: 'Shared-scope release rollout', scope: 'shared', limit: 10 }),
     });
     expect(allowed.status).toBe(200);
     const allowedBody = await allowed.json();
@@ -395,6 +400,96 @@ describe('HTTP API', () => {
     expect(body.warnings.some(w => w.type === 'recent_failure')).toBe(true);
   });
 
+  it('POST /v1/guard/before blocks an exact failed action through the canonical evaluator', async () => {
+    const request = () =>
+      app.request('/v1/guard/before', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'deploy the exact HTTP artifact',
+          tool: 'Bash',
+          include_capsule: false,
+        }),
+      });
+    const first = await request();
+    const firstBody = await first.json();
+    const failed = await app.request('/v1/guard/after', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        receipt_id: firstBody.receipt_id,
+        tool: 'Bash',
+        outcome: 'failed',
+        error_summary: 'HTTP deployment target is missing',
+      }),
+    });
+    expect(failed.status).toBe(200);
+
+    const repeated = await request();
+    const body = await repeated.json();
+
+    expect(repeated.status).toBe(200);
+    expect(body.decision).toBe('block');
+    expect(body.verdict).toBe('blocked');
+    expect(body.ok_to_proceed).toBe(false);
+    expect(body.warnings).toContainEqual(
+      expect.objectContaining({ type: 'recent_failure', severity: 'high' }),
+    );
+  });
+
+  it.each(['acknowledge_prior_failure', 'acknowledgePriorFailure'])(
+    'POST /v1/guard/before accepts %s for an audited exact-failure retry',
+    async acknowledgementField => {
+      const request = body =>
+        app.request('/v1/guard/before', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'retry the exact HTTP deployment',
+            tool: 'Bash',
+            include_capsule: false,
+            ...body,
+          }),
+        });
+      const first = await request({});
+      const firstBody = await first.json();
+      await app.request('/v1/guard/after', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          receipt_id: firstBody.receipt_id,
+          tool: 'Bash',
+          outcome: 'failed',
+          error_summary: 'HTTP deployment failed',
+        }),
+      });
+
+      const blocked = await request({});
+      const blockedBody = await blocked.json();
+      expect(blockedBody.decision).toBe('block');
+      const invalidSuccess = await app.request('/v1/guard/after', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          receipt_id: blockedBody.receipt_id,
+          tool: 'Bash',
+          outcome: 'succeeded',
+        }),
+      });
+      expect(invalidSuccess.status).toBe(400);
+      expect((await invalidSuccess.json()).error).toMatch(/blocked.*acknowledged/i);
+
+      const acknowledged = await request({ [acknowledgementField]: true });
+      const acknowledgedBody = await acknowledged.json();
+      expect(acknowledgedBody.decision).toBe('caution');
+      expect(acknowledgedBody.ok_to_proceed).toBe(true);
+      const receipt = audrey.db
+        .prepare('SELECT metadata FROM memory_events WHERE id = ?')
+        .get(acknowledgedBody.receipt_id);
+      expect(JSON.parse(receipt.metadata).prior_failure_acknowledged).toBe(true);
+    },
+  );
+
   it('POST /v1/guard/before rejects blank action', async () => {
     const res = await app.request('/v1/guard/before', {
       method: 'POST',
@@ -451,6 +546,85 @@ describe('HTTP API', () => {
     expect(events[0].error_summary).toContain('[REDACTED:openai_api_key');
     expect(metadataOf(events[0]).receipt_id).toBe(before.receipt_id);
     expect(JSON.stringify(metadataOf(events[0]))).not.toContain(rawToken);
+  });
+
+  it('POST /v1/guard/after rejects an invalid outcome value', async () => {
+    // Pre-fix, `outcome: body.outcome as EventOutcome` let any string through
+    // to a bare SQLite CHECK constraint, so the error was a raw DB message
+    // rather than a validated response naming the allowed values.
+    const beforeRes = await app.request('/v1/guard/before', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'run a safe command',
+        tool: 'Bash',
+        include_capsule: false,
+      }),
+    });
+    const before = await beforeRes.json();
+
+    const res = await app.request('/v1/guard/after', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        receipt_id: before.receipt_id,
+        outcome: 'bogus-outcome',
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/invalid outcome/i);
+  });
+
+  it('POST /v1/guard/after accepts overrideReason to record success against a blocked receipt', async () => {
+    // An exact-repeat-failure block cannot be cleared by overrideReason at all
+    // (controller.ts rejects it unconditionally), so this exercises the other
+    // block path overrideReason exists for: a strict-mode must-follow warning
+    // that never became an exact failure in the first place.
+    await audrey.encode({
+      content: 'Never deploy production without a signed approval receipt.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'release'],
+      context: { [TRUST_CONTEXT_KEY]: USER_VERIFIED_TRUST },
+    });
+
+    const beforeRes = await app.request('/v1/guard/before', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'deploy production without approval',
+        tool: 'Bash',
+        strict: true,
+        include_capsule: false,
+      }),
+    });
+    const beforeBody = await beforeRes.json();
+    expect(beforeBody.decision).toBe('block');
+
+    const rejected = await app.request('/v1/guard/after', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        receipt_id: beforeBody.receipt_id,
+        outcome: 'succeeded',
+      }),
+    });
+    expect(rejected.status).toBe(400);
+    expect((await rejected.json()).error).toMatch(/without overrideReason/i);
+
+    const overridden = await app.request('/v1/guard/after', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        receipt_id: beforeBody.receipt_id,
+        outcome: 'succeeded',
+        override_reason:
+          'Manually verified the approval receipt now exists; safe to record success.',
+      }),
+    });
+    expect(overridden.status).toBe(200);
+    const overriddenBody = await overridden.json();
+    expect(overriddenBody.outcome).toBe('succeeded');
   });
 
   it('POST /v1/guard/after returns 404 for unknown receipt', async () => {
@@ -586,6 +760,30 @@ describe('HTTP API', () => {
     expect(body.error).toMatch(/exactly one/i);
   });
 
+  it('POST /v1/promote is disabled unless admin tools are enabled', async () => {
+    const res = await app.request('/v1/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('POST /v1/promote returns dry-run candidates when admin tools are enabled', async () => {
+    const adminApp = createApp(audrey, { adminToolsEnabled: true });
+    const res = await adminApp.request('/v1/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.target).toBe('claude-rules');
+    expect(body.dry_run).toBe(true);
+    expect(Array.isArray(body.candidates)).toBe(true);
+    expect(body.applied).toHaveLength(0);
+  });
+
   it('POST /v1/decay applies decay', async () => {
     const res = await app.request('/v1/decay', {
       method: 'POST',
@@ -670,6 +868,73 @@ describe('HTTP API', () => {
     expect((await baseline.json()).results.map(r => r.id)).toEqual(
       (await tampered.json()).results.map(r => r.id),
     );
+  });
+
+  it('POST /v1/encode strips the reserved trust marker from caller-supplied context', async () => {
+    // Pre-fix, body.context passed straight through, so an HTTP caller could
+    // plant the trust marker itself and have a memory treated as genuine
+    // user-stated direction. Post-fix, the marker never reaches storage.
+    const res = await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: 'Trust-marker forgery attempt over HTTP',
+        source: 'direct-observation',
+        context: { [TRUST_CONTEXT_KEY]: 'user', project: 'audrey' },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const { id } = await res.json();
+    const row = audrey.db.prepare('SELECT context FROM episodes WHERE id = ?').get(id);
+    const storedContext = JSON.parse(row.context);
+    expect(storedContext[TRUST_CONTEXT_KEY]).toBeUndefined();
+    expect(storedContext.project).toBe('audrey');
+  });
+
+  it('honors body.agent as a fallback for encode and recall when X-Audrey-Agent is absent', async () => {
+    // Pre-fix, body.agent was ignored entirely and every request fell back to
+    // the server's default agent, so this would not isolate by agent.
+    for (const [agent, content] of [
+      ['alpha', 'Alpha memory scoped through body.agent'],
+      ['beta', 'Beta memory scoped through body.agent'],
+    ]) {
+      const encodeRes = await app.request('/v1/encode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, source: 'direct-observation', agent }),
+      });
+      expect(encodeRes.status).toBe(200);
+    }
+
+    const recallRes = await app.request('/v1/recall', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: 'memory scoped through body.agent',
+        agent: 'alpha',
+        limit: 10,
+      }),
+    });
+    expect(recallRes.status).toBe(200);
+    const contents = (await recallRes.json()).results.map(entry => entry.content);
+    expect(contents).toContain('Alpha memory scoped through body.agent');
+    expect(contents).not.toContain('Beta memory scoped through body.agent');
+  });
+
+  it('prefers the X-Audrey-Agent header over body.agent when both are present', async () => {
+    const res = await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Audrey-Agent': 'header-agent' },
+      body: JSON.stringify({
+        content: 'Header must win over body.agent',
+        source: 'direct-observation',
+        agent: 'body-agent',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const { id } = await res.json();
+    const row = audrey.db.prepare('SELECT agent FROM episodes WHERE id = ?').get(id);
+    expect(row.agent).toBe('header-agent');
   });
 
   it('POST /v1/validate adjusts salience and returns the new state', async () => {

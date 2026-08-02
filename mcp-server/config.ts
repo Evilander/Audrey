@@ -81,31 +81,46 @@ export function resolveEmbeddingProvider(
   return { provider: 'local', dimensions: 384, device: env['AUDREY_DEVICE'] || 'gpu' };
 }
 
+/**
+ * Resolves which LLM provider to use for principle extraction / reflection.
+ * Priority: explicit config -> none (local heuristics only).
+ * Cloud providers are never auto-selected from ambient API keys: memory
+ * content is sent to the provider verbatim (buildPrincipleExtractionPrompt),
+ * so leaving AUDREY_LLM_PROVIDER unset (or 'auto') must never cause content
+ * to leave the machine just because ANTHROPIC_API_KEY/OPENAI_API_KEY happens
+ * to be set for some unrelated tool. Choose a cloud provider explicitly with
+ * AUDREY_LLM_PROVIDER=anthropic|openai.
+ */
 export function resolveLLMProvider(
   env: Record<string, string | undefined>,
   explicit: string | undefined = env['AUDREY_LLM_PROVIDER'],
+  options: { requireApiKey?: boolean } = {},
 ): (LLMConfig & { apiKey?: string }) | null {
+  const { requireApiKey = true } = options;
   const model = env['AUDREY_LLM_MODEL']?.trim() || undefined;
   const withModel = model ? { model } : {};
-  if (explicit && explicit !== 'auto') {
-    assertValidProvider(explicit, VALID_LLM_PROVIDERS, 'AUDREY_LLM_PROVIDER');
-    const provider = explicit as LLMConfig['provider'];
-    if (provider === 'anthropic') {
-      return { provider: 'anthropic', apiKey: env['ANTHROPIC_API_KEY'], ...withModel };
-    }
-    if (provider === 'openai') {
-      return { provider: 'openai', apiKey: env['OPENAI_API_KEY'], ...withModel };
-    }
-    return { provider: 'mock' };
+
+  if (!explicit || explicit === 'auto') {
+    return null;
   }
 
-  if (env['ANTHROPIC_API_KEY']) {
-    return { provider: 'anthropic', apiKey: env['ANTHROPIC_API_KEY'], ...withModel };
+  assertValidProvider(explicit, VALID_LLM_PROVIDERS, 'AUDREY_LLM_PROVIDER');
+  const provider = explicit as LLMConfig['provider'];
+  if (provider === 'anthropic') {
+    const apiKey = env['ANTHROPIC_API_KEY'];
+    if (requireApiKey && !apiKey) {
+      throw new Error('AUDREY_LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY to be set.');
+    }
+    return { provider: 'anthropic', apiKey, ...withModel };
   }
-  if (env['OPENAI_API_KEY']) {
-    return { provider: 'openai', apiKey: env['OPENAI_API_KEY'], ...withModel };
+  if (provider === 'openai') {
+    const apiKey = env['OPENAI_API_KEY'];
+    if (requireApiKey && !apiKey) {
+      throw new Error('AUDREY_LLM_PROVIDER=openai requires OPENAI_API_KEY to be set.');
+    }
+    return { provider: 'openai', apiKey, ...withModel };
   }
-  return null;
+  return { provider: 'mock' };
 }
 
 export function buildAudreyConfig(): AudreyConfig {
@@ -138,7 +153,7 @@ export function buildAudreyMcpEnv(
   agent = env['AUDREY_AGENT'] || DEFAULT_AGENT,
   options: McpEnvOptions = {},
 ): Record<string, string> {
-  const includeSecrets = options.includeSecrets ?? true;
+  const includeSecrets = options.includeSecrets ?? false;
   const providerEnv = includeSecrets
     ? env
     : {
@@ -167,7 +182,10 @@ export function buildAudreyMcpEnv(
     if (includeSecrets) addEnv('OPENAI_API_KEY', embedding.apiKey);
   }
 
-  const llm = resolveLLMProvider(providerEnv, env['AUDREY_LLM_PROVIDER']);
+  // requireApiKey: false — this only writes a portable env/CLI-args config;
+  // the actual key is expected to be present in the environment when the
+  // resulting MCP server process is later launched, not baked in here.
+  const llm = resolveLLMProvider(providerEnv, env['AUDREY_LLM_PROVIDER'], { requireApiKey: false });
   if (llm) {
     addEnv('AUDREY_LLM_PROVIDER', llm.provider);
     if (llm.model) addEnv('AUDREY_LLM_MODEL', llm.model);

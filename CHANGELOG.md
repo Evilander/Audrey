@@ -1,5 +1,66 @@
 # Changelog
 
+## Unreleased
+
+### Memory privacy
+
+- `memory_encode`, `POST /v1/encode`, and `Audrey.encode` now redact content, context values, and affect labels before anything reaches the episodes table, the full-text index, or the embedding model. Previously only tool-trace capture was redacted; a secret pasted into an explicit "remember this" call was stored in plaintext. The MCP tool result now echoes the stored (redacted) content plus a redaction summary instead of reflecting the caller's raw input, and batch encodes embed the redacted text rather than the original.
+- A dedicated redaction rule catches multi-word passphrases and BIP39-style mnemonics (eight or more space- or hyphen-joined lowercase words). The previous identifier exemption treated exactly that shape as a machine identifier and let it through.
+- `redactJson` handles a literal `__proto__` key as ordinary data: the nested value is redacted and preserved instead of silently vanishing through the prototype setter.
+- Memories marked `private` are excluded from the episode content sent to a configured cloud LLM during consolidation. They still consolidate through the local heuristic path.
+- The first cloud LLM completion in a process prints a one-time stderr notice naming the provider and endpoint before any memory content leaves the machine.
+
+### Guard trust and provenance
+
+- A must-follow memory only escalates to a high-severity directive (capable of forcing a strict-mode block) when its source is `direct-observation` or `told-by-user` **and** its context carries the `audrey_trust: user-verified` marker, which only Autopilot's genuine user-prompt capture can set — MCP, HTTP, and CLI encode boundaries strip it from caller-supplied context. Previously any caller could self-report a trusted source and plant a durable directive into every future Guard decision. Trusted-source memories created before this release are grandfathered at medium severity: still surfaced, never alone sufficient to force a strict block.
+- `Audrey.afterAction` accepts `overrideReason` for recording a succeeded outcome against a receipt that was blocked for a policy reason rather than an exact repeated failure. The reason is written into the event metadata as durable evidence. Exact-repeat-failure blocks still cannot be recorded as succeeded this way; they require a fresh acknowledged `beforeAction`. Exact-repeat detection now applies uniformly across the library API, MCP tools, HTTP routes, and CLI, which previously enforced different subsets of these checks.
+- Generated hooks now guard `MultiEdit` and every `mcp__*` tool from connected MCP servers, excluding Audrey's own memory tools so Guard preflight does not recursively fire on `memory_recall` and its siblings.
+- Preflight reuses the failure analysis its capsule already computed instead of scanning `memory_events` a second time, and its tagged must-follow sweep only runs when a must-follow tag exists anywhere in the store.
+
+### Performance
+
+- `recentFailures()` replaced three correlated per-row subqueries with a single materialized window-function pass backed by a new composite index on `(tool_name, outcome, created_at, actor_agent)`. Measured before the fix: about 199 ms per call at 10,000 `memory_events` rows and about 24 s at 100,000 rows — inside a Guard check whose hook timeout is 30 s. Measured after (`npm run bench:scale`, 50,000 events): 22 ms p95. This query runs on every prompt and every guarded tool call.
+- Database open no longer re-scans episodes, semantics, and procedures for unsynced embeddings on every hook process. A persisted per-table high-water mark plus partial indexes reduce a steady-state open to one `MAX(rowid)` comparison per table. Schema migrates to v14; each migration now commits atomically with its version bump.
+- `memory_events` has retention: Autopilot maintenance prunes events older than 90 days by default (`deleteEventsBefore` batches deletes and reports the count). The table previously grew without bound for the life of an install.
+- `benchmarks/scale.bench.js` seeds tens of thousands of rows and asserts p95 budgets for the hook hot path (`recentFailures`, capsule build, preflight, cold reopen), which the 20-row benchmark that previously gated releases could not catch.
+
+### Recall quality
+
+- Hybrid recall normalizes the FTS signal onto the same scale as the vector score before weighting. The previous fusion mixed a raw 0–1 vector score against reciprocal-rank terms two orders of magnitude smaller, so the nominal 0.7 FTS weight contributed at most ~0.023 and exact keyword or identifier matches almost always lost to loosely similar vector hits.
+- Confidence rewards independent corroboration: `source_type_diversity`, already tracked and reinforced on every semantic memory, now feeds a bounded bonus in the confidence formula. Two identically-supported memories are no longer scored the same when one is backed by three independent source types and the other by three copies of the same source.
+- Consolidation checks new principles against existing active memories and merges near-duplicates (evidence union, reinforcement bookkeeping) instead of minting a redundant semantic or procedure on every dream cycle; recall's duplicate suppression also breaks equal-reliability ties deterministically for near-identical content instead of letting both duplicates through.
+- Capsules accept `excludeIds`, and Autopilot passes the session's already-injected set, so exclusion happens before the character budget is spent and later capsules surface next-ranked unseen memories instead of going quiet while re-fetching content the session has already seen.
+
+### Autopilot
+
+- Worktree checkouts resolve to their repository's common root, so all worktrees of one repo share a memory namespace instead of fragmenting must-follow rules and failure history per checkout.
+- Only the `global-preference` tag crosses project boundaries. Generic `preference`-class tags no longer leak project-local memories into every other project's packets.
+- Hook processes derive their internal embedding and LLM timeouts from the invoked event's declared host timeout, leaving margin to exit cleanly instead of being killed mid-write by the host.
+
+### Diagnostics
+
+- `audrey doctor` inspects Claude Code hook installs (present handlers, unparseable runtime, missing node/entrypoint paths) with the same depth previously applied only to Codex, and warns when an installed hook entrypoint's version differs from the running CLI — the two known causes of memory packets silently stopping.
+- Hook failures append to a small rotating log under the data directory, independent of the SQLite store, and doctor surfaces the recent failure history. Previously a hook crash left no trace beyond that process's stderr.
+- The MCP tools that return stored memory content directly (`memory_recall`, `memory_capsule`, `memory_greeting`, `memory_guard_before`, `memory_preflight`, `memory_reflexes`) apply the same evidence-not-authority framing and markup escaping as the auto-injected packet, and `memory_recall` no longer silently drops the `partial_failure` degradation signal its HTTP counterpart already reported.
+
+### HTTP surface
+
+- `POST /v1/encode` strips the reserved trust-context marker from caller-supplied `context` before it reaches storage, and `POST /v1/recall` does the same for its `context` match parameter (including the nested `recall.context` that `POST /v1/capsule` forwards to it), so an HTTP caller can no longer self-certify a memory or query as genuine user-stated direction.
+- Adds `POST /v1/promote`, gated behind `AUDREY_ENABLE_ADMIN_TOOLS=1` like `/v1/export`, `/v1/import`, and `/v1/forget`. It mirrors the `memory_promote` MCP tool and CLI command.
+- `POST /v1/guard/after` validates `outcome` against the real enum (`succeeded`, `failed`, `blocked`, `skipped`, `unknown`) instead of a bare type assertion, returning 400 with a specific message on an invalid value instead of a raw SQLite constraint error.
+- `POST /v1/guard/after` accepts `override_reason` / `overrideReason`, plumbed through to `Audrey.afterAction` for recording a succeeded outcome against a Guard receipt that was blocked for a reason other than an exact repeated failure.
+- Every route now honors a per-call `agent` in the request body as a fallback when the `X-Audrey-Agent` header is absent. This makes the Python client's per-call `agent` keyword argument actually take effect; previously it was silently ignored because every route resolved the acting agent from the header only. The header still wins when both are present.
+
+### Provider configuration
+
+- Cloud embedding and LLM providers are never auto-selected from an ambient `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Leaving `AUDREY_EMBEDDING_PROVIDER` or `AUDREY_LLM_PROVIDER` unset (or `auto`) uses local embeddings and local heuristic reflection; a cloud provider requires explicitly setting the variable, and doing so without the matching API key now fails loudly instead of running unconfigured.
+
+### Repository hygiene and packaging
+
+- `docs/PRODUCTION_BACKLOG.md` was tracked in git and listed in `package.json`'s `files` array, so an internal P0/P1/P2 backlog, pricing notes, and launch-postmortem detail shipped in every `npm install audrey` tarball. It has been removed from git tracking and from `files`; the content is preserved locally, outside the repo. `docs/AUDREY_PAPER_OUTLINE.md` is removed from `files` too — it is a pre-writing outline, not something a library consumer needs — but stays tracked in git because `scripts/create-paper-submission-bundle.mjs` reads it as a real build input.
+- Trims the published npm package to what a consumer of the library or MCP server actually needs: `dist/`, `examples/`, `README.md`, `CHANGELOG.md`, `SECURITY.md`, and `LICENSE`. Benchmarks, the compiled arXiv PDF, submission bundles, and other repo-only documentation no longer ship. Measured with `npm pack --dry-run`: 399 files / 965.3 kB packed / 4.0 MB unpacked before, 217 files / 332.7 kB packed / 1.5 MB unpacked after.
+- Removes the `pretest` lifecycle hook that made every `npm test` silently run a full rebuild plus the entire benchmark and paper pipeline, including `paper:sync`, which unconditionally overwrote `README.md` and three files under `docs/paper/`. `npm test` is now just the Vitest run; `tests/setup/ensure-release-artifacts.js` already generates the fixtures those tests need. `npm run test:artifacts` remains available as an explicit script; its benchmark steps stay folded into `release:gate`, `release:gate:sandbox`, and `release:gate:paper`, and its paper steps (`paper:sync` onward) remain exclusive to `release:gate:paper`, same as before this change. `release:gate` now builds and runs the performance benchmark explicitly instead of relying on the removed hook to do it implicitly.
+
 ## 1.1.3 - 2026-07-13
 
 ### MCP Registry publishing fixes

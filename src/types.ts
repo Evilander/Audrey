@@ -38,6 +38,13 @@ export interface CausalParams {
   consequence?: string;
 }
 
+/** What a redaction pass removed from content before it was persisted. */
+export interface RedactionSummary {
+  redacted: boolean;
+  classes: string[];
+  count: number;
+}
+
 export interface EncodeParams {
   content: string;
   source: SourceType;
@@ -154,6 +161,8 @@ export interface ConfidenceConfig {
   interferenceWeight?: number;
   contextWeight?: number;
   affectWeight?: number;
+  /** Bonus applied when independent source types corroborate a memory. */
+  sourceDiversityWeight?: number;
   retrievalContext?: Record<string, string>;
   retrievalMood?: Pick<Affect, 'valence' | 'arousal'>;
 }
@@ -168,6 +177,9 @@ export interface ComputeConfidenceParams {
   daysSinceRetrieval: number;
   weights?: ConfidenceWeights;
   customSourceReliability?: SourceReliabilityMap;
+  /** Count of distinct source types backing this memory; 0/1 means no corroboration. */
+  sourceTypeDiversity?: number;
+  sourceDiversityWeight?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +199,8 @@ export interface ConsolidationResult {
   principlesExtracted: number;
   semanticsCreated?: number;
   proceduresCreated?: number;
+  semanticsMerged?: number;
+  proceduresMerged?: number;
   status?: string;
 }
 
@@ -196,6 +210,8 @@ export interface ConsolidationOptions {
   agent?: string;
   extractPrinciple?: (episodes: EpisodeRow[]) => Promise<ExtractedPrinciple> | ExtractedPrinciple;
   llmProvider?: LLMProvider;
+  /** Cosine similarity above which a new principle merges into an existing memory instead of inserting. */
+  mergeSimilarityThreshold?: number;
 }
 
 // ---------------------------------------------------------------------------

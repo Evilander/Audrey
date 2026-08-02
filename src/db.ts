@@ -142,6 +142,10 @@ const SCHEMA = `
     cwd TEXT,
     file_fingerprints TEXT,
     redaction_state TEXT DEFAULT 'unreviewed' CHECK(redaction_state IN ('unreviewed','redacted','clean','quarantined')),
+    action_key TEXT,
+    hook_host TEXT,
+    hook_tool_use_id TEXT,
+    receipt_id TEXT,
     metadata TEXT,
     created_at TEXT NOT NULL
   );
@@ -206,6 +210,11 @@ interface MigrateTableOptions {
   placeholders: string;
   transform: (row: MigrationRow) => unknown[];
   dimensions?: number;
+  markKey: string;
+}
+
+interface MaxRowidRow {
+  m: number | null;
 }
 
 const VEC0_MIGRATION_SPECS: Vec0MigrationSpec[] = [
@@ -263,12 +272,51 @@ export function createVec0Tables(db: Database.Database, dimensions: number): voi
   }
 }
 
-export function dropVec0Tables(db: Database.Database): void {
-  db.exec('DROP TABLE IF EXISTS vec_episodes');
-  db.exec('DROP TABLE IF EXISTS vec_semantics');
-  db.exec('DROP TABLE IF EXISTS vec_procedures');
+type VecSyncSource = 'episodes' | 'semantics' | 'procedures';
+
+const VEC_SYNC_SOURCES: readonly VecSyncSource[] = ['episodes', 'semantics', 'procedures'];
+
+function vecSyncMarkKey(source: VecSyncSource): string {
+  return `vec_sync_rowid_${source}`;
 }
 
+function readConfigNumber(db: Database.Database, key: string): number {
+  const row = db.prepare('SELECT value FROM audrey_config WHERE key = ?').get(key) as
+    ConfigRow | undefined;
+  return row ? Number(row.value) : 0;
+}
+
+function writeConfigNumber(db: Database.Database, key: string, value: number): void {
+  db.prepare(
+    `INSERT INTO audrey_config (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(key, String(value));
+}
+
+export function dropVec0Tables(db: Database.Database): void {
+  const drop = db.transaction(() => {
+    db.exec('DROP TABLE IF EXISTS vec_episodes');
+    db.exec('DROP TABLE IF EXISTS vec_semantics');
+    db.exec('DROP TABLE IF EXISTS vec_procedures');
+    // The vec0 tables are gone, so any high-water mark claiming rows up to
+    // some rowid are already synced would be a lie — the next
+    // migrateEmbeddingsToVec0 call must rescan those tables from scratch.
+    const clearMark = db.prepare('DELETE FROM audrey_config WHERE key = ?');
+    for (const source of VEC_SYNC_SOURCES) clearMark.run(vecSyncMarkKey(source));
+  });
+  drop();
+}
+
+/**
+ * Copies not-yet-synced embeddings from a source table into its vec0
+ * shadow, bounded by a persisted high-water mark (audrey_config key
+ * markKey) instead of a full table scan on every call. Returns true when a
+ * gap remains that this pass could not close (a dimension mismatch, most
+ * likely — see the expectedBytes check below), in which case the mark is
+ * deliberately left behind: the caller should trigger a full reembed, and
+ * the next open must see the same rows again rather than silently treating
+ * them as handled.
+ */
 function migrateTable(
   db: Database.Database,
   {
@@ -279,35 +327,59 @@ function migrateTable(
     placeholders,
     transform,
     dimensions,
+    markKey,
   }: MigrateTableOptions,
-): void {
+): boolean {
+  const mark = readConfigNumber(db, markKey);
+  const maxRowidRow = db.prepare(`SELECT MAX(rowid) AS m FROM ${source}`).get() as MaxRowidRow;
+  const maxRowid = maxRowidRow.m ?? 0;
+  if (maxRowid <= mark) return false;
+
   const rows = db
     .prepare(
       `
     SELECT ${selectCols}
     FROM ${source} source_row
-    WHERE source_row.embedding IS NOT NULL
+    WHERE source_row.rowid > ?
+      AND source_row.embedding IS NOT NULL
       AND NOT EXISTS (
         SELECT 1 FROM ${target} target_row WHERE target_row.id = source_row.id
       )
   `,
     )
-    .all() as MigrationRow[];
-  if (rows.length === 0) return;
+    .all(mark) as MigrationRow[];
 
   const expectedBytes = dimensions ? dimensions * 4 : null;
-  const insert = db.prepare(`INSERT INTO ${target}(${insertCols}) VALUES (${placeholders})`);
-  const tx = db.transaction(() => {
-    for (const row of rows) {
-      if (expectedBytes && row.embedding.byteLength !== expectedBytes) continue;
-      insert.run(...transform(row));
-    }
-  });
-  tx();
+  let inserted = 0;
+  if (rows.length > 0) {
+    const insert = db.prepare(`INSERT INTO ${target}(${insertCols}) VALUES (${placeholders})`);
+    const tx = db.transaction(() => {
+      for (const row of rows) {
+        if (expectedBytes && row.embedding.byteLength !== expectedBytes) continue;
+        insert.run(...transform(row));
+        inserted += 1;
+      }
+    });
+    tx();
+  }
+
+  if (inserted < rows.length) return true;
+
+  writeConfigNumber(db, markKey, maxRowid);
+  return false;
 }
 
-function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): void {
-  migrateTable(db, {
+/**
+ * Catches up vec0 tables with any source rows a normal encode/import/
+ * consolidate write didn't already sync atomically (legacy pre-vec0 data,
+ * or a row written by another connection). Each table is bounded by its
+ * own high-water mark, so a steady-state open with nothing new touches
+ * only three cheap MAX(rowid) lookups instead of a full table scan.
+ * Returns true if any table still has an unresolved gap, signaling the
+ * caller that a full reembed is needed.
+ */
+function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): boolean {
+  const episodesMismatch = migrateTable(db, {
     source: 'episodes',
     target: 'vec_episodes',
     selectCols: 'id, agent, embedding, source, consolidated',
@@ -321,9 +393,10 @@ function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): voi
       BigInt(row.consolidated ?? 0),
     ],
     dimensions,
+    markKey: vecSyncMarkKey('episodes'),
   });
 
-  migrateTable(db, {
+  const semanticsMismatch = migrateTable(db, {
     source: 'semantics',
     target: 'vec_semantics',
     selectCols: 'id, agent, embedding, state',
@@ -331,9 +404,10 @@ function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): voi
     placeholders: '?, ?, ?, ?',
     transform: row => [row.id, requireAgent(row.agent, 'default'), row.embedding, row.state],
     dimensions,
+    markKey: vecSyncMarkKey('semantics'),
   });
 
-  migrateTable(db, {
+  const proceduresMismatch = migrateTable(db, {
     source: 'procedures',
     target: 'vec_procedures',
     selectCols: 'id, agent, embedding, state',
@@ -341,7 +415,10 @@ function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): voi
     placeholders: '?, ?, ?, ?',
     transform: row => [row.id, requireAgent(row.agent, 'default'), row.embedding, row.state],
     dimensions,
+    markKey: vecSyncMarkKey('procedures'),
   });
+
+  return episodesMismatch || semanticsMismatch || proceduresMismatch;
 }
 
 function hasAgentPartition(db: Database.Database, table: Vec0TableName): boolean {
@@ -404,48 +481,6 @@ function migrateVec0AgentPartitions(db: Database.Database, dimensions: number): 
   migrate();
 }
 
-interface EmbeddingSyncCounts {
-  episodes: number;
-  vecEpisodes: number;
-  semantics: number;
-  vecSemantics: number;
-  procedures: number;
-  vecProcedures: number;
-}
-
-function getEmbeddingSyncCounts(db: Database.Database): EmbeddingSyncCounts {
-  let vecEpisodes = 0;
-  let vecSemantics = 0;
-  let vecProcedures = 0;
-
-  try {
-    vecEpisodes = (db.prepare('SELECT COUNT(*) as c FROM vec_episodes').get() as CountRow).c;
-    vecSemantics = (db.prepare('SELECT COUNT(*) as c FROM vec_semantics').get() as CountRow).c;
-    vecProcedures = (db.prepare('SELECT COUNT(*) as c FROM vec_procedures').get() as CountRow).c;
-  } catch {
-    // vec tables may not exist yet
-  }
-
-  const episodes = (
-    db.prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL').get() as CountRow
-  ).c;
-  const semantics = (
-    db.prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL').get() as CountRow
-  ).c;
-  const procedures = (
-    db.prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL').get() as CountRow
-  ).c;
-
-  return {
-    episodes,
-    vecEpisodes,
-    semantics,
-    vecSemantics,
-    procedures,
-    vecProcedures,
-  };
-}
-
 function addColumnIfMissing(
   db: Database.Database,
   table: string,
@@ -459,7 +494,7 @@ function addColumnIfMissing(
   }
 }
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 14;
 
 const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
   {
@@ -541,6 +576,102 @@ const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
       // this migration simply advances schema_version to 11 for existing DBs.
     },
   },
+  {
+    version: 12,
+    up(db) {
+      addColumnIfMissing(db, 'memory_events', 'action_key', 'TEXT');
+      db.exec(`
+        UPDATE memory_events
+        SET action_key = CASE
+          WHEN json_valid(metadata) THEN CASE
+            WHEN json_type(metadata, '$.audrey_guard_action_key') = 'text'
+              THEN json_extract(metadata, '$.audrey_guard_action_key')
+            ELSE NULL
+          END
+          ELSE NULL
+        END
+        WHERE action_key IS NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_memory_events_action_key
+          ON memory_events(action_key, actor_agent, created_at, outcome);
+      `);
+    },
+  },
+  {
+    version: 13,
+    up(db) {
+      // Some prerelease v12 stores advanced the logical version without
+      // receiving the v12 action_key DDL. Repair the physical schema before
+      // any v13 validation or indexes reference that column.
+      addColumnIfMissing(db, 'memory_events', 'action_key', 'TEXT');
+      addColumnIfMissing(db, 'memory_events', 'hook_host', 'TEXT');
+      addColumnIfMissing(db, 'memory_events', 'hook_tool_use_id', 'TEXT');
+      addColumnIfMissing(db, 'memory_events', 'receipt_id', 'TEXT');
+      db.exec(`
+        UPDATE memory_events
+        SET action_key = json_extract(metadata, '$.audrey_guard_action_key')
+        WHERE action_key IS NULL
+          AND json_valid(metadata)
+          AND json_type(metadata, '$.audrey_guard_action_key') = 'text'
+          AND length(json_extract(metadata, '$.audrey_guard_action_key')) = 64
+          AND json_extract(metadata, '$.audrey_guard_action_key') NOT GLOB '*[^0-9a-f]*';
+
+        UPDATE memory_events
+        SET action_key = NULL
+        WHERE action_key IS NOT NULL
+          AND (length(action_key) != 64 OR action_key GLOB '*[^0-9a-f]*');
+
+        UPDATE memory_events
+        SET hook_host = CASE
+              WHEN hook_host IS NOT NULL THEN hook_host
+              WHEN json_valid(metadata)
+               AND json_type(metadata, '$.autopilot_host') = 'text'
+                THEN json_extract(metadata, '$.autopilot_host')
+              ELSE NULL
+            END,
+            hook_tool_use_id = CASE
+              WHEN hook_tool_use_id IS NOT NULL THEN hook_tool_use_id
+              WHEN json_valid(metadata)
+               AND json_type(metadata, '$.autopilot_tool_use_id') = 'text'
+                THEN json_extract(metadata, '$.autopilot_tool_use_id')
+              ELSE NULL
+            END,
+            receipt_id = CASE
+              WHEN receipt_id IS NOT NULL THEN receipt_id
+              WHEN json_valid(metadata)
+               AND json_type(metadata, '$.receipt_id') = 'text'
+                THEN json_extract(metadata, '$.receipt_id')
+              ELSE NULL
+            END
+        WHERE hook_host IS NULL OR hook_tool_use_id IS NULL OR receipt_id IS NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_memory_events_action_key
+          ON memory_events(action_key, actor_agent, created_at, outcome);
+        CREATE INDEX IF NOT EXISTS idx_memory_events_hook_lookup
+          ON memory_events(
+            actor_agent, hook_host, hook_tool_use_id, session_id, event_type, created_at DESC
+          );
+        CREATE INDEX IF NOT EXISTS idx_memory_events_receipt
+          ON memory_events(receipt_id, actor_agent, created_at DESC);
+      `);
+    },
+  },
+  {
+    version: 14,
+    up(db) {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memory_events_tool_outcome_created_actor
+          ON memory_events(tool_name, outcome, created_at, actor_agent);
+
+        CREATE INDEX IF NOT EXISTS idx_episodes_embedding_present
+          ON episodes(id) WHERE embedding IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_semantics_embedding_present
+          ON semantics(id) WHERE embedding IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_procedures_embedding_present
+          ON procedures(id) WHERE embedding IS NOT NULL;
+      `);
+    },
+  },
 ];
 
 function runMigrations(db: Database.Database): void {
@@ -551,14 +682,16 @@ function runMigrations(db: Database.Database): void {
   if (currentVersion >= SCHEMA_VERSION) return;
 
   const pending = MIGRATIONS.filter(m => m.version > currentVersion);
-  for (const migration of pending) {
-    migration.up(db);
-  }
-
-  db.prepare(
+  const setSchemaVersion = db.prepare(
     `INSERT INTO audrey_config (key, value) VALUES ('schema_version', ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-  ).run(String(SCHEMA_VERSION));
+  );
+  for (const migration of pending) {
+    db.transaction(() => {
+      migration.up(db);
+      setSchemaVersion.run(String(migration.version));
+    })();
+  }
 }
 
 export function createDatabase(
@@ -623,16 +756,8 @@ export function createDatabase(
     createVec0Tables(db, dimensions);
     migrateVec0AgentPartitions(db, dimensions);
 
-    if (!migrated) {
-      migrateEmbeddingsToVec0(db, dimensions);
-      const sync = getEmbeddingSyncCounts(db);
-      if (
-        sync.episodes !== sync.vecEpisodes ||
-        sync.semantics !== sync.vecSemantics ||
-        sync.procedures !== sync.vecProcedures
-      ) {
-        migrated = true;
-      }
+    if (!migrated && migrateEmbeddingsToVec0(db, dimensions)) {
+      migrated = true;
     }
   }
 

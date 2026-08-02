@@ -74,10 +74,44 @@ describe('hybrid-recall — RRF fusion', () => {
     expect(hybridFirst.some(r => r.content.includes('429'))).toBe(true);
     expect(vectorFirst.some(r => r.content.includes('429'))).toBe(true);
 
-    // Hybrid should rank the FTS-matching memory at least as high as vector-only.
+    // The Stripe memory is the only one FTS matches on "HTTP 429" — combined
+    // with whatever rank it gets from vector similarity, agreement between
+    // both retrievers must put it in first place, not merely no worse than
+    // vector-only (three unrelated-content candidates and only one real
+    // match means this holds regardless of the mock embedding's vector rank).
     const hybridRank = hybridFirst.findIndex(r => r.content.includes('429'));
-    const vectorRank = vectorFirst.findIndex(r => r.content.includes('429'));
-    expect(hybridRank).toBeLessThanOrEqual(vectorRank);
+    expect(hybridRank).toBe(0);
+  });
+
+  it('an FTS-only exact match outranks a higher-scoring vector-only hit', async () => {
+    const exactId = await audrey.encode({
+      content: 'Zephyr order confirmation reference ZX-90210',
+      source: 'direct-observation',
+    });
+
+    // A synthetic vector-only candidate with a near-perfect similarity*confidence
+    // score — deliberately not present in FTS at all, and not backed by a real
+    // row, so this exercises fuseResults() directly rather than depending on
+    // the mock embedding provider producing any particular similarity ranking.
+    const vectorOnly = {
+      id: 'vector-only-adjacent',
+      content: 'A semantically related but incorrect memory about order confirmations',
+      type: 'episodic',
+      confidence: 0.95,
+      score: 0.99,
+      source: 'direct-observation',
+      createdAt: new Date().toISOString(),
+    };
+
+    const fused = fuseResults(audrey.db, {
+      vectorResults: [vectorOnly],
+      ftsIds: new Map([['episodic', [exactId]]]),
+      mode: 'hybrid',
+    });
+
+    expect(fused[0].id).toBe(exactId);
+    expect(fused.some(r => r.id === vectorOnly.id)).toBe(true);
+    expect(fused.findIndex(r => r.id === vectorOnly.id)).toBeGreaterThan(0);
   });
 
   it('keyword mode uses FTS rank order and drops non-FTS hits', async () => {
@@ -93,6 +127,127 @@ describe('hybrid-recall — RRF fusion', () => {
     // Non-matching content must not appear in a keyword-only result.
     expect(results.every(r => !r.content.includes('sky'))).toBe(true);
   });
+
+  it('keyword identifier intent returns the exact evidence hit without unrelated rows', async () => {
+    const exactId = await audrey.encode({
+      content: 'Audrey billing account number: 8675309',
+      source: 'told-by-user',
+    });
+    await audrey.encode({
+      content: 'Show account settings for the unrelated staging profile',
+      source: 'direct-observation',
+    });
+
+    const results = await audrey.recall('Show account number', {
+      retrieval: 'keyword',
+      types: ['episodic'],
+      limit: 5,
+    });
+
+    expect(results.map(result => result.id)).toEqual([exactId]);
+  });
+
+  it.each(['vector', 'hybrid'])(
+    '%s identifier intent accepts a paraphrased label with value evidence and an anchor',
+    async retrieval => {
+      const testKey = ['sk', 'audrey_test_48291'].join('-');
+      const exactId = await audrey.encode({
+        content: `Production credential: ${testKey}`,
+        source: 'told-by-user',
+      });
+      await audrey.encode({
+        content: 'Production API key rotation is documented in the runbook',
+        source: 'direct-observation',
+      });
+
+      const results = await audrey.recall('show production API key', {
+        retrieval,
+        types: ['episodic'],
+        limit: 5,
+      });
+
+      expect(results.map(result => result.id)).toContain(exactId);
+      expect(
+        results.every(
+          result => result.content !== 'Production API key rotation is documented in the runbook',
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it.each(['keyword', 'vector', 'hybrid'])(
+    '%s identifier intent rejects label-only and tangential memories without a value',
+    async retrieval => {
+      await audrey.encode({
+        content: 'Production API key is managed in the team vault',
+        source: 'told-by-user',
+      });
+      await audrey.encode({
+        content: 'Production deployment completed after the credential rotation',
+        source: 'direct-observation',
+      });
+      await audrey.encode({
+        content: 'Production account number: 8675309',
+        source: 'direct-observation',
+      });
+
+      const results = await audrey.recall('show production API key', {
+        retrieval,
+        types: ['episodic'],
+        limit: 5,
+      });
+
+      expect(results).toEqual([]);
+    },
+  );
+
+  it.each(['keyword', 'vector', 'hybrid'])(
+    '%s identifier intent returns only the requested owner value',
+    async retrieval => {
+      const requestedId = await audrey.encode({
+        content: 'Sam account number: 24681357',
+        source: 'told-by-user',
+      });
+      const otherOwnerId = await audrey.encode({
+        content: 'Alice account number: 8675309',
+        source: 'told-by-user',
+      });
+
+      const results = await audrey.recall("What is Sam's account number?", {
+        retrieval,
+        types: ['episodic'],
+        limit: 5,
+      });
+
+      expect(results.map(result => result.id)).toContain(requestedId);
+      expect(results.map(result => result.id)).not.toContain(otherOwnerId);
+    },
+  );
+
+  it.each(['vector', 'hybrid'])(
+    '%s identifier intent does not let shared environment context override owner mismatch',
+    async retrieval => {
+      const requestedKey = ['sk', 'riley_prod_48291'].join('-');
+      const otherKey = ['sk', 'morgan_prod_73164'].join('-');
+      const requestedId = await audrey.encode({
+        content: `Riley production credential: ${requestedKey}`,
+        source: 'told-by-user',
+      });
+      const otherOwnerId = await audrey.encode({
+        content: `Morgan production credential: ${otherKey}`,
+        source: 'told-by-user',
+      });
+
+      const results = await audrey.recall('show Riley production API key', {
+        retrieval,
+        types: ['episodic'],
+        limit: 5,
+      });
+
+      expect(results.map(result => result.id)).toContain(requestedId);
+      expect(results.map(result => result.id)).not.toContain(otherOwnerId);
+    },
+  );
 
   it('ftsIdsByType returns ranked id lists per memory type', async () => {
     const id1 = await audrey.encode({

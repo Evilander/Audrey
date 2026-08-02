@@ -33,6 +33,7 @@ export const memoryEncodeToolSchema = {
         .number()
         .min(-1)
         .max(1)
+        .optional()
         .describe('Emotional valence: -1 (very negative) to 1 (very positive)'),
       arousal: z
         .number()
@@ -81,6 +82,7 @@ export const memoryRecallToolSchema = {
         .number()
         .min(-1)
         .max(1)
+        .optional()
         .describe('Current emotional valence: -1 (negative) to 1 (positive)'),
       arousal: z
         .number()
@@ -215,6 +217,12 @@ export const memoryGuardBeforeToolSchema = {
     .array(z.string())
     .optional()
     .describe('File paths to fingerprint in the required guard receipt.'),
+  acknowledge_prior_failure: z
+    .boolean()
+    .optional()
+    .describe(
+      'Acknowledge an exact prior failure and request one audited caution-level retry. Does not bypass unrelated Guard blocks.',
+    ),
 };
 
 export const memoryGuardAfterToolSchema = {
@@ -267,6 +275,13 @@ export const memoryGuardAfterToolSchema = {
     .record(z.string(), z.enum(['used', 'helpful', 'wrong']))
     .optional()
     .describe('Map of evidence ids from the guard receipt to memory validation outcomes.'),
+  override_reason: z
+    .string()
+    .optional()
+    .describe(
+      'Reason for recording a succeeded outcome against a Guard receipt that blocked for a ' +
+        'reason other than an exact-repeated failure. Not needed for acknowledged exact-failure retries.',
+    ),
 };
 
 export const memoryReflexesToolSchema = {
@@ -275,4 +290,53 @@ export const memoryReflexesToolSchema = {
     .boolean()
     .optional()
     .describe('If true, include the full underlying preflight report.'),
+};
+
+export const memoryCapsuleToolSchema = {
+  query: z.string().describe('Natural-language query for the turn. Drives what gets surfaced.'),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe('Max recall results to consider before categorization.'),
+  budget_chars: z
+    .number()
+    .int()
+    .min(200)
+    .max(32000)
+    .optional()
+    .describe('Token budget in characters (defaults to AUDREY_CONTEXT_BUDGET_CHARS or 4000).'),
+  mode: z
+    .enum(['balanced', 'conservative', 'aggressive'])
+    .optional()
+    .describe(
+      'Capsule mode: conservative = fewer, higher-confidence entries; aggressive = broader sweep.',
+    ),
+  recent_change_window_hours: z
+    .number()
+    .int()
+    .min(1)
+    .max(720)
+    .optional()
+    .describe('How far back "recent_changes" looks (default 24h).'),
+  include_risks: z
+    .boolean()
+    .optional()
+    .describe('Include recent tool failures as risks (default true).'),
+  include_contradictions: z
+    .boolean()
+    .optional()
+    .describe('Include open contradictions (default true).'),
+  scope: z
+    .enum(['agent', 'shared'])
+    .optional()
+    .describe(
+      'agent restricts memory recall to this MCP server agent identity. shared searches the whole store. Defaults to agent.',
+    ),
+  cwd: z
+    .string()
+    .optional()
+    .describe('Scope tool-failure risks to the project containing this directory.'),
 };

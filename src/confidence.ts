@@ -28,6 +28,8 @@ export const DEFAULT_HALF_LIVES: HalfLives = {
 
 export const MODEL_GENERATED_CONFIDENCE_CAP: number = 0.6;
 
+export const DEFAULT_SOURCE_DIVERSITY_WEIGHT: number = 0.1;
+
 export function sourceReliability(
   sourceType: string,
   customReliability?: SourceReliabilityMap,
@@ -46,6 +48,21 @@ export function evidenceAgreement(supportingCount: number, contradictingCount: n
   const total = supportingCount + contradictingCount;
   if (total === 0) return 1.0;
   return supportingCount / total;
+}
+
+/**
+ * Bonus for independent corroboration: a memory backed by several distinct
+ * source types is stronger evidence than the same count of near-identical
+ * sources. 0 or 1 distinct source types is no corroboration at all, so the
+ * bonus is exactly 0 — a strict no-op for every single-source memory.
+ */
+export function sourceDiversityBonus(
+  sourceTypeDiversity: number | undefined,
+  weight: number,
+): number {
+  const diversity = sourceTypeDiversity ?? 0;
+  if (diversity <= 1) return 0;
+  return Math.min(weight, weight * (1 - 1 / diversity));
 }
 
 export function recencyDecay(ageDays: number, halfLifeDays: number): number {
@@ -80,11 +97,17 @@ export function computeConfidence({
   daysSinceRetrieval,
   weights,
   customSourceReliability,
+  sourceTypeDiversity,
+  sourceDiversityWeight,
 }: ComputeConfidenceParams): number {
   const w = weights || DEFAULT_WEIGHTS;
 
   const s = sourceReliability(sourceType, customSourceReliability);
-  const e = evidenceAgreement(supportingCount, contradictingCount);
+  const diversityBonus = sourceDiversityBonus(
+    sourceTypeDiversity,
+    sourceDiversityWeight ?? DEFAULT_SOURCE_DIVERSITY_WEIGHT,
+  );
+  const e = Math.min(1, evidenceAgreement(supportingCount, contradictingCount) + diversityBonus);
   const r = recencyDecay(ageDays, halfLifeDays);
   const ret = retrievalReinforcement(retrievalCount, daysSinceRetrieval);
 

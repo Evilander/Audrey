@@ -22,6 +22,7 @@ import type { RecallError, RecallResult, RecallOptions, MemoryType, MemoryState 
 import { recentFailures, type FailurePattern } from './events.js';
 import { projectNamespace } from './project.js';
 import { requireAgent, resolveMemoryScope } from './utils.js';
+import { controlTrustFor, type ControlTrust } from './trust.js';
 
 export type CapsuleMode = 'balanced' | 'conservative' | 'aggressive';
 
@@ -34,10 +35,26 @@ export interface CapsuleOptions {
   recentChangeWindowHours?: number;
   includeRisks?: boolean;
   includeContradictions?: boolean;
+  /** How far back to look for tool-failure risks. Defaults to 168 (7 days). */
+  failureWindowHours?: number;
+  /** Max tool-failure patterns to surface in the risks section. Defaults to 5. */
+  failureLimit?: number;
   recall?: RecallOptions;
   /** Scope tool-failure risks to the project containing this directory. */
   cwd?: string;
+  /**
+   * Memory ids already surfaced earlier in the session. Excluded entries are
+   * dropped before budget truncation and never consume budget; the recall
+   * candidate pool widens to compensate so exclusion surfaces genuinely new
+   * memories instead of just shrinking the capsule.
+   */
+  excludeIds?: Iterable<string>;
 }
+
+// Ceiling on how far excludeIds can widen the recall candidate pool, so a
+// long session with many previously-seen ids cannot make a single capsule
+// call recall an unbounded number of candidates.
+const MAX_CAPSULE_RECALL_LIMIT = 200;
 
 export type CapsuleEntryType =
   'episode' | 'semantic' | 'procedural' | 'tool_failure' | 'contradiction';
@@ -55,6 +72,10 @@ export interface CapsuleEntry {
   state?: MemoryState;
   created_at?: string;
   recommended_action?: string;
+  /** Provenance trust for control-memory escalation — see src/trust.ts. */
+  trust: ControlTrust;
+  /** Present only on tool_failure entries; the pattern the entry summarizes. */
+  failure_pattern?: FailurePattern;
 }
 
 export interface MemoryCapsule {
@@ -181,6 +202,7 @@ function buildRecallEntry(
   result: RecallResult,
   enrichment: { tags: string[]; evidence: string[]; scope?: string },
   reason: string,
+  trust: ControlTrust,
 ): CapsuleEntry {
   return {
     memory_id: result.id,
@@ -194,6 +216,7 @@ function buildRecallEntry(
     tags: enrichment.tags.length > 0 ? enrichment.tags : undefined,
     state: result.state,
     created_at: result.createdAt,
+    trust,
   };
 }
 
@@ -219,6 +242,9 @@ function buildFailureEntry(f: FailurePattern, reason: string): CapsuleEntry {
     reason,
     created_at: f.last_failed_at,
     recommended_action: `Before re-running ${toolLabel}, check preflight conditions from the last failure.`,
+    // Synthetic — not derived from a claimed source, so never must-follow eligible.
+    trust: 'untrusted',
+    failure_pattern: f,
   };
 }
 
@@ -233,6 +259,8 @@ function buildContradictionEntry(row: ContradictionRow, reason: string): Capsule
     state: 'disputed',
     evidence: [row.claim_a_id, row.claim_b_id],
     recommended_action: 'Resolve or mark context_dependent before acting on either claim.',
+    // Synthetic — not derived from a claimed source, so never must-follow eligible.
+    trust: 'untrusted',
   };
 }
 
@@ -308,15 +336,18 @@ function categorize(
   result: RecallResult,
   tags: string[],
   recentWindowMs: number,
+  controlTrust: ControlTrust,
 ): Array<keyof MemoryCapsule['sections']> {
   const sections = new Set<keyof MemoryCapsule['sections']>();
   const lowerTags = tags.map(t => t.toLowerCase());
-  const trustedControlSource =
-    result.source === 'direct-observation' || result.source === 'told-by-user';
+  // 'legacy' still escalates (existing must-follow memories predating trust
+  // tracking must keep working) but stays advisory via entry.trust; only a
+  // forged or unverified claim on a post-cutoff memory is excluded outright.
+  const eligibleForMustFollow = controlTrust !== 'untrusted';
 
-  if (trustedControlSource && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
+  if (eligibleForMustFollow && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
     sections.add('must_follow');
-  } else if (!trustedControlSource && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
+  } else if (!eligibleForMustFollow && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
     sections.add('uncertain_or_disputed');
   }
 
@@ -370,8 +401,15 @@ export async function buildCapsule(
     options.budgetChars ??
     Number.parseInt(process.env['AUDREY_CONTEXT_BUDGET_CHARS'] ?? '4000', 10);
   const recentChangeWindowHours = options.recentChangeWindowHours ?? 24;
-  const recallLimit =
+  const excludeIds = options.excludeIds ? new Set(options.excludeIds) : undefined;
+  const baseRecallLimit =
     options.limit ?? (mode === 'conservative' ? 8 : mode === 'aggressive' ? 24 : 16);
+  // Widen the candidate pool by however many ids are being excluded so
+  // filtering them out still leaves room for genuinely new memories, instead
+  // of just returning a shorter capsule built from the same fixed top slots.
+  const recallLimit = excludeIds?.size
+    ? Math.min(baseRecallLimit + excludeIds.size, MAX_CAPSULE_RECALL_LIMIT)
+    : baseRecallLimit;
   const recentWindowMs = recentChangeWindowHours * 60 * 60 * 1000;
   const includeRisks = options.includeRisks ?? true;
   const includeContradictions = options.includeContradictions ?? true;
@@ -393,6 +431,7 @@ export async function buildCapsule(
   const seenPerSection = new Map<keyof MemoryCapsule['sections'], Set<string>>();
 
   function push(section: keyof MemoryCapsule['sections'], entry: CapsuleEntry): void {
+    if (excludeIds?.has(entry.memory_id)) return;
     let seen = seenPerSection.get(section);
     if (!seen) {
       seen = new Set();
@@ -418,14 +457,17 @@ export async function buildCapsule(
   const cwdNamespace = options.cwd ? projectNamespace(options.cwd) : undefined;
 
   for (const result of results) {
+    if (excludeIds?.has(result.id)) continue;
     let tags: string[] = [];
     let evidence: string[] = [];
     let scope: string | undefined;
+    let rawContext: string | null = null;
 
     if (result.type === 'episodic') {
       const row = loadEpisodeEnrichment(db, result.id);
       tags = parseTags(row?.tags);
       scope = row?.agent ? `agent:${row.agent}` : undefined;
+      rawContext = row?.context ?? null;
       // Tool-failure episodes are project-local operational records (their
       // durable lessons travel via consolidation instead). A failure recorded
       // in another project is noise here, even under shared scope.
@@ -441,12 +483,19 @@ export async function buildCapsule(
       evidence = parseEvidence(row?.evidence_episode_ids);
     }
 
+    const controlTrust = controlTrustFor({
+      source: result.source,
+      context: rawContext,
+      createdAt: result.createdAt,
+    });
+
     const entry = buildRecallEntry(
       result,
       { tags, evidence, scope },
       'Matched query via semantic similarity.',
+      controlTrust,
     );
-    const assigned = categorize(entry, result, tags, recentWindowMs);
+    const assigned = categorize(entry, result, tags, recentWindowMs, controlTrust);
     for (const section of assigned) {
       const entryForSection = { ...entry };
       if (section === 'recent_changes') {
@@ -475,9 +524,10 @@ export async function buildCapsule(
 
   // 2. Tool-failure risks from memory_events
   if (includeRisks) {
+    const failureWindowHours = options.failureWindowHours ?? 168;
     const failures = recentFailures(db, {
-      since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-      limit: 5,
+      since: new Date(Date.now() - failureWindowHours * 60 * 60 * 1000).toISOString(),
+      limit: options.failureLimit ?? 5,
       ...(options.cwd ? { cwd: options.cwd } : {}),
       ...(memoryScope === 'agent' ? { actorAgent: memoryAgent } : {}),
     });

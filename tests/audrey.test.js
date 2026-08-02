@@ -438,6 +438,34 @@ describe('Audrey', () => {
 describe('Audrey with LLM', () => {
   let brain;
 
+  function seedSemanticContradiction(
+    contradictionId,
+    claimAId,
+    claimBId,
+    state = 'context_dependent',
+  ) {
+    const now = new Date().toISOString();
+    for (const [id, content] of [
+      [claimAId, `Claim ${claimAId}`],
+      [claimBId, `Claim ${claimBId}`],
+    ]) {
+      brain.db
+        .prepare(
+          `INSERT INTO semantics (id, content, agent, state, conditions, created_at, evidence_count,
+            supporting_count, source_type_diversity, evidence_episode_ids)
+          VALUES (?, ?, ?, ?, '{"previous":"context"}', ?, 1, 1, 1, '[]')`,
+        )
+        .run(id, content, brain.agent, state, now);
+    }
+    brain.db
+      .prepare(
+        `INSERT INTO contradictions (
+          id, claim_a_id, claim_a_type, claim_b_id, claim_b_type, state, created_at
+        ) VALUES (?, ?, 'semantic', ?, 'semantic', 'open', ?)`,
+      )
+      .run(contradictionId, claimAId, claimBId, now);
+  }
+
   beforeEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
     brain = new Audrey({
@@ -573,6 +601,242 @@ describe('Audrey with LLM', () => {
 
     const row = brain.db.prepare('SELECT state FROM contradictions WHERE id = ?').get('con-1');
     expect(row.state).toBe('context_dependent');
+    expect(brain.db.prepare('SELECT state FROM semantics WHERE id = ?').get('sem-a').state).toBe(
+      'context_dependent',
+    );
+  });
+
+  it('marks both semantic claims context-dependent with their resolution conditions', async () => {
+    const now = new Date().toISOString();
+    brain.db
+      .prepare(
+        `INSERT INTO semantics (id, content, agent, state, created_at, evidence_count,
+          supporting_count, source_type_diversity, evidence_episode_ids)
+        VALUES (?, ?, ?, 'disputed', ?, 1, 1, 1, '[]')`,
+      )
+      .run('sem-context-a', 'Claim A context', brain.agent, now);
+    brain.db
+      .prepare(
+        `INSERT INTO semantics (id, content, agent, state, created_at, evidence_count,
+          supporting_count, source_type_diversity, evidence_episode_ids)
+        VALUES (?, ?, ?, 'disputed', ?, 1, 1, 1, '[]')`,
+      )
+      .run('sem-context-b', 'Claim B context', brain.agent, now);
+    brain.db
+      .prepare(
+        `INSERT INTO contradictions (
+          id, claim_a_id, claim_a_type, claim_b_id, claim_b_type, state, created_at
+        ) VALUES (?, ?, 'semantic', ?, 'semantic', 'open', ?)`,
+      )
+      .run('con-context-both', 'sem-context-a', 'sem-context-b', now);
+
+    await brain.resolveTruth('con-context-both');
+
+    const rows = brain.db
+      .prepare('SELECT id, state, conditions FROM semantics WHERE id IN (?, ?) ORDER BY id')
+      .all('sem-context-a', 'sem-context-b');
+    expect(rows.map(row => row.state)).toEqual(['context_dependent', 'context_dependent']);
+    expect(rows.map(row => JSON.parse(row.conditions))).toEqual([
+      { a: 'Context A', b: 'Context B' },
+      { a: 'Context A', b: 'Context B' },
+    ]);
+  });
+
+  it('activates the winning semantic claim and supersedes the losing episode', async () => {
+    brain.llmProvider.responses.contextResolution = {
+      resolution: 'a_wins',
+      explanation: 'Claim A has stronger evidence',
+    };
+    const now = new Date().toISOString();
+    brain.db
+      .prepare(
+        `INSERT INTO semantics (id, content, agent, state, created_at, evidence_count,
+          supporting_count, source_type_diversity, evidence_episode_ids)
+        VALUES (?, ?, ?, 'disputed', ?, 1, 1, 1, '[]')`,
+      )
+      .run('sem-winner', 'Winning semantic claim', brain.agent, now);
+    brain.db
+      .prepare(
+        `INSERT INTO episodes (
+          id, content, agent, source, source_reliability, created_at
+        ) VALUES (?, ?, ?, 'direct-observation', 0.95, ?)`,
+      )
+      .run('ep-loser', 'Losing episodic claim', brain.agent, now);
+    brain.db
+      .prepare(
+        `INSERT INTO contradictions (
+          id, claim_a_id, claim_a_type, claim_b_id, claim_b_type, state, created_at
+        ) VALUES (?, ?, 'semantic', ?, 'episodic', 'open', ?)`,
+      )
+      .run('con-winner', 'sem-winner', 'ep-loser', now);
+
+    await brain.resolveTruth('con-winner');
+
+    expect(
+      brain.db.prepare('SELECT state FROM semantics WHERE id = ?').get('sem-winner').state,
+    ).toBe('active');
+    expect(
+      brain.db.prepare('SELECT superseded_by FROM episodes WHERE id = ?').get('ep-loser')
+        .superseded_by,
+    ).toBe('sem-winner');
+  });
+
+  it.each([
+    ['a_wins', 'sem-resolution-a', 'sem-resolution-b'],
+    ['b_wins', 'sem-resolution-b', 'sem-resolution-a'],
+  ])(
+    '%s activates the winning semantic claim, supersedes the loser, and clears stale conditions',
+    async (resolution, winnerId, loserId) => {
+      brain.llmProvider.responses.contextResolution = {
+        resolution,
+        conditions: null,
+        explanation: `${winnerId} has stronger evidence`,
+      };
+      seedSemanticContradiction(`con-${resolution}`, 'sem-resolution-a', 'sem-resolution-b');
+
+      await brain.resolveTruth(`con-${resolution}`);
+
+      expect(
+        brain.db.prepare('SELECT state, conditions FROM semantics WHERE id = ?').get(winnerId),
+      ).toEqual({ state: 'active', conditions: null });
+      expect(
+        brain.db.prepare('SELECT state, conditions FROM semantics WHERE id = ?').get(loserId),
+      ).toEqual({ state: 'superseded', conditions: null });
+      expect(
+        brain.db
+          .prepare('SELECT state, resolution, resolved_at FROM contradictions WHERE id = ?')
+          .get(`con-${resolution}`),
+      ).toMatchObject({
+        state: 'resolved',
+        resolution: JSON.stringify({
+          resolution,
+          explanation: `${winnerId} has stronger evidence`,
+        }),
+      });
+    },
+  );
+
+  it.each([
+    {
+      resolution: 'context_dependent',
+      conditions: null,
+      explanation: 'Claims differ by context',
+    },
+    {
+      resolution: 'context_dependent',
+      explanation: 'Claims differ by context',
+    },
+    {
+      resolution: 'context_dependent',
+      conditions: {},
+      explanation: 'Claims differ by context',
+    },
+  ])(
+    'rejects context-dependent resolution without non-empty conditions %# without mutation',
+    async response => {
+      brain.llmProvider.responses.contextResolution = response;
+      seedSemanticContradiction(
+        'con-invalid-context',
+        'sem-invalid-context-a',
+        'sem-invalid-context-b',
+        'disputed',
+      );
+      const claimsBefore = brain.db
+        .prepare('SELECT id, state, conditions FROM semantics WHERE id IN (?, ?) ORDER BY id')
+        .all('sem-invalid-context-a', 'sem-invalid-context-b');
+      const contradictionBefore = brain.db
+        .prepare('SELECT state, resolution, resolved_at FROM contradictions WHERE id = ?')
+        .get('con-invalid-context');
+
+      await expect(brain.resolveTruth('con-invalid-context')).rejects.toThrow(
+        /Invalid truth resolution/,
+      );
+
+      expect(
+        brain.db
+          .prepare('SELECT id, state, conditions FROM semantics WHERE id IN (?, ?) ORDER BY id')
+          .all('sem-invalid-context-a', 'sem-invalid-context-b'),
+      ).toEqual(claimsBefore);
+      expect(
+        brain.db
+          .prepare('SELECT state, resolution, resolved_at FROM contradictions WHERE id = ?')
+          .get('con-invalid-context'),
+      ).toEqual(contradictionBefore);
+    },
+  );
+
+  it.each([
+    null,
+    [],
+    { resolution: 'unknown', explanation: 'Unsupported resolution' },
+    { resolution: 'a_wins', explanation: '   ' },
+    { resolution: 'b_wins', explanation: 'Valid explanation', conditions: [] },
+  ])('rejects malformed truth resolution %# without mutating stored truth', async response => {
+    brain.llmProvider.responses.contextResolution = response;
+    seedSemanticContradiction('con-invalid', 'sem-invalid-a', 'sem-invalid-b', 'disputed');
+    const claimsBefore = brain.db
+      .prepare('SELECT id, state, conditions FROM semantics WHERE id IN (?, ?) ORDER BY id')
+      .all('sem-invalid-a', 'sem-invalid-b');
+    const contradictionBefore = brain.db
+      .prepare('SELECT state, resolution, resolved_at FROM contradictions WHERE id = ?')
+      .get('con-invalid');
+
+    await expect(brain.resolveTruth('con-invalid')).rejects.toThrow(/Invalid truth resolution/);
+
+    expect(
+      brain.db
+        .prepare('SELECT id, state, conditions FROM semantics WHERE id IN (?, ?) ORDER BY id')
+        .all('sem-invalid-a', 'sem-invalid-b'),
+    ).toEqual(claimsBefore);
+    expect(
+      brain.db
+        .prepare('SELECT state, resolution, resolved_at FROM contradictions WHERE id = ?')
+        .get('con-invalid'),
+    ).toEqual(contradictionBefore);
+  });
+
+  it('rolls back all truth state changes when retiring the loser fails', async () => {
+    brain.llmProvider.responses.contextResolution = {
+      resolution: 'a_wins',
+      explanation: 'Claim A has stronger evidence',
+    };
+    const now = new Date().toISOString();
+    for (const [id, content] of [
+      ['sem-tx-a', 'Transactional claim A'],
+      ['sem-tx-b', 'Transactional claim B'],
+    ]) {
+      brain.db
+        .prepare(
+          `INSERT INTO semantics (id, content, agent, state, created_at, evidence_count,
+            supporting_count, source_type_diversity, evidence_episode_ids)
+          VALUES (?, ?, ?, 'disputed', ?, 1, 1, 1, '[]')`,
+        )
+        .run(id, content, brain.agent, now);
+    }
+    brain.db
+      .prepare(
+        `INSERT INTO contradictions (
+          id, claim_a_id, claim_a_type, claim_b_id, claim_b_type, state, created_at
+        ) VALUES (?, ?, 'semantic', ?, 'semantic', 'open', ?)`,
+      )
+      .run('con-tx', 'sem-tx-a', 'sem-tx-b', now);
+    brain.db.exec(`
+      CREATE TRIGGER fail_truth_loser_update
+      BEFORE UPDATE OF state ON semantics
+      WHEN OLD.id = 'sem-tx-b' AND NEW.state = 'superseded'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced loser retirement failure');
+      END;
+    `);
+
+    await expect(brain.resolveTruth('con-tx')).rejects.toThrow('forced loser retirement failure');
+
+    expect(
+      brain.db.prepare('SELECT state FROM contradictions WHERE id = ?').get('con-tx').state,
+    ).toBe('open');
+    expect(brain.db.prepare('SELECT state FROM semantics WHERE id = ?').get('sem-tx-a').state).toBe(
+      'disputed',
+    );
   });
 });
 
@@ -1876,6 +2140,32 @@ describe('greeting()', () => {
     const briefing = await audrey.greeting();
     expect(briefing.identity.some(m => m.content.includes('curiosity'))).toBe(true);
     expect(briefing.recent.some(m => m.content.includes('sqlite'))).toBe(true);
+    audrey.close();
+  });
+
+  it('matches the unresolved tag by exact JSON array membership', async () => {
+    const tmpDir = join(tmpdir(), `audrey-greeting-unresolved-${Date.now()}`);
+    const audrey = new Audrey({
+      dataDir: tmpDir,
+      agent: 'test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    const exactId = await audrey.encode({
+      content: 'Finish the Guard SQL lookup',
+      source: 'direct-observation',
+      tags: ['unresolved'],
+      salience: 0.9,
+    });
+    await audrey.encode({
+      content: 'Resolved release retrospective',
+      source: 'direct-observation',
+      tags: ['not-unresolved-anymore'],
+      salience: 0.9,
+    });
+
+    const briefing = await audrey.greeting();
+
+    expect(briefing.unresolved.map(memory => memory.id)).toEqual([exactId]);
     audrey.close();
   });
 
