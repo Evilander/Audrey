@@ -179,6 +179,64 @@ describe('redact', () => {
     expect(out.safe).toBe(42);
   });
 
+  it('redacts a space-separated BIP39-style mnemonic', () => {
+    const mnemonic =
+      'abandon ability able absent absorb abstract absurd abuse access accident account acid';
+    const result = redact(`seed phrase: ${mnemonic}`);
+    expect(result.redactions.find(r => r.class === 'passphrase')?.count).toBe(1);
+    expect(result.text).not.toContain(mnemonic);
+    expect(result.text).toContain('[REDACTED:passphrase]');
+  });
+
+  it('redacts a hyphen-joined mnemonic-length passphrase even though it looks like an identifier', () => {
+    const mnemonic =
+      'abandon-ability-able-absent-absorb-abstract-absurd-abuse-access-accident-account-acid';
+    // Pre-fix, looksLikeWordIdentifier exempted any 3+ all-lowercase
+    // dash-joined token from the entropy rule, so this never redacted.
+    const result = redact(`seed: ${mnemonic}`);
+    expect(result.redactions.find(r => r.class === 'passphrase')?.count).toBe(1);
+    expect(result.text).not.toContain(mnemonic);
+  });
+
+  it('does not redact an ordinary lowercase sentence fragment with stopwords', () => {
+    const sentence =
+      'the meeting will happen after lunch near the conference room to discuss next steps';
+    const result = redact(sentence);
+    expect(result.redactions.find(r => r.class === 'passphrase')).toBeUndefined();
+    expect(result.text).toBe(sentence);
+  });
+
+  it('does not redact short (fewer than eight word) lowercase dash-joined phrases', () => {
+    // This remains exempted by looksLikeWordIdentifier and is out of scope
+    // for the new eight-word 'passphrase' rule.
+    const result = redact('token correct-horse-battery-staple used here');
+    expect(result.redactions.find(r => r.class === 'passphrase')).toBeUndefined();
+  });
+
+  it('redactJson preserves a literal __proto__ key without polluting the prototype', () => {
+    // JSON.parse creates a genuine own property named "__proto__", exactly
+    // like a parsed HTTP request body or an MCP tool's z.record() input.
+    const payload = JSON.parse('{"__proto__": {"password": "hunter2ab"}}');
+    const result = redactJson(payload);
+    expect(Object.getPrototypeOf(result.value)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(result.value, '__proto__')).toBe(true);
+    const nested = Object.getOwnPropertyDescriptor(result.value, '__proto__').value;
+    expect(nested.password).toContain('[REDACTED:password_assignment]');
+    expect(result.state).toBe('redacted');
+  });
+
+  it('redactJson preserves a literal __proto__ key set to null without corrupting the object', () => {
+    // Pre-fix, `out['__proto__'] = null` set the object's actual prototype to
+    // null, silently dropping the "safe" sibling key from the bracket-based
+    // walk and leaving an object whose own hasOwnProperty was gone.
+    const payload = JSON.parse('{"__proto__": null, "safe": 1}');
+    const result = redactJson(payload);
+    expect(Object.getPrototypeOf(result.value)).toBe(Object.prototype);
+    expect(() => Object.prototype.hasOwnProperty.call(result.value, 'safe')).not.toThrow();
+    expect(result.value.safe).toBe(1);
+    expect(Object.prototype.hasOwnProperty.call(result.value, '__proto__')).toBe(true);
+  });
+
   it('summarizeRedactions reports class:count pairs', () => {
     expect(summarizeRedactions([])).toBe('clean');
     expect(

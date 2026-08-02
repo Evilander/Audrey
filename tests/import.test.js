@@ -37,6 +37,195 @@ describe('import', () => {
     expect(stats.episodic).toBe(2);
   });
 
+  it('round-trips explicit usefulness history for every memory table', async () => {
+    const usedAt = '2026-07-22T18:30:00.000Z';
+    source.db
+      .prepare(
+        "UPDATE episodes SET usage_count = 3, last_used_at = ? WHERE content = 'Export test one'",
+      )
+      .run(usedAt);
+    source.db
+      .prepare(
+        `INSERT INTO semantics
+           (id, content, state, created_at, usage_count, last_used_at)
+         VALUES ('semantic-usefulness', 'Remember explicit semantic feedback', 'active', ?, 4, ?)`,
+      )
+      .run(usedAt, usedAt);
+    source.db
+      .prepare(
+        `INSERT INTO procedures
+           (id, content, state, created_at, usage_count, last_used_at)
+         VALUES ('procedure-usefulness', 'Apply explicit procedure feedback', 'active', ?, 5, ?)`,
+      )
+      .run(usedAt, usedAt);
+
+    const snapshot = source.export();
+    expect(snapshot.episodes.find(row => row.content === 'Export test one')).toMatchObject({
+      usage_count: 3,
+      last_used_at: usedAt,
+    });
+    expect(snapshot.semantics[0]).toMatchObject({ usage_count: 4, last_used_at: usedAt });
+    expect(snapshot.procedures[0]).toMatchObject({ usage_count: 5, last_used_at: usedAt });
+
+    dest = new Audrey({
+      dataDir: IMPORT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await dest.import(snapshot);
+
+    expect(
+      dest.db
+        .prepare(
+          `SELECT usage_count, last_used_at FROM episodes
+           WHERE content = 'Export test one'`,
+        )
+        .get(),
+    ).toEqual({ usage_count: 3, last_used_at: usedAt });
+    expect(
+      dest.db
+        .prepare(
+          `SELECT usage_count, last_used_at FROM semantics
+           WHERE id = 'semantic-usefulness'`,
+        )
+        .get(),
+    ).toEqual({ usage_count: 4, last_used_at: usedAt });
+    expect(
+      dest.db
+        .prepare(
+          `SELECT usage_count, last_used_at FROM procedures
+           WHERE id = 'procedure-usefulness'`,
+        )
+        .get(),
+    ).toEqual({ usage_count: 5, last_used_at: usedAt });
+
+    const legacySnapshot = structuredClone(snapshot);
+    for (const row of [
+      ...legacySnapshot.episodes,
+      ...legacySnapshot.semantics,
+      ...legacySnapshot.procedures,
+    ]) {
+      delete row.usage_count;
+      delete row.last_used_at;
+    }
+    dest.close();
+    dest = undefined;
+    rmSync(IMPORT_DIR, { recursive: true });
+    dest = new Audrey({
+      dataDir: IMPORT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await dest.import(legacySnapshot);
+    for (const table of ['episodes', 'semantics', 'procedures']) {
+      expect(
+        dest.db.prepare(`SELECT usage_count, last_used_at FROM ${table} LIMIT 1`).get(),
+      ).toEqual({ usage_count: 0, last_used_at: null });
+    }
+  });
+
+  it('backfills imported historical Guard action keys from event metadata', async () => {
+    const actionKey = 'd'.repeat(64);
+    source.observeTool({
+      event: 'PostToolUseFailure',
+      tool: 'Bash',
+      outcome: 'failed',
+      metadata: { audrey_guard_action_key: actionKey },
+    });
+    const snapshot = source.export();
+    for (const event of snapshot.memoryEvents) delete event.action_key;
+
+    dest = new Audrey({
+      dataDir: IMPORT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await dest.import(snapshot);
+
+    const imported = dest.db
+      .prepare("SELECT action_key FROM memory_events WHERE tool_name = 'Bash'")
+      .get();
+    expect(imported.action_key).toBe(actionKey);
+  });
+
+  it('prefers explicit indexed event fields over mismatched metadata during import', async () => {
+    source.observeTool({
+      event: 'PostToolUseFailure',
+      tool: 'Bash',
+      outcome: 'failed',
+      metadata: {
+        audrey_guard_action_key: 'b'.repeat(64),
+        autopilot_host: 'claude-code',
+        autopilot_tool_use_id: 'metadata-tool-use',
+        receipt_id: 'metadata-receipt',
+      },
+    });
+    const snapshot = source.export();
+    const event = snapshot.memoryEvents.find(row => row.tool_name === 'Bash');
+    event.action_key = 'a'.repeat(64);
+    event.hook_host = 'codex';
+    event.hook_tool_use_id = 'explicit-tool-use';
+    event.receipt_id = 'explicit-receipt';
+
+    dest = new Audrey({
+      dataDir: IMPORT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+    await dest.import(snapshot);
+
+    expect(
+      dest.db
+        .prepare(
+          `SELECT action_key, hook_host, hook_tool_use_id, receipt_id
+           FROM memory_events WHERE tool_name = 'Bash'`,
+        )
+        .get(),
+    ).toEqual({
+      action_key: 'a'.repeat(64),
+      hook_host: 'codex',
+      hook_tool_use_id: 'explicit-tool-use',
+      receipt_id: 'explicit-receipt',
+    });
+  });
+
+  it('rejects malformed explicit action keys during import', async () => {
+    source.observeTool({
+      event: 'Observation',
+      tool: 'Bash',
+      outcome: 'unknown',
+    });
+    const snapshot = source.export();
+    snapshot.memoryEvents.find(row => row.tool_name === 'Bash').action_key = 'A'.repeat(64);
+    dest = new Audrey({
+      dataDir: IMPORT_DIR,
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+
+    await expect(dest.import(snapshot)).rejects.toThrow(/action_key/i);
+  });
+
+  it.each(['1', '999999'])(
+    'preserves the destination schema marker when snapshot config claims version %s',
+    async snapshotVersion => {
+      const snapshot = source.export();
+      snapshot.config.schema_version = snapshotVersion;
+      dest = new Audrey({
+        dataDir: IMPORT_DIR,
+        embedding: { provider: 'mock', dimensions: 8 },
+      });
+      const expectedSchemaVersion = dest.db
+        .prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'")
+        .get().value;
+
+      await dest.import(snapshot);
+
+      expect(
+        dest.db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get().value,
+      ).toBe(expectedSchemaVersion);
+      const columns = dest.db.pragma('table_info(memory_events)').map(column => column.name);
+      expect(columns).toEqual(
+        expect.arrayContaining(['action_key', 'hook_host', 'hook_tool_use_id', 'receipt_id']),
+      );
+    },
+  );
+
   it('preserves episode metadata', async () => {
     const snapshot = source.export();
     dest = new Audrey({

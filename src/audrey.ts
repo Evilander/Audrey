@@ -22,6 +22,7 @@ import type {
   RecallError,
   RecallResult,
   RecallResults,
+  RedactionSummary,
   ReflectMemory,
   ReflectResult,
   TruthResolution,
@@ -32,6 +33,7 @@ import { createDatabase, closeDatabase } from './db.js';
 import { createEmbeddingProvider } from './embedding.js';
 import { createLLMProvider } from './llm.js';
 import { encodeEpisode } from './encode.js';
+import { redact } from './redact.js';
 import { recall as recallFn, recallStream as recallStreamFn } from './recall.js';
 import { validateMemory } from './validate.js';
 import { runConsolidation } from './consolidate.js';
@@ -144,6 +146,57 @@ function validateEncodeParams(params: EncodeParams): void {
   if (params.tags !== undefined && !Array.isArray(params.tags)) {
     throw new Error('tags must be an array');
   }
+}
+
+const TRUTH_RESOLUTIONS = new Set<TruthResolution['resolution']>([
+  'a_wins',
+  'b_wins',
+  'context_dependent',
+]);
+
+function validateTruthResolution(raw: unknown): TruthResolution {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Invalid truth resolution: expected an object');
+  }
+  const record = raw as Record<string, unknown>;
+  if (
+    typeof record.resolution !== 'string' ||
+    !TRUTH_RESOLUTIONS.has(record.resolution as TruthResolution['resolution'])
+  ) {
+    throw new Error(
+      'Invalid truth resolution: resolution must be a_wins, b_wins, or context_dependent',
+    );
+  }
+  if (typeof record.explanation !== 'string' || !record.explanation.trim()) {
+    throw new Error('Invalid truth resolution: explanation must be a non-empty string');
+  }
+  if (
+    record.conditions !== undefined &&
+    record.conditions !== null &&
+    (typeof record.conditions !== 'object' || Array.isArray(record.conditions))
+  ) {
+    throw new Error('Invalid truth resolution: conditions must be an object or null when provided');
+  }
+  if (
+    record.resolution === 'context_dependent' &&
+    (!record.conditions ||
+      typeof record.conditions !== 'object' ||
+      Array.isArray(record.conditions) ||
+      Object.keys(record.conditions).length === 0)
+  ) {
+    throw new Error(
+      'Invalid truth resolution: context_dependent requires a non-empty conditions object',
+    );
+  }
+
+  const result: TruthResolution = {
+    resolution: record.resolution as TruthResolution['resolution'],
+    explanation: record.explanation.trim(),
+  };
+  if (record.conditions !== undefined && record.conditions !== null) {
+    result.conditions = record.conditions as Record<string, unknown>;
+  }
+  return result;
 }
 
 const REFLECTION_SOURCES = new Set<EncodeParams['source']>([
@@ -579,13 +632,28 @@ export class Audrey extends EventEmitter {
 
   async encodeWithDiagnostics(
     params: EncodeParams,
-  ): Promise<{ id: string; diagnostics: ProfileDiagnostics }> {
+  ): Promise<{ id: string; diagnostics: ProfileDiagnostics; redaction: RedactionSummary }> {
     const profile = new ProfileRecorder('memory_encode');
-    const id = await this._encodeInternal(params, profile);
-    return { id, diagnostics: profile.finish() };
+    let redaction: RedactionSummary = { redacted: false, classes: [], count: 0 };
+    const id = await this._encodeInternal(params, profile, summary => {
+      redaction = summary;
+    });
+    return { id, diagnostics: profile.finish(), redaction };
   }
 
-  async _encodeInternal(params: EncodeParams, profile?: ProfileRecorder): Promise<string> {
+  async encodeDetailed(params: EncodeParams): Promise<{ id: string; redaction: RedactionSummary }> {
+    let redaction: RedactionSummary = { redacted: false, classes: [], count: 0 };
+    const id = await this._encodeInternal(params, undefined, summary => {
+      redaction = summary;
+    });
+    return { id, redaction };
+  }
+
+  async _encodeInternal(
+    params: EncodeParams,
+    profile?: ProfileRecorder,
+    onRedaction?: (summary: RedactionSummary) => void,
+  ): Promise<string> {
     await this._waitForEmbeddingWarmup(profile, 'encode.wait_for_warmup');
     if (profile) await profile.measure('encode.ensure_migrated', () => this._ensureMigrated());
     else await this._ensureMigrated();
@@ -597,6 +665,11 @@ export class Audrey extends EventEmitter {
     };
     let encodedVector: number[] | undefined;
     let encodedBuffer: Buffer | undefined;
+    let redactionSummary: RedactionSummary | undefined;
+    const captureRedaction = (summary: RedactionSummary) => {
+      redactionSummary = summary;
+      onRedaction?.(summary);
+    };
     const id = profile
       ? await profile.measure('encode.episode', () =>
           encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
@@ -605,6 +678,7 @@ export class Audrey extends EventEmitter {
               encodedVector = vector;
               encodedBuffer = buffer;
             },
+            onRedaction: captureRedaction,
           }),
         )
       : await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
@@ -612,8 +686,10 @@ export class Audrey extends EventEmitter {
             encodedVector = vector;
             encodedBuffer = buffer;
           },
+          onRedaction: captureRedaction,
         });
     const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
+    if (redactionSummary?.redacted) this.emit('redaction', { id, ...redactionSummary });
     this.emit('encode', { id, ...params });
     const postEncodeTask = profile
       ? profile.measureSync('encode.enqueue_background', () =>
@@ -691,8 +767,9 @@ export class Audrey extends EventEmitter {
       agent: requireAgent(params.agent, this.agent),
       arousalWeight: this.affectConfig.arousalWeight,
     }));
+    // Embed the redacted text so the vector never encodes a secret the stored row scrubbed.
     const vectors = await this.embeddingProvider.embedBatch(
-      normalized.map(params => params.content),
+      normalized.map(params => redact(params.content).text),
     );
     if (vectors.length !== normalized.length) {
       throw new Error(
@@ -706,14 +783,19 @@ export class Audrey extends EventEmitter {
       const encodeParams = normalized[i]!;
       let encodedVector: number[] | undefined;
       let encodedBuffer: Buffer | undefined;
+      let redactionSummary: RedactionSummary | undefined;
       const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
         vector: vectors[i]!,
         onVector: (vector, buffer) => {
           encodedVector = vector;
           encodedBuffer = buffer;
         },
+        onRedaction: summary => {
+          redactionSummary = summary;
+        },
       });
       ids.push(id);
+      if (redactionSummary?.redacted) this.emit('redaction', { id, ...redactionSummary });
       this.emit('encode', { id, ...paramsList[i] });
       const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
       tasks.push(this._enqueuePostEncode(id, encodeParams, encodedEmbedding));
@@ -843,36 +925,63 @@ export class Audrey extends EventEmitter {
     }
 
     const messages = buildContextResolutionPrompt(claimA, claimB);
-    const result = (await this.llmProvider.json(messages)) as TruthResolution;
+    const result = validateTruthResolution(await this.llmProvider.json(messages));
 
     const now = new Date().toISOString();
     const newState = result.resolution === 'context_dependent' ? 'context_dependent' : 'resolved';
-    this.db
-      .prepare(
-        `
-      UPDATE contradictions SET state = ?, resolution = ?, resolved_at = ?
-      WHERE id = ?
-    `,
-      )
-      .run(newState, JSON.stringify(result), now, contradictionId);
+    const conditions = result.conditions ? JSON.stringify(result.conditions) : null;
+    const updateTruth = this.db.transaction(() => {
+      const activate = (id: string, type: string): void => {
+        if (type === 'semantic') {
+          this.db
+            .prepare("UPDATE semantics SET state = 'active', conditions = NULL WHERE id = ?")
+            .run(id);
+        } else {
+          this.db.prepare('UPDATE episodes SET superseded_by = NULL WHERE id = ?').run(id);
+        }
+      };
+      const supersede = (id: string, type: string, winnerId: string): void => {
+        if (type === 'semantic') {
+          this.db
+            .prepare("UPDATE semantics SET state = 'superseded', conditions = NULL WHERE id = ?")
+            .run(id);
+        } else {
+          this.db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ?').run(winnerId, id);
+        }
+      };
+      const markContextDependent = (id: string, type: string): void => {
+        if (type === 'semantic') {
+          this.db
+            .prepare(
+              "UPDATE semantics SET state = 'context_dependent', conditions = ? WHERE id = ?",
+            )
+            .run(conditions, id);
+        } else {
+          this.db.prepare('UPDATE episodes SET superseded_by = NULL WHERE id = ?').run(id);
+        }
+      };
 
-    if (result.resolution === 'a_wins' && contradiction.claim_a_type === 'semantic') {
-      this.db
-        .prepare("UPDATE semantics SET state = 'active' WHERE id = ?")
-        .run(contradiction.claim_a_id);
-    }
-    if (result.resolution === 'b_wins' && contradiction.claim_b_type === 'semantic') {
-      this.db
-        .prepare("UPDATE semantics SET state = 'active' WHERE id = ?")
-        .run(contradiction.claim_b_id);
-    }
-    if (result.resolution === 'context_dependent') {
-      if (contradiction.claim_a_type === 'semantic' && result.conditions) {
-        this.db
-          .prepare("UPDATE semantics SET state = 'context_dependent', conditions = ? WHERE id = ?")
-          .run(JSON.stringify(result.conditions), contradiction.claim_a_id);
+      if (result.resolution === 'a_wins') {
+        activate(contradiction.claim_a_id, contradiction.claim_a_type);
+        supersede(contradiction.claim_b_id, contradiction.claim_b_type, contradiction.claim_a_id);
+      } else if (result.resolution === 'b_wins') {
+        activate(contradiction.claim_b_id, contradiction.claim_b_type);
+        supersede(contradiction.claim_a_id, contradiction.claim_a_type, contradiction.claim_b_id);
+      } else {
+        markContextDependent(contradiction.claim_a_id, contradiction.claim_a_type);
+        markContextDependent(contradiction.claim_b_id, contradiction.claim_b_type);
       }
-    }
+
+      this.db
+        .prepare(
+          `
+          UPDATE contradictions SET state = ?, resolution = ?, resolved_at = ?
+          WHERE id = ?
+        `,
+        )
+        .run(newState, JSON.stringify(result), now, contradictionId);
+    });
+    updateTruth();
 
     return result;
   }
@@ -1014,7 +1123,17 @@ export class Audrey extends EventEmitter {
 
     const unresolved = this.db
       .prepare(
-        `SELECT id, content, tags, salience, created_at FROM episodes WHERE tags LIKE '%unresolved%' AND salience > 0.3 ${agentClause} ORDER BY created_at DESC LIMIT 10`,
+        `SELECT id, content, tags, salience, created_at
+         FROM episodes
+         WHERE EXISTS (
+           SELECT 1
+           FROM json_each(CASE WHEN json_valid(episodes.tags) THEN episodes.tags ELSE '[]' END)
+           WHERE json_each.type = 'text' AND json_each.value = 'unresolved'
+         )
+           AND salience > 0.3
+           ${agentClause}
+         ORDER BY created_at DESC
+         LIMIT 10`,
       )
       .all(...agentParam) as GreetingUnresolvedRow[];
 

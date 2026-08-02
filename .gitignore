@@ -49,7 +49,7 @@ build-reqs-*.txt
 CLAUDE.md
 AGENTS.md
 codex.md
-HANDOFF.md
+*HANDOFF*.md
 .claude/
 .codex/
 .agents/
@@ -57,3 +57,4 @@ notes/
 todos/
 docs/superpowers/
 agents/*marketing*
+.local/

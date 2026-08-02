@@ -1,16 +1,34 @@
 import Database from 'better-sqlite3';
-import type { Affect, CausalParams, EmbeddingProvider, SourceType } from './types.js';
+import type {
+  Affect,
+  CausalParams,
+  EmbeddingProvider,
+  RedactionSummary,
+  SourceType,
+} from './types.js';
 import { generateId } from './ulid.js';
 import { sourceReliability } from './confidence.js';
 import { arousalSalienceBoost } from './affect.js';
 import { insertFTSEpisode } from './fts.js';
 import type { ProfileRecorder } from './profile.js';
 import { requireAgent } from './utils.js';
+import { redact, type RedactionHit } from './redact.js';
 
 export interface EncodeEpisodeOptions {
   profile?: ProfileRecorder;
   vector?: number[];
   onVector?: (vector: number[], buffer: Buffer) => void;
+  onRedaction?: (summary: RedactionSummary) => void;
+}
+
+function mergeRedactionHits(...sets: RedactionHit[][]): RedactionHit[] {
+  const counts = new Map<RedactionHit['class'], number>();
+  for (const set of sets) {
+    for (const hit of set) {
+      counts.set(hit.class, (counts.get(hit.class) ?? 0) + hit.count);
+    }
+  }
+  return [...counts.entries()].map(([cls, count]) => ({ class: cls, count }));
 }
 
 export async function encodeEpisode(
@@ -49,13 +67,44 @@ export async function encodeEpisode(
   if (tags && !Array.isArray(tags)) throw new Error('tags must be an array');
   const ownerAgent = requireAgent(agent);
 
+  // Storage boundary: this is the primary ingestion path (memory_encode,
+  // POST /v1/encode, Audrey.encode), so content/context/affect are always
+  // filtered through redact() before they reach the episodes row, the FTS
+  // index, or the embedding model. redact() is a no-op on ordinary prose.
+  const contentResult = redact(content);
+  const redactedContent = contentResult.text;
+
+  const redactedContext: Record<string, string> = {};
+  const contextHits: RedactionHit[] = [];
+  for (const [key, value] of Object.entries(context)) {
+    const valueResult = redact(value);
+    redactedContext[key] = valueResult.text;
+    contextHits.push(...valueResult.redactions);
+  }
+
+  let redactedAffect: Partial<Affect> = affect;
+  let affectHits: RedactionHit[] = [];
+  if (affect.label) {
+    const labelResult = redact(affect.label);
+    affectHits = labelResult.redactions;
+    redactedAffect = { ...affect, label: labelResult.text };
+  }
+
+  const mergedHits = mergeRedactionHits(contentResult.redactions, contextHits, affectHits);
+  const redactionSummary: RedactionSummary = {
+    redacted: mergedHits.length > 0,
+    classes: mergedHits.map(hit => hit.class),
+    count: mergedHits.reduce((sum, hit) => sum + hit.count, 0),
+  };
+  options.onRedaction?.(redactionSummary);
+
   const reliability = sourceReliability(source);
   const profile = options.profile;
   const vector =
     options.vector ??
     (profile
-      ? await profile.measure('encode.embedding', () => embeddingProvider.embed(content))
-      : await embeddingProvider.embed(content));
+      ? await profile.measure('encode.embedding', () => embeddingProvider.embed(redactedContent))
+      : await embeddingProvider.embed(redactedContent));
   const embeddingBuffer = profile
     ? profile.measureSync('encode.vector_to_buffer', () => embeddingProvider.vectorToBuffer(vector))
     : embeddingProvider.vectorToBuffer(vector);
@@ -79,14 +128,14 @@ export async function encodeEpisode(
     `,
     ).run(
       id,
-      content,
+      redactedContent,
       embeddingBuffer,
       source,
       ownerAgent,
       reliability,
       effectiveSalience,
-      JSON.stringify(context),
-      JSON.stringify(affect),
+      JSON.stringify(redactedContext),
+      JSON.stringify(redactedAffect),
       tags ? JSON.stringify(tags) : null,
       causal?.trigger || null,
       causal?.consequence || null,
@@ -99,7 +148,7 @@ export async function encodeEpisode(
     db.prepare(
       'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
     ).run(id, ownerAgent, embeddingBuffer, source, BigInt(0));
-    insertFTSEpisode(db, id, content, tags ?? null);
+    insertFTSEpisode(db, id, redactedContent, tags ?? null);
     if (supersedes) {
       db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ?').run(id, supersedes);
     }

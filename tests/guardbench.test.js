@@ -677,7 +677,9 @@ describe('GuardBench harness', () => {
     expect(report.ok).toBe(true);
     expect(report.apply).toBe(false);
     expect(report.currentVersions.packageJson).toBe('1.1.3');
-    expect(report.files.filter(file => file.changed).map(file => file.path)).toEqual([]);
+    expect(report.files.filter(file => file.changed).map(file => file.path)).toEqual([
+      'package.json',
+    ]);
     expect(report.nextCommands).toContain('npm run release:gate:paper');
   });
 

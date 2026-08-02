@@ -4,8 +4,10 @@ import {
   insertEvent,
   listEvents,
   countEvents,
+  exactActionHistory,
   recentFailures,
   deleteEventsBefore,
+  DEFAULT_EVENT_RETENTION_MS,
 } from '../dist/src/events.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
@@ -48,6 +50,90 @@ describe('memory_events CRUD', () => {
     });
     const [event] = listEvents(db, { toolName: 'Edit' });
     expect(event.metadata).toBe('{"file":"src/app.ts","lines_changed":12}');
+  });
+
+  it('stores the guard action key once and queries exact history without a row limit', () => {
+    const actionKey = 'a'.repeat(64);
+    insertEvent(db, {
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      actorAgent: 'codex',
+      toolName: 'Bash',
+      outcome: 'failed',
+      metadata: { audrey_guard_action_key: actionKey },
+      createdAt: '2026-04-20T10:00:00Z',
+    });
+    for (let i = 0; i < 1001; i += 1) {
+      insertEvent(db, {
+        eventType: 'Observation',
+        source: 'test',
+        actorAgent: 'codex',
+        toolName: 'noise',
+        createdAt: `2026-04-21T10:${String(i % 60).padStart(2, '0')}:00Z`,
+      });
+    }
+
+    const stored = db
+      .prepare('SELECT action_key FROM memory_events WHERE outcome = ?')
+      .get('failed');
+    expect(stored.action_key).toBe(actionKey);
+    expect(
+      exactActionHistory(db, {
+        actionKey,
+        actorAgent: 'codex',
+        since: '2026-04-19T00:00:00Z',
+      }).map(event => event.outcome),
+    ).toEqual(['failed']);
+  });
+
+  it('prefers validated explicit correlation columns over mismatched metadata', () => {
+    const actionKey = 'a'.repeat(64);
+    const event = insertEvent(db, {
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      actorAgent: 'codex',
+      actionKey,
+      hookHost: 'codex',
+      hookToolUseId: 'tool-explicit',
+      receiptId: 'receipt-explicit',
+      metadata: {
+        audrey_guard_action_key: 'b'.repeat(64),
+        autopilot_host: 'claude-code',
+        autopilot_tool_use_id: 'tool-metadata',
+        receipt_id: 'receipt-metadata',
+      },
+    });
+
+    expect(event).toMatchObject({
+      action_key: actionKey,
+      hook_host: 'codex',
+      hook_tool_use_id: 'tool-explicit',
+      receipt_id: 'receipt-explicit',
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT action_key, hook_host, hook_tool_use_id, receipt_id
+           FROM memory_events WHERE id = ?`,
+        )
+        .get(event.id),
+    ).toEqual({
+      action_key: actionKey,
+      hook_host: 'codex',
+      hook_tool_use_id: 'tool-explicit',
+      receipt_id: 'receipt-explicit',
+    });
+  });
+
+  it('rejects malformed action keys instead of indexing arbitrary metadata', () => {
+    const event = insertEvent(db, {
+      eventType: 'Observation',
+      source: 'test',
+      actionKey: 'A'.repeat(64),
+      metadata: { audrey_guard_action_key: 'not-a-valid-action-key' },
+    });
+
+    expect(event.action_key).toBeNull();
   });
 
   it('filters by sessionId, toolName, outcome, since', () => {
@@ -207,6 +293,103 @@ describe('memory_events CRUD', () => {
     expect(inA.map(f => f.tool_name).sort()).toEqual(['Bash', 'Edit']);
   });
 
+  it('does not report a tool that has only ever succeeded', () => {
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Read',
+      outcome: 'succeeded',
+      createdAt: '2026-04-20T10:00:00Z',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Read',
+      outcome: 'succeeded',
+      createdAt: '2026-04-20T11:00:00Z',
+    });
+
+    expect(recentFailures(db, { since: '2026-04-19T00:00:00Z' })).toHaveLength(0);
+  });
+
+  it('reports zero failures once a success postdates every prior failure for that tool', () => {
+    insertEvent(db, {
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'failed',
+      errorSummary: 'e1',
+      createdAt: '2026-04-20T09:00:00Z',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'failed',
+      errorSummary: 'e2',
+      createdAt: '2026-04-20T10:00:00Z',
+    });
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'succeeded',
+      createdAt: '2026-04-20T11:00:00Z',
+    });
+
+    expect(recentFailures(db, { since: '2026-04-19T00:00:00Z' })).toHaveLength(0);
+  });
+
+  it('extinguishes a failure when a same-instant success has a lexicographically greater id', () => {
+    insertEvent(db, {
+      id: 'a-failure',
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'failed',
+      errorSummary: 'boundary failure',
+      createdAt: '2026-04-20T10:00:00.000Z',
+    });
+    insertEvent(db, {
+      id: 'z-success',
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'succeeded',
+      createdAt: '2026-04-20T10:00:00.000Z',
+    });
+
+    // 'z-success' sorts after 'a-failure' at the identical timestamp, so the
+    // tie-break treats the success as later and the streak is resolved.
+    expect(recentFailures(db, { since: '2026-04-19T00:00:00Z' })).toHaveLength(0);
+  });
+
+  it('does not extinguish a failure when a same-instant success has a lexicographically smaller id', () => {
+    insertEvent(db, {
+      id: 'a-success',
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'succeeded',
+      createdAt: '2026-04-20T10:00:00.000Z',
+    });
+    insertEvent(db, {
+      id: 'z-failure',
+      eventType: 'PostToolUseFailure',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      outcome: 'failed',
+      errorSummary: 'still active',
+      createdAt: '2026-04-20T10:00:00.000Z',
+    });
+
+    // 'z-failure' sorts after 'a-success' at the identical timestamp, so the
+    // failure's own id is "later" than the success and the streak survives.
+    const failures = recentFailures(db, { since: '2026-04-19T00:00:00Z' });
+    expect(failures).toHaveLength(1);
+    expect(failures[0].last_error_summary).toBe('still active');
+  });
+
   it('recentFailures does not let a success in another project extinguish a local streak', () => {
     const projectA = `${TEST_DIR}/project-a`;
     const projectB = `${TEST_DIR}/project-b`;
@@ -254,6 +437,33 @@ describe('memory_events CRUD', () => {
     const deleted = deleteEventsBefore(db, '2026-02-01T00:00:00Z');
     expect(deleted).toBe(1);
     expect(countEvents(db)).toBe(1);
+  });
+
+  it('deleteEventsBefore batches a large purge into multiple bounded deletes', () => {
+    for (let i = 0; i < 5; i++) {
+      insertEvent(db, {
+        eventType: 'PostToolUse',
+        source: 'tool-trace',
+        toolName: 'Bash',
+        createdAt: `2026-01-0${i + 1}T00:00:00Z`,
+      });
+    }
+    insertEvent(db, {
+      eventType: 'PostToolUse',
+      source: 'tool-trace',
+      toolName: 'Bash',
+      createdAt: '2026-04-22T00:00:00Z',
+    });
+
+    // A batchSize smaller than the backlog forces the loop to run more than
+    // once; the returned total must still cover every deleted row.
+    const deleted = deleteEventsBefore(db, '2026-02-01T00:00:00Z', { batchSize: 2 });
+    expect(deleted).toBe(5);
+    expect(countEvents(db)).toBe(1);
+  });
+
+  it('exports a default retention window sized in milliseconds', () => {
+    expect(DEFAULT_EVENT_RETENTION_MS).toBe(30 * 24 * 60 * 60 * 1000);
   });
 
   it('respects limit clamp', () => {

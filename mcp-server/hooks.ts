@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { MCP_ENTRYPOINT } from './config.js';
+import { MCP_ENTRYPOINT, SERVER_NAME } from './config.js';
 
 export type HookHost = 'claude-code' | 'codex';
 export type HookScope = 'local' | 'project' | 'user';
@@ -45,6 +45,17 @@ export interface HostHookApplyResult {
   settings: JsonRecord;
 }
 
+export interface HostHookRuntime {
+  nodePath: string;
+  entrypoint: string;
+}
+
+export interface HostHookInspection {
+  present: number;
+  runtimeUnparseable: number;
+  runtimes: HostHookRuntime[];
+}
+
 export interface DefaultHostHookPathOptions {
   host: HookHost;
   scope: HookScope;
@@ -72,7 +83,19 @@ interface EventDefinition {
   claudeOnly?: boolean;
 }
 
-const SIDE_EFFECTFUL_TOOL_MATCHER = '^(Bash|Edit|Write|NotebookEdit|apply_patch)$';
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Guard treats every mcp__* tool call as side-effectful except Audrey's own
+ * server: guarding memory_recall would preflight-check the act of reading
+ * memory and let its own outcomes pollute the recentFailures signal used to
+ * judge the user's real actions. Third-party MCP tools stay guarded.
+ */
+export const AUDREY_MCP_TOOL_PREFIX = `mcp__${SERVER_NAME}__`;
+
+const SIDE_EFFECTFUL_TOOL_MATCHER = `^(Bash|Edit|MultiEdit|Write|NotebookEdit|apply_patch|mcp__(?!${escapeRegExp(SERVER_NAME)}__).*)$`;
 
 const EVENT_DEFINITIONS: readonly EventDefinition[] = [
   {
@@ -122,6 +145,31 @@ const EVENT_DEFINITIONS: readonly EventDefinition[] = [
     statusMessage: 'Audrey: checkpointing memory',
   },
 ];
+
+const HOOK_TEARDOWN_MARGIN_MS = 5000;
+
+/** The host-declared timeout for a hook event, in milliseconds, or undefined for an unknown event. */
+export function declaredHookTimeoutMs(event: string): number | undefined {
+  const definition = EVENT_DEFINITIONS.find(def => def.event === event);
+  return definition ? definition.timeout * 1000 : undefined;
+}
+
+/**
+ * The budget Audrey's own per-call timeouts (embedding, LLM) should abort
+ * within for a given hook event — the declared host timeout minus a margin
+ * left for the process to write its diagnostic and exit cleanly before the
+ * host's kill fires. Without this margin, Audrey's internal abort can lose
+ * the race to the host's SIGKILL: the finally-block never runs, no
+ * diagnostic is produced, and a PreToolUse receipt never gets an outcome.
+ */
+export function internalCallTimeoutMs(
+  event: string,
+  marginMs = HOOK_TEARDOWN_MARGIN_MS,
+): number | undefined {
+  const declared = declaredHookTimeoutMs(event);
+  if (declared === undefined) return undefined;
+  return Math.max(1000, declared - marginMs);
+}
 
 function assertHost(host: string): asserts host is HookHost {
   if (host !== 'claude-code' && host !== 'codex') {
@@ -263,6 +311,71 @@ function isAudreyHandler(value: unknown): boolean {
   if (/\bobserve-tool\s+--event(?:\s+|=)PostToolUse(?:Failure)?\b/i.test(normalized)) return true;
   if (/(?:audrey[^\r\n]*autopilot|autopilot[^\r\n]*audrey)/i.test(normalized)) return true;
   return false;
+}
+
+function quotedCommandArguments(command: string): string[] {
+  return Array.from(command.matchAll(/'((?:''|[^'])*)'/g), match =>
+    (match[1] ?? '').replace(/''/g, "'"),
+  );
+}
+
+function handlerRuntime(value: unknown): HostHookRuntime | null {
+  const handler = asRecord(value);
+  if (!handler) return null;
+
+  const args = Array.isArray(handler.args)
+    ? handler.args.filter((item): item is string => typeof item === 'string')
+    : [];
+  if (typeof handler.command === 'string' && args.length > 0) {
+    return { nodePath: handler.command, entrypoint: args[0]! };
+  }
+
+  const command =
+    typeof handler.commandWindows === 'string'
+      ? handler.commandWindows
+      : typeof handler.command === 'string'
+        ? handler.command
+        : '';
+  const argv = quotedCommandArguments(command);
+  if (argv.length < 2) return null;
+  return { nodePath: argv[0]!, entrypoint: argv[1]! };
+}
+
+export function inspectHostHookRuntimes(host: HookHost, existing: unknown): HostHookRuntime[] {
+  return inspectHostHookDiagnostics(host, existing).runtimes;
+}
+
+export function inspectHostHookDiagnostics(host: HookHost, existing: unknown): HostHookInspection {
+  assertHost(host);
+  const settings = settingsRecord(existing, 'Existing hook settings');
+  const hooks = asRecord(settings.hooks);
+  if (!hooks) return { present: 0, runtimeUnparseable: 0, runtimes: [] };
+
+  const runtimes: HostHookRuntime[] = [];
+  const seen = new Set<string>();
+  let present = 0;
+  let runtimeUnparseable = 0;
+  for (const groupsValue of Object.values(hooks)) {
+    if (!Array.isArray(groupsValue)) continue;
+    for (const groupValue of groupsValue) {
+      const group = asRecord(groupValue);
+      if (!group || !Array.isArray(group.hooks)) continue;
+      for (const handler of group.hooks) {
+        if (!isAudreyHandler(handler)) continue;
+        present += 1;
+        const runtime = handlerRuntime(handler);
+        if (!runtime) {
+          runtimeUnparseable += 1;
+          continue;
+        }
+        const key = `${runtime.nodePath}\0${runtime.entrypoint}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        runtimes.push(runtime);
+      }
+    }
+  }
+  return { present, runtimeUnparseable, runtimes };
 }
 
 function withoutAudreyHandlers(settings: JsonRecord): JsonRecord {

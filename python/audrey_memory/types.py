@@ -153,5 +153,5 @@ class MemorySnapshot(AudreyModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
-class RestoreResponse(StatusResponse):
-    ok: bool
+class RestoreResponse(AudreyModel):
+    imported: bool
