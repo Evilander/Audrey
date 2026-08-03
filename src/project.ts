@@ -59,7 +59,10 @@ function resolveWorktreeCommonDir(gitFilePath: string, worktreeDir: string): str
     .find((match): match is string => Boolean(match));
   if (!pointer) return undefined;
 
-  const gitDir = isAbsolute(pointer) ? pointer : resolve(worktreeDir, pointer);
+  // Windows git writes backslash separators; normalize before resolving, or
+  // POSIX path.resolve treats the whole pointer as a single literal segment.
+  const pointerPath = pointer.replace(/\\/g, '/');
+  const gitDir = isAbsolute(pointerPath) ? pointerPath : resolve(worktreeDir, pointerPath);
   if (!existsSync(gitDir)) return undefined;
 
   const normalized = gitDir.replace(/\\/g, '/');
