@@ -6,6 +6,8 @@ import {
   recencyDecay,
   retrievalReinforcement,
   salienceModifier,
+  sourceDiversityBonus,
+  DEFAULT_SOURCE_DIVERSITY_WEIGHT,
 } from '../dist/src/confidence.js';
 
 describe('sourceReliability', () => {
@@ -204,5 +206,92 @@ describe('computeConfidence', () => {
       weights: { source: 1.0, evidence: 0, recency: 0, retrieval: 0 },
     });
     expect(result).toBeCloseTo(0.95, 2);
+  });
+});
+
+describe('sourceDiversityBonus', () => {
+  it('is exactly 0 for diversity 0 (no sources counted)', () => {
+    expect(sourceDiversityBonus(0, 0.5)).toBe(0);
+  });
+
+  it('is exactly 0 for diversity 1 (a single source type)', () => {
+    expect(sourceDiversityBonus(1, 0.5)).toBe(0);
+  });
+
+  it('is exactly 0 for undefined diversity', () => {
+    expect(sourceDiversityBonus(undefined, 0.5)).toBe(0);
+  });
+
+  it('grows with diversity but never exceeds the weight', () => {
+    const two = sourceDiversityBonus(2, 0.3);
+    const three = sourceDiversityBonus(3, 0.3);
+    expect(two).toBeGreaterThan(0);
+    expect(three).toBeGreaterThan(two);
+    expect(three).toBeLessThanOrEqual(0.3);
+  });
+});
+
+describe('computeConfidence with sourceTypeDiversity', () => {
+  // contradictingCount > 0 keeps evidenceAgreement below 1.0 so there is
+  // room left in the [0, 1] evidence term for the diversity bonus to move —
+  // at full agreement the bonus would just clamp back down to the same 1.0.
+  const base = {
+    sourceType: 'tool-result',
+    supportingCount: 2,
+    contradictingCount: 1,
+    ageDays: 0,
+    halfLifeDays: 30,
+    retrievalCount: 0,
+    daysSinceRetrieval: 0,
+  };
+
+  it('diversity of 0 or 1 is a strict no-op — identical to omitting it entirely', () => {
+    const omitted = computeConfidence(base);
+    const zero = computeConfidence({ ...base, sourceTypeDiversity: 0 });
+    const one = computeConfidence({ ...base, sourceTypeDiversity: 1 });
+    expect(zero).toBe(omitted);
+    expect(one).toBe(omitted);
+  });
+
+  it('a memory corroborated by 3 independent source types outscores one backed by 3 near-identical sources', () => {
+    // Same supportingCount either way — the only difference is how many
+    // distinct source types produced that evidence.
+    const singleSourceType = computeConfidence({ ...base, sourceTypeDiversity: 1 });
+    const threeSourceTypes = computeConfidence({ ...base, sourceTypeDiversity: 3 });
+    expect(threeSourceTypes).toBeGreaterThan(singleSourceType);
+  });
+
+  it('respects a custom sourceDiversityWeight override', () => {
+    const small = computeConfidence({
+      ...base,
+      sourceTypeDiversity: 3,
+      sourceDiversityWeight: 0.01,
+    });
+    const large = computeConfidence({
+      ...base,
+      sourceTypeDiversity: 3,
+      sourceDiversityWeight: 0.5,
+    });
+    expect(large).toBeGreaterThan(small);
+  });
+
+  it('never pushes confidence above 1', () => {
+    const result = computeConfidence({
+      sourceType: 'direct-observation',
+      supportingCount: 100,
+      contradictingCount: 0,
+      ageDays: 0,
+      halfLifeDays: 7,
+      retrievalCount: 100,
+      daysSinceRetrieval: 0,
+      sourceTypeDiversity: 10,
+      sourceDiversityWeight: 1,
+    });
+    expect(result).toBeLessThanOrEqual(1);
+  });
+
+  it('uses a conservative default weight when none is specified', () => {
+    expect(DEFAULT_SOURCE_DIVERSITY_WEIGHT).toBeGreaterThan(0);
+    expect(DEFAULT_SOURCE_DIVERSITY_WEIGHT).toBeLessThanOrEqual(0.2);
   });
 });

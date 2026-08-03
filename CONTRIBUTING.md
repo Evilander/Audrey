@@ -6,11 +6,32 @@ Audrey is a production-focused memory layer, so contributions should optimize fo
 
 ```bash
 npm ci
+npm run build
 npm test
 npm run pack:check
 ```
 
 Node `>=20` is required.
+
+`npm test` runs the Vitest suite through `scripts/run-vitest.mjs`. A `globalSetup`
+hook (`tests/setup/ensure-release-artifacts.js`) generates whatever benchmark
+and paper JSON artifacts the release/publication integration tests read, so a
+plain `npm test` is self-contained — it does not rebuild or run the full
+benchmark and paper pipeline.
+
+`npm run test:artifacts` is the separate, heavier script that regenerates every
+benchmark and paper artifact for real (GuardBench, adapter self-tests, arXiv
+source, submission bundles). Its benchmark steps are folded into all three
+release gates (`release:gate`, `release:gate:sandbox`, `release:gate:paper`);
+its paper steps (`paper:sync` onward) only run as part of `release:gate:paper`.
+None of this is something you need to run for a normal contribution.
+
+`npm run paper:sync` (only reachable through `release:gate:paper` or directly)
+overwrites `README.md`, `docs/paper/07-evaluation.md`,
+`docs/paper/audrey-paper-v1.md`, and `docs/paper/evidence-ledger.md` with
+locally measured numbers. It is a maintainer step for cutting a release with
+updated benchmark claims, not part of routine contribution — running it will
+leave those four files modified with your machine's numbers.
 
 ## What Good Contributions Look Like
 

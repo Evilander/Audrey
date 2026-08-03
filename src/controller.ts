@@ -1,7 +1,7 @@
 import type { Audrey } from './audrey.js';
 import { guardActionKey } from './action-key.js';
 import type { MemoryCapsule } from './capsule.js';
-import type { EventOutcome, MemoryEvent } from './events.js';
+import { exactActionHistory, type EventOutcome, type MemoryEvent } from './events.js';
 import type { MemoryValidateOutcome, MemoryValidateResult } from './feedback.js';
 import { buildPreflight, type MemoryPreflight, type PreflightOptions } from './preflight.js';
 import { buildReflexReportFromPreflight, type MemoryReflex } from './reflexes.js';
@@ -10,6 +10,7 @@ import { requireAgent } from './utils.js';
 
 export interface GuardBeforeOptions extends PreflightOptions {
   recordEvent?: boolean;
+  acknowledgePriorFailure?: boolean;
 }
 
 export interface GuardDecision {
@@ -48,6 +49,18 @@ export interface GuardAfterInput {
   retainDetails?: boolean;
   actorAgent?: string;
   evidenceFeedback?: Record<string, MemoryValidateOutcome>;
+  /**
+   * Required to record a `succeeded` outcome against a receipt whose
+   * beforeAction decision was `block`, when that block was not caused by an
+   * exact-repeat failure (a persistent policy or must-follow memory keeps
+   * blocking every fresh beforeAction check otherwise, with no way to ever
+   * record the outcome). Never inferred — a caller must state why the
+   * advisory block is being overridden, and the reason is written into the
+   * outcome event as durable, auditable evidence. Does not apply to an
+   * exact-repeat-failure block: that can only be cleared by re-running
+   * beforeAction with acknowledgePriorFailure.
+   */
+  overrideReason?: string;
 }
 
 export interface GuardValidatedEvidence {
@@ -100,6 +113,7 @@ export interface ControllerGuardResult {
   decision: ControllerGuardDecision;
   riskScore: number;
   summary: string;
+  warnings: MemoryPreflight['warnings'];
   evidenceIds: string[];
   recommendedActions: string[];
   capsule?: MemoryCapsule;
@@ -182,9 +196,7 @@ function getGuardOutcomeEvent(
       `
     SELECT * FROM memory_events
     WHERE event_type IN ('PostToolUse', 'PostToolUseFailure')
-      AND metadata IS NOT NULL
-      AND json_valid(metadata)
-      AND json_extract(metadata, '$.receipt_id') = ?
+      AND receipt_id = ?
       AND actor_agent = ?
     ORDER BY created_at DESC
     LIMIT 1
@@ -243,21 +255,22 @@ function contextFor(action: AgentAction): Record<string, string> {
   return context;
 }
 
-function sameActionEvents(audrey: Audrey, action: AgentAction): MemoryEvent[] {
-  if (!action.tool) return [];
-  const key = guardActionKey(action);
-  const tool = action.tool.toLowerCase();
-  return audrey.listEvents({ limit: 1000 }).filter(event => {
-    if (event.tool_name?.toLowerCase() !== tool) return false;
-    if (event.actor_agent && event.actor_agent !== audrey.agent) return false;
-    if (!event.metadata) return false;
-    try {
-      const metadata = JSON.parse(event.metadata) as Record<string, unknown>;
-      return metadata.audrey_guard_action_key === key;
-    } catch {
-      return false;
-    }
-  });
+function failureMemoryContent(
+  action: AgentAction,
+  tool: string,
+  errorSummary: string | null | undefined,
+): string | undefined {
+  const safeError = redactedText(errorSummary ?? undefined);
+  if (!safeError) return undefined;
+  const safeAction = redactedText(action.action) ?? action.action;
+  const safeCommand = redactedText(action.command);
+  return [
+    `Tool failure: ${tool} failed while attempting: ${safeAction}.`,
+    safeCommand ? `Command: ${safeCommand}.` : '',
+    `Error: ${safeError}`,
+  ]
+    .filter(Boolean)
+    .join(' ');
 }
 
 function eventOrder(a: MemoryEvent, b: MemoryEvent): number {
@@ -272,29 +285,61 @@ function latestSucceededEvent(events: MemoryEvent[]): MemoryEvent | undefined {
     .at(-1);
 }
 
-function matchingFailureEvents(
+function exactActionState(
   audrey: Audrey,
   action: AgentAction,
   failureDecayDays: number,
-): MemoryEvent[] {
-  const events = sameActionEvents(audrey, action);
+  actorAgent: string,
+): {
+  failures: MemoryEvent[];
+  recoveredBy?: MemoryEvent;
+  recoveredFailures?: MemoryEvent[];
+  recoveredFailureMemoryIds?: string[];
+} {
+  if (!action.tool) return { failures: [] };
+  const since =
+    failureDecayDays > 0
+      ? new Date(Date.now() - failureDecayDays * 24 * 60 * 60 * 1000).toISOString()
+      : undefined;
+  const events = exactActionHistory(audrey.db, {
+    actionKey: guardActionKey(action),
+    actorAgent,
+    ...(since ? { since } : {}),
+  });
   const latestSuccess = latestSucceededEvent(events);
-  const cutoffMs =
-    failureDecayDays > 0 ? Date.now() - failureDecayDays * 24 * 60 * 60 * 1000 : -Infinity;
-  return events
+  const failures = events
     .filter(event => event.outcome === 'failed')
-    .filter(event => !latestSuccess || eventOrder(event, latestSuccess) > 0)
-    .filter(event => Date.parse(event.created_at) >= cutoffMs);
+    .filter(event => !latestSuccess || eventOrder(event, latestSuccess) > 0);
+  if (failures.length > 0 || !latestSuccess) return { failures };
+  const recoveredFailures = events.filter(
+    event => event.outcome === 'failed' && eventOrder(event, latestSuccess) < 0,
+  );
+  const recoveredFailureMemoryIds = recoveredFailures.flatMap(event => {
+    const linkedId = parseMetadata(event.metadata).failure_memory_id;
+    if (typeof linkedId === 'string' && linkedId.length > 0) return [linkedId];
+
+    const content = failureMemoryContent(action, action.tool ?? 'unknown', event.error_summary);
+    if (!content) return [];
+    const legacy = audrey.db
+      .prepare(
+        `SELECT id FROM episodes
+         WHERE agent = ? AND source = 'tool-result' AND content = ? AND created_at >= ?
+         ORDER BY created_at, id LIMIT 1`,
+      )
+      .get(actorAgent, content, event.created_at) as { id: string } | undefined;
+    return legacy ? [legacy.id] : [];
+  });
+  return {
+    failures,
+    ...(recoveredFailures.length > 0
+      ? { recoveredBy: latestSuccess, recoveredFailures, recoveredFailureMemoryIds }
+      : {}),
+  };
 }
 
-function recoveredFailureEvent(audrey: Audrey, action: AgentAction): MemoryEvent | undefined {
-  const events = sameActionEvents(audrey, action);
-  const latestSuccess = latestSucceededEvent(events);
-  if (!latestSuccess) return undefined;
-  const priorFailure = events
-    .filter(event => event.outcome === 'failed' && event.created_at < latestSuccess.created_at)
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-  return priorFailure ? latestSuccess : undefined;
+interface GuardEvaluation {
+  decision: GuardDecision;
+  controller: ControllerGuardResult;
 }
 
 export class MemoryController {
@@ -308,7 +353,7 @@ export class MemoryController {
   }
 
   async beforeAction(action: AgentAction): Promise<ControllerGuardResult> {
-    const result = await beforeAction(this.audrey, action.action, {
+    const evaluation = await this.evaluate(action, {
       tool: action.tool,
       actionDigest: action.actionDigest,
       cwd: action.cwd,
@@ -320,15 +365,105 @@ export class MemoryController {
       recordEvent: true,
       scope: 'agent',
     });
-    const exactFailures = matchingFailureEvents(this.audrey, action, this.failureDecayDays);
-    const recoveredFailure = recoveredFailureEvent(this.audrey, action);
+    return evaluation.controller;
+  }
+
+  async beforeActionDecision(
+    action: string,
+    options: GuardBeforeOptions = {},
+  ): Promise<GuardDecision> {
+    const tool = options.tool ?? 'guard';
+    const evaluation = await this.evaluate(
+      {
+        action,
+        tool,
+        actionDigest: options.actionDigest,
+        cwd: options.cwd,
+        files: options.files,
+        sessionId: options.sessionId,
+        acknowledgePriorFailure: options.acknowledgePriorFailure,
+      },
+      {
+        ...options,
+        tool,
+        recordEvent: true,
+      },
+    );
+    return evaluation.decision;
+  }
+
+  private async evaluate(
+    action: AgentAction,
+    options: GuardBeforeOptions,
+  ): Promise<GuardEvaluation> {
+    const tool = options.tool ?? action.tool ?? 'guard';
+    const actorAgent = requireAgent(options.agent, this.audrey.agent);
+    const preflight = await buildPreflight(this.audrey, action.action, {
+      ...options,
+      tool,
+      recordEvent: true,
+    });
+    const receiptId = preflight.preflight_event_id;
+    if (!receiptId) {
+      throw new Error('guard beforeAction could not record a receipt event');
+    }
+
+    const receipt = getPreToolUseReceipt(this.audrey, receiptId, actorAgent);
+    if (!receipt) {
+      throw new Error(`guard receipt not found: ${receiptId}`);
+    }
+
+    const exactAction = {
+      ...action,
+      tool,
+      action: preflight.action,
+      actionDigest: options.actionDigest ?? action.actionDigest,
+      cwd: options.cwd ?? action.cwd,
+      files: options.files ?? action.files,
+      sessionId: options.sessionId ?? action.sessionId,
+    };
+    const {
+      failures: exactFailures,
+      recoveredBy: recoveredFailure,
+      recoveredFailures = [],
+      recoveredFailureMemoryIds = [],
+    } = exactActionState(this.audrey, exactAction, this.failureDecayDays, actorAgent);
     const exactFailureEvidence = exactFailures.map(event => event.id);
     const hasExactFailure = exactFailures.length > 0;
     const acknowledgedPriorFailure = hasExactFailure && action.acknowledgePriorFailure === true;
     const exactRepeatedFailure = hasExactFailure && !acknowledgedPriorFailure;
     const recoveredExactFailure =
-      !hasExactFailure && recoveredFailure && result.decision !== 'block';
-    const recommendedActions = [...result.recommended_actions];
+      !hasExactFailure && recoveredFailure && preflight.decision !== 'block';
+    const recoveredFailureEvidence = new Set([
+      ...recoveredFailures.map(event => event.id),
+      ...recoveredFailureMemoryIds,
+    ]);
+    const preflightWarnings = recoveredExactFailure
+      ? preflight.warnings.filter(
+          warning => !warning.evidence_id || !recoveredFailureEvidence.has(warning.evidence_id),
+        )
+      : preflight.warnings;
+    const preflightHasHigh = preflightWarnings.some(warning => warning.severity === 'high');
+    const preflightHasMedium = preflightWarnings.some(warning => warning.severity === 'medium');
+    const preflightDecision =
+      options.strict && preflightHasHigh
+        ? 'block'
+        : preflightHasHigh || preflightHasMedium
+          ? 'caution'
+          : 'go';
+    const preflightRiskScore = preflightWarnings.reduce((score, warning) => {
+      const severityScore = { info: 0.1, low: 0.25, medium: 0.55, high: 0.85 }[warning.severity];
+      return Math.max(score, severityScore);
+    }, 0);
+    const recommendedActions = recoveredExactFailure
+      ? [
+          ...new Set(
+            preflightWarnings
+              .map(warning => warning.recommended_action)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        ]
+      : [...preflight.recommended_actions];
     if (exactRepeatedFailure) {
       recommendedActions.unshift(
         'Do not repeat the exact failed action until the prior error is understood or the command is changed.',
@@ -343,56 +478,130 @@ export class MemoryController {
       );
     }
 
-    let decision: ControllerGuardDecision;
+    let decision: MemoryPreflight['decision'];
     if (exactRepeatedFailure) decision = 'block';
     else if (acknowledgedPriorFailure)
-      decision = displayDecision(result.decision) === 'block' ? 'block' : 'warn';
-    else if (recoveredExactFailure) decision = 'allow';
-    else decision = displayDecision(result.decision);
+      decision = preflightDecision === 'block' ? 'block' : 'caution';
+    else decision = preflightDecision;
 
     let riskScore: number;
-    if (exactRepeatedFailure) riskScore = Math.max(result.risk_score, 0.9);
-    else if (acknowledgedPriorFailure) riskScore = Math.max(result.risk_score, 0.6);
-    else if (recoveredExactFailure) riskScore = Math.min(result.risk_score, 0.2);
-    else riskScore = result.risk_score;
+    if (exactRepeatedFailure) riskScore = Math.max(preflightRiskScore, 0.9);
+    else if (acknowledgedPriorFailure) riskScore = Math.max(preflightRiskScore, 0.6);
+    else riskScore = preflightRiskScore;
 
     let summary: string;
     if (exactRepeatedFailure) {
-      summary = `Blocked: this exact ${action.tool ?? 'tool'} action failed before. ${result.summary}`;
+      summary = `Blocked: this exact ${tool} action failed before. ${preflight.summary}`;
     } else if (acknowledgedPriorFailure) {
-      summary = `Warn: prior failure acknowledged for this exact ${action.tool ?? 'tool'} action; proceed with caution. ${result.summary}`;
+      summary = `Caution: prior failure acknowledged for this exact ${tool} action; proceed with caution. ${preflight.summary}`;
     } else if (recoveredExactFailure) {
-      summary = `Allowed: this exact ${action.tool ?? 'tool'} action has succeeded since the prior failure. ${result.summary}`;
+      summary =
+        preflightWarnings.length > 0
+          ? `Recovered: this exact ${tool} action has succeeded since the prior failure. Caution: ${preflightWarnings.length} other memory signal${preflightWarnings.length === 1 ? '' : 's'} still applies.`
+          : `Recovered: this exact ${tool} action has succeeded since the prior failure.`;
     } else {
-      summary = result.summary;
+      summary = preflight.summary;
     }
 
-    return {
+    const latestExactFailure = exactFailures.at(-1);
+    const warnings = [...preflightWarnings];
+    if (latestExactFailure) {
+      warnings.unshift({
+        type: 'recent_failure',
+        severity: exactRepeatedFailure ? 'high' : 'medium',
+        message: latestExactFailure.error_summary
+          ? `This exact ${tool} action failed before: ${latestExactFailure.error_summary}`
+          : `This exact ${tool} action failed before.`,
+        reason: 'Matched the indexed exact action fingerprint within the Guard failure window.',
+        evidence_id: latestExactFailure.id,
+        recommended_action: exactRepeatedFailure
+          ? 'Do not repeat the exact failed action until the prior error is understood or the action is changed.'
+          : 'Surface the acknowledged prior error and validate the retry carefully.',
+      });
+    }
+    const evidenceIds = [
+      ...new Set([
+        ...exactFailureEvidence,
+        ...(recoveredFailure ? [recoveredFailure.id] : []),
+        ...preflight.evidence_ids,
+      ]),
+    ];
+    const finalRecommendedActions = [...new Set(recommendedActions)];
+    const verdict = decision === 'go' ? 'clear' : decision === 'block' ? 'blocked' : 'caution';
+    const reflexReport = buildReflexReportFromPreflight({
+      ...preflight,
       decision,
-      riskScore,
+      verdict,
+      ok_to_proceed: decision !== 'block',
+      risk_score: riskScore,
       summary,
-      evidenceIds: [
-        ...new Set([
-          ...exactFailureEvidence,
-          ...(recoveredFailure ? [recoveredFailure.id] : []),
-          ...result.evidence_ids,
-        ]),
-      ],
-      recommendedActions: [...new Set(recommendedActions)],
-      capsule: result.capsule,
-      reflexes: result.reflexes,
-      preflightEventId: result.preflight_event_id,
+      warnings,
+      recommended_actions: finalRecommendedActions,
+      evidence_ids: evidenceIds,
+    });
+    const metadata = parseMetadata(receipt.metadata);
+    this.audrey.db
+      .prepare('UPDATE memory_events SET metadata = ? WHERE id = ? AND actor_agent = ?')
+      .run(
+        JSON.stringify({
+          ...metadata,
+          guard: true,
+          guard_phase: 'before',
+          evidence_ids: evidenceIds,
+          reflex_ids: reflexReport.reflexes.map(reflex => reflex.id),
+          preflight_decision: decision,
+          preflight_warning_count: warnings.length,
+          preflight_evidence_ids: evidenceIds,
+          prior_failure_acknowledged: acknowledgedPriorFailure,
+          exact_repeat_failure_block: exactRepeatedFailure,
+        }),
+        receiptId,
+        actorAgent,
+      );
+
+    const guardDecision: GuardDecision = {
+      receipt_id: receiptId,
+      preflight_event_id: receiptId,
+      action: preflight.action,
+      query: preflight.query,
+      ...(preflight.tool ? { tool: preflight.tool } : {}),
+      ...(preflight.cwd ? { cwd: preflight.cwd } : {}),
+      generated_at: preflight.generated_at,
+      decision,
+      verdict,
+      ok_to_proceed: decision !== 'block',
+      risk_score: Number(riskScore.toFixed(2)),
+      summary,
+      warnings,
+      reflexes: reflexReport.reflexes,
+      recommended_actions: finalRecommendedActions,
+      evidence_ids: evidenceIds,
+      recent_failures: preflight.recent_failures,
+      ...(preflight.status ? { status: preflight.status } : {}),
+      ...(preflight.capsule ? { capsule: preflight.capsule } : {}),
+    };
+
+    return {
+      decision: guardDecision,
+      controller: {
+        decision: displayDecision(guardDecision.decision),
+        riskScore: guardDecision.risk_score,
+        summary: guardDecision.summary,
+        warnings: guardDecision.warnings,
+        evidenceIds: guardDecision.evidence_ids,
+        recommendedActions: guardDecision.recommended_actions,
+        capsule: guardDecision.capsule,
+        reflexes: guardDecision.reflexes,
+        preflightEventId: guardDecision.preflight_event_id,
+      },
     };
   }
 
   async afterAction(outcome: ToolOutcome): Promise<void> {
     const tool = outcome.action.tool ?? 'unknown';
     const event = outcome.outcome === 'failed' ? 'PostToolUseFailure' : 'PostToolUse';
-    const safeAction = redactedText(outcome.action.action) ?? outcome.action.action;
-    const safeCommand = redactedText(outcome.action.command);
-    const safeError = redactedText(outcome.errorSummary);
 
-    this.audrey.observeTool({
+    const observed = this.audrey.observeTool({
       event,
       tool,
       sessionId: outcome.action.sessionId,
@@ -412,21 +621,24 @@ export class MemoryController {
       },
     });
 
-    if (outcome.outcome !== 'failed' || !safeError) return;
+    if (outcome.outcome !== 'failed') return;
+    const content = failureMemoryContent(outcome.action, tool, outcome.errorSummary);
+    if (!content) return;
 
-    await this.audrey.encode({
-      content: [
-        `Tool failure: ${tool} failed while attempting: ${safeAction}.`,
-        safeCommand ? `Command: ${safeCommand}.` : '',
-        `Error: ${safeError}`,
-      ]
-        .filter(Boolean)
-        .join(' '),
+    const failureMemoryId = await this.audrey.encode({
+      content,
       source: 'tool-result',
       tags: ['tool-failure', tool],
       salience: 0.85,
       context: contextFor(outcome.action),
     });
+    this.audrey.db.prepare('UPDATE memory_events SET metadata = ? WHERE id = ?').run(
+      JSON.stringify({
+        ...parseMetadata(observed.event.metadata),
+        failure_memory_id: failureMemoryId,
+      }),
+      observed.event.id,
+    );
   }
 }
 
@@ -435,57 +647,7 @@ export async function beforeAction(
   action: string,
   options: GuardBeforeOptions = {},
 ): Promise<GuardDecision> {
-  const tool = options.tool ?? 'guard';
-  const preflight = await buildPreflight(audrey, action, {
-    ...options,
-    tool,
-    recordEvent: true,
-  });
-  const reflexReport = buildReflexReportFromPreflight(preflight);
-  const receiptId = preflight.preflight_event_id;
-  if (!receiptId) {
-    throw new Error('guard beforeAction could not record a receipt event');
-  }
-
-  const actorAgent = requireAgent(options.agent, audrey.agent);
-  const receipt = getPreToolUseReceipt(audrey, receiptId, actorAgent);
-  if (!receipt) {
-    throw new Error(`guard receipt not found: ${receiptId}`);
-  }
-  const metadata = parseMetadata(receipt.metadata);
-  audrey.db.prepare('UPDATE memory_events SET metadata = ? WHERE id = ? AND actor_agent = ?').run(
-    JSON.stringify({
-      ...metadata,
-      guard: true,
-      guard_phase: 'before',
-      evidence_ids: preflight.evidence_ids,
-      reflex_ids: reflexReport.reflexes.map(reflex => reflex.id),
-    }),
-    receiptId,
-    actorAgent,
-  );
-
-  return {
-    receipt_id: receiptId,
-    preflight_event_id: receiptId,
-    action: preflight.action,
-    query: preflight.query,
-    ...(preflight.tool ? { tool: preflight.tool } : {}),
-    ...(preflight.cwd ? { cwd: preflight.cwd } : {}),
-    generated_at: preflight.generated_at,
-    decision: preflight.decision,
-    verdict: preflight.verdict,
-    ok_to_proceed: preflight.ok_to_proceed,
-    risk_score: preflight.risk_score,
-    summary: preflight.summary,
-    warnings: preflight.warnings,
-    reflexes: reflexReport.reflexes,
-    recommended_actions: preflight.recommended_actions,
-    evidence_ids: preflight.evidence_ids,
-    recent_failures: preflight.recent_failures,
-    ...(preflight.status ? { status: preflight.status } : {}),
-    ...(preflight.capsule ? { capsule: preflight.capsule } : {}),
-  };
+  return new MemoryController(audrey).beforeActionDecision(action, options);
 }
 
 export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcome {
@@ -506,6 +668,21 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
   }
   if (getGuardOutcomeEvent(audrey, input.receiptId, actorAgent)) {
     throw new Error(`guard receipt already has an outcome: ${input.receiptId}`);
+  }
+  let overrideReason: string | undefined;
+  if (outcome === 'succeeded' && receiptMetadata.preflight_decision === 'block') {
+    if (receiptMetadata.exact_repeat_failure_block === true) {
+      throw new Error(
+        'Cannot record a succeeded outcome for a Guard receipt blocked by an exact repeat failure; overrideReason cannot clear this — run a new acknowledged beforeAction check (acknowledgePriorFailure: true) before retrying.',
+      );
+    }
+    const trimmedReason = input.overrideReason?.trim();
+    if (!trimmedReason) {
+      throw new Error(
+        'Cannot record a succeeded outcome for a blocked Guard receipt without overrideReason: this block was not caused by an exact repeat failure, so acknowledgePriorFailure cannot clear it — pass overrideReason to afterAction stating why the advisory block is being overridden.',
+      );
+    }
+    overrideReason = trimmedReason;
   }
   const feedbackEntries = evidenceFeedbackEntries(input.evidenceFeedback);
   const receiptEvidenceIds = evidenceIdsFromMetadata(receiptMetadata);
@@ -529,6 +706,9 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
       preflight_decision: receiptMetadata.preflight_decision,
       preflight_warning_count: receiptMetadata.preflight_warning_count,
       audrey_guard_action_key: receiptMetadata.audrey_guard_action_key,
+      ...(overrideReason
+        ? { guard_block_overridden: true, guard_override_reason: overrideReason }
+        : {}),
     },
     retainDetails: input.retainDetails,
   });

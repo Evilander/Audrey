@@ -438,6 +438,7 @@ export const GUARD_CASES = [
           content: 'Never publish Audrey without running npm pack --dry-run first.',
           source: 'direct-observation',
           tags: ['must-follow', 'release'],
+          context: { audrey_trust: 'user-verified' },
         },
       },
     ],

@@ -3,6 +3,7 @@ import { guardActionKey } from './action-key.js';
 import type { CapsuleEntry, CapsuleMode, MemoryCapsule } from './capsule.js';
 import type { FailurePattern } from './events.js';
 import { redact } from './redact.js';
+import { controlTrustFor, type ControlTrust } from './trust.js';
 import type { MemoryStatusResult, RecallOptions, RecallResult } from './types.js';
 import { requireAgent, resolveMemoryScope } from './utils.js';
 
@@ -71,7 +72,6 @@ const SEVERITY_SCORE: Record<PreflightSeverity, number> = {
   medium: 0.55,
   high: 0.85,
 };
-const TRUSTED_CONTROL_SOURCES = new Set(['direct-observation', 'told-by-user']);
 
 function isNonEmptyText(value: string): boolean {
   return value.trim().length > 0;
@@ -99,17 +99,24 @@ function matchesToolOrAction(
   );
 }
 
+function trustNote(trust: ControlTrust): string {
+  return trust === 'verified'
+    ? 'Trust level: verified control memory.'
+    : 'Trust level: legacy control memory (recorded before trust tracking existed) — severity capped, cannot force a block on its own.';
+}
+
 function warningFromEntry(
   type: PreflightWarningType,
   severity: PreflightSeverity,
   entry: CapsuleEntry,
   fallbackAction: string,
+  trust?: ControlTrust,
 ): PreflightWarning {
   return {
     type,
     severity,
     message: shorten(entry.content),
-    reason: entry.reason,
+    reason: trust ? `${entry.reason} ${trustNote(trust)}` : entry.reason,
     evidence_id: entry.memory_id,
     recommended_action: entry.recommended_action ?? fallbackAction,
   };
@@ -146,19 +153,47 @@ function addWarning(
   warnings.push(warning);
 }
 
-function warningFromTaggedRecall(result: RecallResult, fallbackAction: string): PreflightWarning {
+function warningFromTaggedRecall(
+  result: RecallResult,
+  trust: ControlTrust,
+  fallbackAction: string,
+): PreflightWarning {
   return {
     type: 'must_follow',
-    severity: 'high',
+    severity: trust === 'verified' ? 'high' : 'medium',
     message: shorten(result.content),
-    reason: 'Matched trusted must-follow memory through the tagged control-memory sweep.',
+    reason: `Matched a must-follow memory through the tagged control-memory sweep. ${trustNote(trust)}`,
     evidence_id: result.id,
     recommended_action: fallbackAction,
   };
 }
 
-function isTrustedControlMemory(result: RecallResult): boolean {
-  return TRUSTED_CONTROL_SOURCES.has(result.source);
+function loadEpisodeContext(audrey: Audrey, id: string): string | null {
+  const row = audrey.db.prepare('SELECT context FROM episodes WHERE id = ?').get(id) as
+    { context: string | null } | undefined;
+  return row?.context ?? null;
+}
+
+// Raw recall rows carry no context column (only episodes do), so an explicit
+// user-verified override recorded there is only visible for episodic matches.
+// Falling back to source+createdAt alone still fails closed: it can only
+// under-trust a legitimately verified memory, never fabricate trust.
+function controlTrustForResult(audrey: Audrey, result: RecallResult): ControlTrust {
+  const context = result.type === 'episodic' ? loadEpisodeContext(audrey, result.id) : null;
+  return controlTrustFor({ source: result.source, context, createdAt: result.createdAt });
+}
+
+// A cheap existence probe so the expensive tagged-recall sweep (embedding +
+// KNN + confidence scoring) only runs when it could possibly find something.
+// A false positive here just means the full sweep runs and finds nothing —
+// safe. A false negative would silently hide a real must-follow memory, so
+// this deliberately over-matches (unscoped, substring) rather than trying to
+// mirror the recall path's exact tag/scope semantics.
+function hasMustFollowTagCandidate(audrey: Audrey): boolean {
+  const row = audrey.db
+    .prepare(`SELECT 1 FROM episodes WHERE tags LIKE '%"must-follow"%' LIMIT 1`)
+    .get();
+  return Boolean(row);
 }
 
 function recommendationFromWarning(warning: PreflightWarning): string {
@@ -220,11 +255,16 @@ export async function buildPreflight(
     options.cwd ? `cwd:${options.cwd}` : '',
   ].filter(Boolean);
   const query = queryParts.join('\n');
+  // failureWindowHours/failureLimit let this single capsule call answer the
+  // tool-failure question at the width Guard needs (see events.ts), instead
+  // of buildPreflight running its own separate recentFailures() scan below.
   const capsule = await audrey.capsule(query, {
     limit: options.limit ?? 12,
     budgetChars: options.budgetChars ?? 3000,
     mode: options.mode ?? 'conservative',
     recentChangeWindowHours: options.recentChangeWindowHours ?? 72,
+    failureWindowHours: options.recentFailureWindowHours ?? 168,
+    failureLimit: 20,
     includeRisks: true,
     includeContradictions: true,
     scope,
@@ -268,23 +308,34 @@ export async function buildPreflight(
     });
   }
 
+  // The capsule's own recall can rank a must-follow memory below its top-K
+  // cutoff even when one exists, so an empty must_follow section alone does
+  // not prove there is nothing to find — hence the fallback sweep below.
+  // But it is a full embed + KNN + confidence-scoring pass, so it must not
+  // run on every routine action just because must_follow happens to be
+  // empty (the common case). hasMustFollowTagCandidate() gates it on a
+  // cheap existence check first.
   const existingMustFollowIds = new Set(capsule.sections.must_follow.map(entry => entry.memory_id));
   if (existingMustFollowIds.size === 0) {
     try {
-      const taggedMustFollow = await audrey.recall(query, {
-        limit: 50,
-        minConfidence: 0.01,
-        tags: ['must-follow'],
-        scope,
-        agent,
-      });
-      const trustedResults = taggedMustFollow.filter(isTrustedControlMemory);
-      for (const result of trustedResults.slice(0, 5)) {
-        addWarning(
-          warnings,
-          seen,
-          warningFromTaggedRecall(result, 'Apply this must-follow rule before acting.'),
-        );
+      if (hasMustFollowTagCandidate(audrey)) {
+        const taggedMustFollow = await audrey.recall(query, {
+          limit: 50,
+          minConfidence: 0.01,
+          tags: ['must-follow'],
+          scope,
+          agent,
+        });
+        const trustedResults = taggedMustFollow
+          .map(result => ({ result, trust: controlTrustForResult(audrey, result) }))
+          .filter(candidate => candidate.trust !== 'untrusted');
+        for (const { result, trust } of trustedResults.slice(0, 5)) {
+          addWarning(
+            warnings,
+            seen,
+            warningFromTaggedRecall(result, trust, 'Apply this must-follow rule before acting.'),
+          );
+        }
       }
     } catch {
       // The primary capsule path already reports recall degradation. Avoid
@@ -292,46 +343,36 @@ export async function buildPreflight(
     }
   }
 
-  const since = new Date(
-    Date.now() - (options.recentFailureWindowHours ?? 168) * 60 * 60 * 1000,
-  ).toISOString();
-  const recentFailures = audrey.recentFailures({
-    since,
-    limit: 20,
-    scope,
-    actorAgent: agent,
-    ...(options.cwd ? { cwd: options.cwd } : {}),
-  });
-  const matchingFailures: FailurePattern[] = [];
-  for (const failure of recentFailures) {
-    if (!matchesToolOrAction(action, options.tool, failure.tool_name)) continue;
-    matchingFailures.push(failure);
-    const toolLabel = failure.tool_name || options.tool || 'tool';
-    addWarning(warnings, seen, {
-      type: 'recent_failure',
-      severity: 'medium',
-      message: failure.last_error_summary
-        ? `${toolLabel} failed ${failure.failure_count}x recently: ${shorten(failure.last_error_summary, 220)}`
-        : `${toolLabel} failed ${failure.failure_count}x recently.`,
-      reason: 'Matched a recent failed tool event for this action.',
-      evidence_id: `failure:${toolLabel}:${failure.last_failed_at}`,
-      recommended_action: `Before re-running ${toolLabel}, check what changed since the last failure.`,
-    });
-  }
-
   for (const entry of capsule.sections.must_follow) {
+    // 'untrusted' control tags are not a control directive at all — the
+    // capsule should already exclude them from this section, but Guard's
+    // own anti-poisoning check must not depend on that alone.
+    if (entry.trust === 'untrusted') continue;
     addWarning(
       warnings,
       seen,
-      warningFromEntry('must_follow', 'high', entry, 'Apply this must-follow rule before acting.'),
+      warningFromEntry(
+        'must_follow',
+        entry.trust === 'verified' ? 'high' : 'medium',
+        entry,
+        'Apply this must-follow rule before acting.',
+        entry.trust,
+      ),
     );
   }
 
+  // matchingFailures reuses the tool-failure patterns the capsule call above
+  // already fetched (failureWindowHours/failureLimit sized to match Guard's
+  // needs) instead of running a second, separately-parameterized
+  // recentFailures() scan — that scan is expensive enough on a large event
+  // table that doubling it is material on every guarded tool call.
+  const matchingFailures: FailurePattern[] = [];
   for (const entry of capsule.sections.risks) {
     const toolFailure = isToolFailureEntry(entry);
     if (toolFailure) {
       const failedTool = toolFromFailureEntry(entry);
       if (!matchesToolOrAction(action, options.tool, failedTool)) continue;
+      if (entry.failure_pattern) matchingFailures.push(entry.failure_pattern);
     }
     addWarning(
       warnings,

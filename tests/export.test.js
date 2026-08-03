@@ -63,6 +63,42 @@ describe('export', () => {
     expect(parsed.episodes.length).toBe(2);
   });
 
+  it('exports the indexed action key for Guard history', () => {
+    const actionKey = 'c'.repeat(64);
+    audrey.observeTool({
+      event: 'PostToolUseFailure',
+      tool: 'Bash',
+      outcome: 'failed',
+      metadata: { audrey_guard_action_key: actionKey },
+    });
+
+    const snapshot = audrey.export();
+    const event = snapshot.memoryEvents.find(row => row.tool_name === 'Bash');
+
+    expect(event.action_key).toBe(actionKey);
+  });
+
+  it('exports indexed Autopilot correlation fields', () => {
+    audrey.observeTool({
+      event: 'PostToolUseFailure',
+      tool: 'Bash',
+      outcome: 'failed',
+      metadata: {
+        autopilot_host: 'codex',
+        autopilot_tool_use_id: 'export-tool-use',
+        receipt_id: 'export-receipt',
+      },
+    });
+
+    const event = audrey.export().memoryEvents.find(row => row.tool_name === 'Bash');
+
+    expect(event).toMatchObject({
+      hook_host: 'codex',
+      hook_tool_use_id: 'export-tool-use',
+      receipt_id: 'export-receipt',
+    });
+  });
+
   it('exports context and affect columns', async () => {
     const audrey2 = new Audrey({
       dataDir: './test-export-ctx',

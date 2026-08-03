@@ -60,7 +60,7 @@ Autopilot then closes the loop:
 | A tool failure is reported | Forms a durable, sanitized failure memory for the next attempt |
 | The turn stops or context compacts | Runs lightweight, due-only consolidation without holding the conversation open |
 
-Infrastructure failures are fail-open by default: a broken memory service must not strand a developer. Teams that need enforcement can set `AUDREY_HOOK_FAIL_CLOSED=1`.
+Each hook event carries a host-declared timeout (30 seconds for the `PreToolUse` Guard check); Audrey races its own internal embedding/LLM timeout a few seconds ahead of that deadline so it can exit cleanly instead of losing the race to the host's kill. Infrastructure failures are fail-open by default: if Audrey itself errors or runs out of time, the tool call proceeds unguarded rather than freezing the session. Set `AUDREY_HOOK_FAIL_CLOSED=1` to deny the action instead when the `PreToolUse` check fails this way; other lifecycle hooks (session start, prompt recall, post-tool bookkeeping) have no "deny" to fall back to and always degrade open regardless of this setting.
 
 ## A small story about a failed deploy
 
@@ -98,7 +98,7 @@ Every context packet includes memory IDs, confidence, provenance where available
 
 Audrey does not upload your memory to a hosted service by default. It does not treat every sentence as permanent truth. It does not promote instructions from arbitrary tool output into trusted policy. It does not claim that a small local benchmark proves state-of-the-art memory quality.
 
-Raw prompt events and tool bodies are not retained by default. Audrey stores hashes, bounded summaries, fingerprints, and redaction metadata. Explicit user-memory language is persisted intentionally; tool failure memories are sanitized first. Admin export/import/forget surfaces are disabled unless `AUDREY_ENABLE_ADMIN_TOOLS=1`.
+Raw prompt events and tool bodies are not retained by default. Audrey stores hashes, bounded summaries, fingerprints, and redaction metadata. Explicit user-memory language is persisted intentionally; tool failure memories are sanitized first. Admin export/import/forget/promote surfaces are disabled unless `AUDREY_ENABLE_ADMIN_TOOLS=1`.
 
 At-rest encryption, identity-bound tenant authorization, rate limiting, and regulated retention remain deployment responsibilities today. They are not hidden behind a “production ready” badge.
 
@@ -122,7 +122,7 @@ The default store is SQLite, FTS5, and `sqlite-vec`. Local embeddings are the de
 
 ### A safer shared store
 
-Agent-scoped recall now continues through validation, contradiction detection, interference, affect, failure lookup, capsules, greetings, Guard, and REST request routing. Hidden retrieval candidates do not reinforce themselves; only memories actually surfaced to the caller receive retrieval bookkeeping.
+Agent-scoped recall now continues through validation, contradiction detection, interference, affect, failure lookup, capsules, greetings, Guard, and REST request routing. Hidden retrieval candidates do not reinforce themselves; only memories actually surfaced to the caller receive retrieval bookkeeping (usage count and last-reinforced timestamp for semantic and procedural memories). Explicit validation feedback (`memory_validate` / `/v1/validate`) separately adjusts salience based on how a memory actually performed, not merely on being recalled.
 
 Vector candidates are partitioned by agent before nearest-neighbor ranking, so one busy agent cannot crowd another out of a bounded search. For hard tenant boundaries, still use a distinct `AUDREY_DATA_DIR` per tenant or security domain.
 
@@ -223,10 +223,10 @@ The shared hook adapter normalizes current Codex and Claude Code payloads.
 
 - Context injection is bounded by `AUDREY_CONTEXT_BUDGET_CHARS` (default 4000; Autopilot uses a conservative 3200-character packet unless overridden).
 - Prompt and tool retrieval queries are bounded before embedding. Large edits carry hashes and lengths instead of file bodies; exact Guard identity uses a full redacted digest rather than a truncated prefix.
-- Only `Bash`, `Edit`, `Write`, `NotebookEdit`, and `apply_patch` are guarded and observed by the generated default hooks.
+- The generated default hooks guard and observe `Bash`, `Edit`, `MultiEdit`, `Write`, `NotebookEdit`, `apply_patch`, and every `mcp__*` tool from connected MCP servers, excluding Audrey's own memory tools so the Guard never guards itself.
 - Pre/post correlation uses `session_id + tool_use_id`, so parallel tool calls do not attach to the wrong receipt.
 - Claude `PostToolUseFailure` and Codex responses that explicitly expose a non-zero exit normalize to the same failure path. Current Codex hooks can omit Bash exit status; Audrey records an opaque result as `unknown`, never as invented success.
-- Context and Guard failures emit `{}` and log to stderr unless fail-closed mode is explicitly enabled.
+- On an internal error, every hook logs to stderr and emits `{}` (no opinion, so the tool proceeds). Only `PreToolUse` changes behavior under `AUDREY_HOOK_FAIL_CLOSED=1`, emitting a deny decision instead; context-injection and post-tool hooks have no deny path and always emit `{}`.
 - Stop hooks always emit valid JSON and never continue or block a completed turn.
 
 Codex hook interception is a guardrail, not a complete shell-policy boundary. The current host contract does not intercept every richer `unified_exec` path and may omit the exit status of silent Bash failures. See the [Codex hooks documentation](https://learn.chatgpt.com/docs/hooks). Use the Guard receipt as evidence, and keep sandboxing, approvals, CI, and deployment controls in place.
@@ -285,8 +285,9 @@ Core routes:
 | Close a Guard receipt | `POST /v1/guard/after` |
 | Consolidate and decay | `POST /v1/dream` |
 | Health and index state | `GET /v1/status` |
+| Promote learned procedures to rule files (admin) | `POST /v1/promote` |
 
-Use `AUDREY_API_KEY` for any non-loopback deployment. `X-Audrey-Agent` scopes encode, recall, capsules, preflight, Guard, consolidation, and greetings inside a trusted deployment; it is a routing header, not an authentication boundary. Bind agent/tenant identity at your gateway rather than trusting an arbitrary public header.
+Use `AUDREY_API_KEY` for any non-loopback deployment. `X-Audrey-Agent` scopes encode, recall, capsules, preflight, Guard, consolidation, and greetings inside a trusted deployment; it is a routing header, not an authentication boundary. Bind agent/tenant identity at your gateway rather than trusting an arbitrary public header. Every route also accepts a per-call `agent` field in the JSON body as a fallback for callers (such as the Python client) that cannot set a header per request; the header wins whenever both are present.
 
 ### Python client
 
@@ -342,7 +343,7 @@ The server also sends host instructions explaining the Guard receipt loop when l
 | `AUDREY_DATA_DIR` | `~/.audrey/data` | SQLite store; use a distinct directory per tenant/security boundary |
 | `AUDREY_AGENT` | host-specific | Logical memory owner used for scoped operations |
 | `AUDREY_EMBEDDING_PROVIDER` | `local` | `local`, `gemini`, `openai`, or `mock` |
-| `AUDREY_LLM_PROVIDER` | auto | `anthropic`, `openai`, or `mock` for reflection/consolidation |
+| `AUDREY_LLM_PROVIDER` | unset | `anthropic`, `openai`, or `mock` for reflection/consolidation; unset (or `auto`) uses local heuristics only, never an ambient `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` |
 | `AUDREY_LLM_MODEL` | provider default | Explicit LLM model override |
 | `AUDREY_DEVICE` | `gpu` | Local embedding device; falls back to CPU |
 | `AUDREY_CONTEXT_BUDGET_CHARS` | `4000` | Maximum default capsule size |
@@ -353,7 +354,7 @@ The server also sends host instructions explaining the Guard receipt loop when l
 | `AUDREY_API_KEY` | unset | Bearer token for REST access |
 | `AUDREY_HOST` | `127.0.0.1` | REST bind address |
 | `AUDREY_PORT` | `7437` | REST port |
-| `AUDREY_ENABLE_ADMIN_TOOLS` | `0` | Enable export, import, and forget operations |
+| `AUDREY_ENABLE_ADMIN_TOOLS` | `0` | Enable export, import, forget, and promote operations |
 | `AUDREY_ENABLE_SHARED_SCOPE` | `0` | Allow explicit cross-agent REST recall; admin tools also enable it |
 | `AUDREY_PROFILE` | `0` | Include stage timing diagnostics |
 | `AUDREY_DISABLE_WARMUP` | `0` | Disable MCP embedding warmup |
