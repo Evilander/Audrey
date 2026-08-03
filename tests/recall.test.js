@@ -1091,6 +1091,21 @@ describe('recall', () => {
   });
 
   describe('retrieval guards', () => {
+    it('does not substitute an identifier value belonging to a different owner', async () => {
+      const requestedId = await encodeEpisode(db, embedding, {
+        content: 'Sam account number: 24681357',
+        source: 'told-by-user',
+      });
+      const otherOwnerId = await encodeEpisode(db, embedding, {
+        content: 'Alice account number: 8675309',
+        source: 'told-by-user',
+      });
+
+      const results = await recall(db, embedding, "What is Sam's account number?", { limit: 10 });
+      expect(results.map(result => result.id)).toContain(requestedId);
+      expect(results.map(result => result.id)).not.toContain(otherOwnerId);
+    });
+
     it('abstains on identifier-style questions when only tangential context exists', async () => {
       await encodeEpisode(db, embedding, {
         content: 'Sam renewed a passport in February 2026.',
@@ -1122,5 +1137,129 @@ describe('recall', () => {
       );
       expect(contents).not.toContain('The outage was caused by database corruption.');
     });
+
+    it('suppresses a consolidation-vs-consolidation duplicate that shares identical source reliability', async () => {
+      // Both semantic results below map to source: 'consolidation', which
+      // reliabilityForRecallSource always resolves to the same reliability
+      // (0.85) — the old gap rule (existingReliability - candidateReliability
+      // >= 0.2) can never fire for this pair no matter how far apart their
+      // actual confidence is, so both used to survive. Content is unrelated
+      // to any fixture seeded in the outer beforeEach so it cannot overlap
+      // with them by accident.
+      const sharedContent = 'Marmot burrow depth increases during winter hibernation season';
+      const sharedVector = await embedding.embed(sharedContent);
+      const sharedBuffer = embedding.vectorToBuffer(sharedVector);
+      const now = new Date().toISOString();
+
+      const strongId = generateId();
+      db.prepare(
+        `
+        INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
+          contradicting_count, retrieval_count, created_at, embedding_model, embedding_version)
+        VALUES (?, ?, ?, 'active', 8, 8, 0, 0, ?, ?, ?)
+      `,
+      ).run(
+        strongId,
+        sharedContent,
+        sharedBuffer,
+        now,
+        embedding.modelName,
+        embedding.modelVersion,
+      );
+      db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
+        strongId,
+        'default',
+        sharedBuffer,
+        'active',
+      );
+
+      const weakId = generateId();
+      db.prepare(
+        `
+        INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
+          contradicting_count, retrieval_count, created_at, embedding_model, embedding_version)
+        VALUES (?, ?, ?, 'active', 2, 1, 1, 0, ?, ?, ?)
+      `,
+      ).run(weakId, sharedContent, sharedBuffer, now, embedding.modelName, embedding.modelVersion);
+      db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
+        weakId,
+        'default',
+        sharedBuffer,
+        'active',
+      );
+
+      const results = await recall(db, embedding, sharedContent, {
+        types: ['semantic'],
+        retrieval: 'vector',
+        limit: 10,
+      });
+
+      const ids = results.map(r => r.id);
+      expect(ids).toContain(strongId);
+      expect(ids).not.toContain(weakId);
+    });
+
+    it.each([
+      ['smaller id inserted first', true],
+      ['larger id inserted first', false],
+    ])(
+      'keeps exactly the smaller-id member of an exact-score tie regardless of row order (%s)',
+      async (_label, insertSmallFirst) => {
+        // ids are ULIDs, generated in increasing lexicographic order — the id
+        // values are fixed by generation order below, independent of which
+        // row gets inserted into the table first.
+        const smallId = generateId();
+        const largeId = generateId();
+        expect(smallId < largeId).toBe(true);
+
+        // Identical embedding, evidence counts, and created_at give both rows
+        // an identical similarity and an identical computed confidence, so
+        // their final scores are bit-for-bit equal — the only way to land in
+        // the exact-tie branch of shouldSuppressDuplicate rather than its
+        // score-gap branch.
+        const sharedContent = `Quokka census tally row ${insertSmallFirst}`;
+        const sharedVector = await embedding.embed(sharedContent);
+        const sharedBuffer = embedding.vectorToBuffer(sharedVector);
+        const now = new Date().toISOString();
+
+        const insertRow = id => {
+          db.prepare(
+            `
+          INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
+            contradicting_count, retrieval_count, created_at, embedding_model, embedding_version)
+          VALUES (?, ?, ?, 'active', 4, 4, 0, 0, ?, ?, ?)
+        `,
+          ).run(id, sharedContent, sharedBuffer, now, embedding.modelName, embedding.modelVersion);
+          db.prepare(
+            'INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
+          ).run(id, 'default', sharedBuffer, 'active');
+        };
+
+        // Row insertion order is deliberately decoupled from id order here —
+        // a fix that only worked when ids happened to arrive in ascending
+        // order would still fail the reversed-order case below.
+        if (insertSmallFirst) {
+          insertRow(smallId);
+          insertRow(largeId);
+        } else {
+          insertRow(largeId);
+          insertRow(smallId);
+        }
+
+        const results = await recall(db, embedding, sharedContent, {
+          types: ['semantic'],
+          retrieval: 'vector',
+          limit: 10,
+        });
+
+        // Vector retrieval over a tiny table returns nearest neighbors
+        // regardless of relevance, so the beforeEach fixture semantics can
+        // legitimately ride along in `results` too — the assertion below
+        // only cares which member of the tied pair survived.
+        const tieMatches = results.filter(r => r.id === smallId || r.id === largeId);
+        expect(tieMatches).toHaveLength(1);
+        expect(tieMatches[0].id).toBe(smallId);
+      },
+    );
   });
 });

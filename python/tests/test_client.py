@@ -80,8 +80,40 @@ class AudreyClientUnitTests(unittest.TestCase):
         self.assertEqual(exc.exception.status_code, 400)
         self.assertEqual(str(exc.exception), "content is required")
 
+    def test_sync_restore_accepts_the_server_imported_response(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/v1/import")
+            payload = json.loads(request.content.decode("utf-8"))
+            self.assertEqual(payload["snapshot"]["version"], __version__)
+            return httpx.Response(200, json={"imported": True})
+
+        client = Audrey(
+            base_url="http://audrey.test",
+            transport=httpx.MockTransport(handler),
+        )
+        self.addCleanup(client.close)
+
+        response = client.restore({"version": __version__})
+
+        self.assertTrue(response.imported)
+
 
 class AudreyAsyncClientUnitTests(unittest.IsolatedAsyncioTestCase):
+    async def test_async_restore_accepts_the_server_imported_response(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/v1/import")
+            return httpx.Response(200, json={"imported": True})
+
+        client = AsyncAudrey(
+            base_url="http://audrey.test",
+            transport=httpx.MockTransport(handler),
+        )
+        self.addAsyncCleanup(client.aclose)
+
+        response = await client.restore({"version": __version__})
+
+        self.assertTrue(response.imported)
+
     async def test_async_client_parses_recall_response(self) -> None:
         # The TS server returns an envelope so degraded-recall diagnostics survive JSON.
         # this test handler returned a {results: [...]} object — that matched
@@ -225,8 +257,13 @@ class AudreyClientIntegrationTests(unittest.TestCase):
             # The round-trip test would need to spin up a second server with
             # a fresh data dir; we cover the empty-store import path in unit
             # tests on the TS side and don't replicate the harness here.
-            with self.assertRaises(Exception):
+            with self.assertRaises(AudreyAPIError) as exc:
                 client.restore(snapshot)
+            self.assertEqual(exc.exception.status_code, 400)
+            self.assertEqual(
+                str(exc.exception),
+                "Cannot import into a database that is not empty",
+            )
 
     def test_async_end_to_end_against_real_server(self) -> None:
         async def run() -> None:

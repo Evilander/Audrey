@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 import { Audrey } from '../dist/src/index.js';
+import { TRUST_CONTEXT_KEY, USER_VERIFIED_TRUST } from '../dist/src/trust.js';
 
 const TEST_DIR = './test-reflexes-data';
 
@@ -49,6 +50,7 @@ describe('Memory Reflexes', () => {
       content: 'Never deploy Audrey without checking the package tarball first.',
       source: 'direct-observation',
       tags: ['must-follow', 'release'],
+      context: { [TRUST_CONTEXT_KEY]: USER_VERIFIED_TRUST },
     });
 
     const report = await audrey.reflexes('deploy Audrey release', {
@@ -67,6 +69,7 @@ describe('Memory Reflexes', () => {
       content: 'Never deploy Audrey without checking the package tarball first.',
       source: 'direct-observation',
       tags: ['must-follow', 'release'],
+      context: { [TRUST_CONTEXT_KEY]: USER_VERIFIED_TRUST },
     });
 
     const preflight = await audrey.preflight('deploy Audrey release', {

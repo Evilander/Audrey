@@ -39,6 +39,10 @@ export interface MemoryEvent {
   cwd: string | null;
   file_fingerprints: string | null;
   redaction_state: RedactionState;
+  action_key: string | null;
+  hook_host: string | null;
+  hook_tool_use_id: string | null;
+  receipt_id: string | null;
   metadata: string | null;
   created_at: string;
 }
@@ -57,6 +61,10 @@ export interface EventInsert {
   cwd?: string | null;
   fileFingerprints?: string[] | null;
   redactionState?: RedactionState;
+  actionKey?: string | null;
+  hookHost?: string | null;
+  hookToolUseId?: string | null;
+  receiptId?: string | null;
   metadata?: Record<string, unknown> | null;
   createdAt?: string;
 }
@@ -76,6 +84,13 @@ function toJson(value: unknown): string | null {
   return JSON.stringify(value);
 }
 
+const ACTION_KEY_PATTERN = /^[a-f0-9]{64}$/;
+
+function indexedText(explicit: string | null | undefined, metadataValue: unknown): string | null {
+  const value = explicit !== undefined ? explicit : metadataValue;
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
 export function insertEvent(db: Database.Database, input: EventInsert): MemoryEvent {
   const id = input.id ?? generateId();
   const createdAt = input.createdAt ?? new Date().toISOString();
@@ -85,17 +100,28 @@ export function insertEvent(db: Database.Database, input: EventInsert): MemoryEv
       ? JSON.stringify(input.fileFingerprints)
       : null;
   const metadata = toJson(input.metadata ?? null);
+  const actionKeyCandidate =
+    input.actionKey !== undefined ? input.actionKey : input.metadata?.audrey_guard_action_key;
+  const actionKey =
+    typeof actionKeyCandidate === 'string' && ACTION_KEY_PATTERN.test(actionKeyCandidate)
+      ? actionKeyCandidate
+      : null;
+  const hookHost = indexedText(input.hookHost, input.metadata?.autopilot_host);
+  const hookToolUseId = indexedText(input.hookToolUseId, input.metadata?.autopilot_tool_use_id);
+  const receiptId = indexedText(input.receiptId, input.metadata?.receipt_id);
 
   db.prepare(
     `
     INSERT INTO memory_events (
       id, session_id, event_type, source, actor_agent, tool_name,
       input_hash, output_hash, outcome, error_summary, cwd,
-      file_fingerprints, redaction_state, metadata, created_at
+      file_fingerprints, redaction_state, action_key, hook_host,
+      hook_tool_use_id, receipt_id, metadata, created_at
     ) VALUES (
       @id, @sessionId, @eventType, @source, @actorAgent, @toolName,
       @inputHash, @outputHash, @outcome, @errorSummary, @cwd,
-      @fileFingerprints, @redactionState, @metadata, @createdAt
+      @fileFingerprints, @redactionState, @actionKey, @hookHost,
+      @hookToolUseId, @receiptId, @metadata, @createdAt
     )
   `,
   ).run({
@@ -112,6 +138,10 @@ export function insertEvent(db: Database.Database, input: EventInsert): MemoryEv
     cwd: input.cwd ?? null,
     fileFingerprints,
     redactionState,
+    actionKey,
+    hookHost,
+    hookToolUseId,
+    receiptId,
     metadata,
     createdAt,
   });
@@ -130,9 +160,45 @@ export function insertEvent(db: Database.Database, input: EventInsert): MemoryEv
     cwd: input.cwd ?? null,
     file_fingerprints: fileFingerprints,
     redaction_state: redactionState,
+    action_key: actionKey,
+    hook_host: hookHost,
+    hook_tool_use_id: hookToolUseId,
+    receipt_id: receiptId,
     metadata,
     created_at: createdAt,
   };
+}
+
+export interface ExactActionHistoryOptions {
+  actionKey: string;
+  actorAgent: string;
+  since?: string;
+}
+
+export function exactActionHistory(
+  db: Database.Database,
+  options: ExactActionHistoryOptions,
+): MemoryEvent[] {
+  const actorAgent = requireAgent(options.actorAgent);
+  return db
+    .prepare(
+      `
+      SELECT * FROM memory_events
+      WHERE action_key = @actionKey
+        AND (
+          (event_type = 'PostToolUse' AND outcome = 'succeeded')
+          OR (event_type = 'PostToolUseFailure' AND outcome = 'failed')
+        )
+        AND (actor_agent IS NULL OR actor_agent = @actorAgent)
+        ${options.since ? 'AND created_at >= @since' : ''}
+      ORDER BY created_at ASC, id ASC
+    `,
+    )
+    .all({
+      actionKey: options.actionKey,
+      actorAgent,
+      ...(options.since ? { since: options.since } : {}),
+    }) as MemoryEvent[];
 }
 
 export function listEvents(db: Database.Database, query: EventQuery = {}): MemoryEvent[] {
@@ -255,12 +321,37 @@ function matchingCwds(
 }
 
 /**
+ * Boolean SQL expression deciding whether a row (already known to be a
+ * 'failed' or 'succeeded' event, per `kind`) counts as in-scope for the
+ * project at `options.cwd`. Failures without a recorded cwd cannot be
+ * proven foreign, so they stay visible (fail toward warning). Successes are
+ * held to the opposite standard: only a success provably from this project
+ * may extinguish a local streak.
+ */
+function cwdVisibility(kind: 'failure' | 'success', cwdNames: string[] | undefined): string {
+  if (cwdNames === undefined) return '1';
+  if (kind === 'failure') {
+    return cwdNames.length > 0 ? `(cwd IS NULL OR cwd IN (${cwdNames.join(', ')}))` : 'cwd IS NULL';
+  }
+  return cwdNames.length > 0 ? `cwd IN (${cwdNames.join(', ')})` : '0';
+}
+
+/**
  * Tools with an unresolved failure streak, most recent first. Feeds PreToolUse
  * preflight warnings: "this command failed last time — here's what fixed it."
  *
  * failure_count counts failures since the tool's last success in scope
  * (extinction: disconfirming evidence retires the warning), not raw failures
  * in the window.
+ *
+ * Implemented as one filtered pass over memory_events plus per-tool window
+ * functions, rather than a correlated subquery (error summary, last success)
+ * and a NOT EXISTS extinction check evaluated per candidate row — the
+ * per-row version turns near-quadratic on a large event table.
+ *
+ * `scoped` must stay MATERIALIZED: without the hint the planner evaluates it
+ * once per referencing CTE as co-routines over the low-selectivity outcome
+ * index (~30x slower at 50k rows, measured).
  */
 export function recentFailures(
   db: Database.Database,
@@ -282,72 +373,72 @@ export function recentFailures(
     });
   }
 
-  // Failures without a recorded cwd cannot be proven foreign, so they stay
-  // visible (fail toward warning). Successes are held to the opposite
-  // standard: only a success provably from this project may extinguish a
-  // local streak.
-  const scopedClauses = (alias: string, kind: 'failure' | 'success' = 'failure') => {
-    const clauses = [actorAgent ? `AND ${alias}.actor_agent = @actorAgent` : ''];
-    if (cwdNames !== undefined) {
-      if (kind === 'failure') {
-        clauses.push(
-          cwdNames.length > 0
-            ? `AND (${alias}.cwd IS NULL OR ${alias}.cwd IN (${cwdNames.join(', ')}))`
-            : `AND ${alias}.cwd IS NULL`,
-        );
-      } else {
-        clauses.push(
-          cwdNames.length > 0 ? `AND ${alias}.cwd IN (${cwdNames.join(', ')})` : 'AND 1 = 0',
-        );
-      }
-    }
-    return clauses.filter(Boolean).join('\n               ');
-  };
+  const failureVisible = cwdVisibility('failure', cwdNames);
+  const successVisible = cwdVisibility('success', cwdNames);
 
-  const lastSuccessSubquery = `
-             SELECT MAX(s.created_at) FROM memory_events s
-             WHERE s.tool_name = e1.tool_name
-               AND s.outcome = 'succeeded'
-               AND s.created_at >= @since
-               ${scopedClauses('s', 'success')}
-  `;
+  // A failure is active while no success postdates it. Same-millisecond ties
+  // order by ULID id, which is monotonic within a process — last_success
+  // below breaks its own ties the same way, so a failure and the success
+  // that would extinguish it always agree on which one is "later".
+  const activeFailures = options.includeResolved
+    ? 'SELECT * FROM failures_with_boundary'
+    : `SELECT * FROM failures_with_boundary
+       WHERE last_succeeded_at IS NULL
+          OR created_at > last_succeeded_at
+          OR (created_at = last_succeeded_at AND id > last_succeeded_id)`;
 
   return db
     .prepare(
       `
-    SELECT e1.tool_name,
-           COUNT(*) AS failure_count,
-           MAX(e1.created_at) AS last_failed_at,
-           (
-             SELECT error_summary FROM memory_events e2
-             WHERE e2.tool_name = e1.tool_name
-               AND e2.outcome = 'failed'
-               AND e2.created_at >= @since
-               ${scopedClauses('e2')}
-             ORDER BY e2.created_at DESC LIMIT 1
-           ) AS last_error_summary,
-           (${lastSuccessSubquery}) AS last_succeeded_at
-    FROM memory_events e1
-    WHERE e1.outcome = 'failed'
-      AND e1.tool_name IS NOT NULL
-      AND e1.created_at >= @since
-      ${scopedClauses('e1')}
-      ${
-        // A failure is active while no success postdates it. Same-millisecond
-        // ties order by ULID id, which is monotonic within a process.
-        options.includeResolved
-          ? ''
-          : `AND NOT EXISTS (
-            SELECT 1 FROM memory_events later_s
-            WHERE later_s.tool_name = e1.tool_name
-              AND later_s.outcome = 'succeeded'
-              AND later_s.created_at >= @since
-              ${scopedClauses('later_s', 'success')}
-              AND (later_s.created_at > e1.created_at
-                OR (later_s.created_at = e1.created_at AND later_s.id > e1.id))
-          )`
-      }
-    GROUP BY e1.tool_name
+    WITH scoped AS MATERIALIZED (
+      SELECT id, tool_name, outcome, created_at, error_summary
+      FROM memory_events
+      WHERE tool_name IS NOT NULL
+        AND outcome IN ('failed', 'succeeded')
+        AND created_at >= @since
+        ${actorAgent ? 'AND actor_agent = @actorAgent' : ''}
+        AND (
+          (outcome = 'failed' AND ${failureVisible})
+          OR (outcome = 'succeeded' AND ${successVisible})
+        )
+    ),
+    failures AS (
+      SELECT id, tool_name, created_at, error_summary FROM scoped WHERE outcome = 'failed'
+    ),
+    successes AS (
+      SELECT id, tool_name, created_at FROM scoped WHERE outcome = 'succeeded'
+    ),
+    last_success AS (
+      SELECT tool_name, created_at AS last_succeeded_at, id AS last_succeeded_id
+      FROM (
+        SELECT tool_name, created_at, id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY tool_name ORDER BY created_at DESC, id DESC
+               ) AS rn
+        FROM successes
+      )
+      WHERE rn = 1
+    ),
+    failures_with_boundary AS (
+      SELECT f.id, f.tool_name, f.created_at, f.error_summary,
+             ls.last_succeeded_at, ls.last_succeeded_id
+      FROM failures f
+      LEFT JOIN last_success ls ON ls.tool_name = f.tool_name
+    ),
+    active_failures AS (${activeFailures}),
+    ranked AS (
+      SELECT tool_name, created_at, error_summary, last_succeeded_at,
+             ROW_NUMBER() OVER (
+               PARTITION BY tool_name ORDER BY created_at DESC, id DESC
+             ) AS rn,
+             COUNT(*) OVER (PARTITION BY tool_name) AS failure_count,
+             MAX(created_at) OVER (PARTITION BY tool_name) AS last_failed_at
+      FROM active_failures
+    )
+    SELECT tool_name, failure_count, last_failed_at,
+           error_summary AS last_error_summary, last_succeeded_at
+    FROM ranked
+    WHERE rn = 1
     ORDER BY last_failed_at DESC
     LIMIT ${limit}
   `,
@@ -355,7 +446,55 @@ export function recentFailures(
     .all(params) as FailurePattern[];
 }
 
-export function deleteEventsBefore(db: Database.Database, cutoffIso: string): number {
-  const result = db.prepare('DELETE FROM memory_events WHERE created_at < ?').run(cutoffIso);
-  return Number(result.changes);
+/**
+ * Default memory_events retention window. Guarded tool calls write at least
+ * two rows apiece (PreToolUse + a PostToolUse/PostToolUseFailure receipt),
+ * so an install with no retention keeps growing for its whole lifetime —
+ * that unbounded growth is what lets recentFailures() and createDatabase()'s
+ * embedding sync get slow. 30 days keeps failure-streak history well beyond
+ * recentFailures()'s own 7-day default lookback while bounding table size
+ * for long-running installs.
+ */
+export const DEFAULT_EVENT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+const DEFAULT_DELETE_BATCH_SIZE = 1000;
+const MAX_DELETE_BATCH_SIZE = 50000;
+
+export interface DeleteEventsBeforeOptions {
+  /**
+   * Rows deleted per statement. Deleting in bounded batches (rather than one
+   * DELETE spanning the whole backlog) keeps any single write short even
+   * when a long-neglected store has millions of stale rows to purge.
+   * Defaults to 1000, capped at 50000.
+   */
+  batchSize?: number;
+}
+
+/**
+ * Deletes memory_events rows older than cutoffIso, batching so a large
+ * purge cannot hold one long-running write. Returns the total number of
+ * rows deleted across all batches.
+ */
+export function deleteEventsBefore(
+  db: Database.Database,
+  cutoffIso: string,
+  options: DeleteEventsBeforeOptions = {},
+): number {
+  const batchSize = Math.max(
+    1,
+    Math.min(options.batchSize ?? DEFAULT_DELETE_BATCH_SIZE, MAX_DELETE_BATCH_SIZE),
+  );
+  const deleteBatch = db.prepare(
+    `DELETE FROM memory_events
+     WHERE id IN (SELECT id FROM memory_events WHERE created_at < ? LIMIT ?)`,
+  );
+
+  let totalDeleted = 0;
+  for (;;) {
+    const result = deleteBatch.run(cutoffIso, batchSize);
+    const deleted = Number(result.changes);
+    totalDeleted += deleted;
+    if (deleted < batchSize) break;
+  }
+  return totalDeleted;
 }

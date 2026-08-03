@@ -1,12 +1,21 @@
 /**
- * Hybrid retrieval: vector KNN + FTS5 BM25, fused via Reciprocal Rank Fusion.
+ * Hybrid retrieval: vector KNN + FTS5 BM25, fused into one score per document.
  *
- * RRF is the simplest fusion that tends to hold up in practice:
- *     score(d) = sum_i 1 / (k + rank_i(d))
- * where each `i` is a retriever (vector, FTS) and `k` is a smoothing constant
- * (60 is the classic default). Documents that show up in only one retriever
- * still contribute; documents in both get additive boosts without either
- * retriever dominating.
+ * The two retrievers produce genuinely different kinds of signal. Vector
+ * search already yields a continuous, confidence-aware score in [0, 1]
+ * (similarity * confidence) — that's `baseScore`, used as-is. FTS5's bm25
+ * rank has no comparable continuous scale, so it's converted to a
+ * reciprocal-rank term and normalized against its own best-possible value
+ * (rank 1): normalizedFtsRank = (k + 1) / (k + rank), which is 1.0 for the
+ * top FTS hit and shrinks toward 0 for lower ranks. With both signals now on
+ * the same [0, 1] scale, VECTOR_WEIGHT and FTS_WEIGHT set an honest tradeoff
+ * instead of one term being numerically invisible next to the other:
+ *     score(d) = baseScore(d) * VECTOR_WEIGHT + normalizedFtsRank(d) * FTS_WEIGHT
+ * A document only vector finds maxes out at VECTOR_WEIGHT; a document only
+ * FTS finds at rank 1 reaches FTS_WEIGHT. Since FTS_WEIGHT > VECTOR_WEIGHT,
+ * an exact keyword/identifier match beats a merely-similar vector hit even
+ * at the vector hit's best possible score — and a document both retrievers
+ * surface combines both terms, so it outranks either one alone.
  *
  * This module does NOT re-implement confidence scoring — vector candidates
  * arrive already scored; FTS-only candidates get an enrichment pass that
@@ -297,18 +306,19 @@ export function fuseResults(db: Database.Database, input: FuseInput): RecallResu
       if (result.confidence < minConfidence) continue;
     }
 
-    const vrank = ranks.vrank;
     const frank = ranks.frank;
-    const rrf =
-      (vrank !== undefined ? 1 / (RRF_K + vrank) : 0) +
-      (frank !== undefined ? 1 / (RRF_K + frank) : 0);
 
     let fusedScore: number;
     if (mode === 'keyword') {
       fusedScore = frank !== undefined ? 1 / (RRF_K + frank) : 0;
     } else {
       const baseScore = result.score ?? 0;
-      fusedScore = baseScore * VECTOR_WEIGHT + rrf * FTS_WEIGHT;
+      // Only the FTS rank feeds this term. The vector side already has its
+      // own continuous, confidence-aware score (baseScore) — folding vrank
+      // into this term too would double-count vector relevance and make it
+      // impossible for an FTS-only match to ever outrank a vector-only one.
+      const normalizedFtsRank = frank !== undefined ? (RRF_K + 1) / (RRF_K + frank) : 0;
+      fusedScore = baseScore * VECTOR_WEIGHT + normalizedFtsRank * FTS_WEIGHT;
     }
 
     fused.push({ ...result, score: fusedScore });

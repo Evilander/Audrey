@@ -3,16 +3,20 @@ import { z } from 'zod';
 import { homedir, platform, tmpdir } from 'node:os';
 import { dirname, extname, join, resolve } from 'node:path';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parseCodexHooksListResponse, type CodexHooksProbeResult } from './codex-hooks-probe.js';
 import {
   Audrey,
   MemoryController,
@@ -22,11 +26,22 @@ import {
 } from '../src/index.js';
 import { readStoredDimensions } from '../src/db.js';
 import { isAudreyProfileEnabled, type ProfileDiagnostics } from '../src/profile.js';
+import { redact } from '../src/redact.js';
+import {
+  applyHookTimeoutBudget,
+  escapeMemoryMarkup,
+  MEMORY_TRUST_NOTICE,
+} from '../src/autopilot.js';
+import { stripReservedTrustKeys } from '../src/trust.js';
 import type {
+  Affect,
   AudreyConfig,
   IntrospectResult,
   MemoryStatusResult,
+  MemoryType,
+  PublicRetrievalMode,
   RecallResults,
+  SourceType,
 } from '../src/types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
@@ -47,8 +62,10 @@ import {
   applyHostHookConfig,
   defaultHostHookPath,
   formatHostHookConfig,
+  inspectHostHookDiagnostics,
   mergeHostHookSettings,
   removeHostHookConfig,
+  type HookHost,
   type HookScope,
   type HostHookApplyResult,
 } from './hooks.js';
@@ -60,6 +77,7 @@ import {
   validateMemoryContent,
 } from './tool-validation.js';
 import {
+  memoryCapsuleToolSchema,
   memoryEncodeToolSchema,
   memoryForgetToolSchema,
   memoryGuardAfterToolSchema,
@@ -83,6 +101,7 @@ export {
   validateMemoryContent,
 } from './tool-validation.js';
 export * from './tool-schemas.js';
+export { parseCodexHooksListResponse } from './codex-hooks-probe.js';
 
 export const MCP_INSTRUCTIONS = [
   'Audrey provides persistent, evidence-backed memory. Autopilot hooks normally inject relevant context and guard tool actions automatically.',
@@ -92,6 +111,9 @@ export const MCP_INSTRUCTIONS = [
 
 const NPM_GLOBAL_INSTALL_COMMAND =
   'npm install -g audrey --allow-scripts=better-sqlite3,onnxruntime-node,sharp,protobufjs';
+const CODEX_HOOKS_PROBE_ENTRYPOINT = fileURLToPath(
+  new URL('./codex-hooks-probe.js', import.meta.url),
+);
 
 const subcommand = (process.argv[2] || '').trim() || undefined;
 function isEmbeddingWarmupDisabled(env: Record<string, string | undefined> = process.env): boolean {
@@ -622,7 +644,7 @@ export function formatInstallGuide(
   if (hosts.includes('codex')) {
     lines.push(
       installHooks
-        ? '- In Codex, review/trust the hooks once with /hooks and verify with codex mcp list.'
+        ? '- Codex hooks will be installed pending /hooks approval; review them there, then verify with codex mcp list.'
         : '- In Codex, verify with codex mcp list.',
     );
   }
@@ -686,6 +708,103 @@ function runCli(
   const invocation = resolveCliInvocation(command);
   if (!invocation) throw new Error(`${command} CLI was not found on PATH.`);
   execFileSync(invocation.command, [...invocation.argsPrefix, ...args], options);
+}
+
+function runCliOutput(
+  command: 'claude' | 'codex',
+  args: string[],
+  options: Parameters<typeof execFileSync>[2] = {},
+): string {
+  const invocation = resolveCliInvocation(command);
+  if (!invocation) throw new Error(`${command} CLI was not found on PATH.`);
+  return String(
+    execFileSync(invocation.command, [...invocation.argsPrefix, ...args], {
+      ...options,
+      encoding: 'utf8',
+    }),
+  );
+}
+
+export type CodexCliRunner = (args: string[]) => string;
+export type CodexHooksProbeRunner = () => CodexHooksProbeResult;
+
+export interface CodexHooksFeatureActivation {
+  changed: boolean;
+  rollback: () => void;
+}
+
+export function parseCodexHooksFeatureState(output: string): boolean {
+  const match = output.match(/^\s*hooks\s+\S+\s+(true|false)\s*$/m);
+  if (!match) throw new Error('Codex CLI did not report the hooks feature state.');
+  return match[1] === 'true';
+}
+
+function supportsReversibleCodexFeatures(help: string): boolean {
+  return /^\s*enable(?:\s|$)/m.test(help) && /^\s*disable(?:\s|$)/m.test(help);
+}
+
+export function ensureCodexHooksFeatureEnabled(
+  runCodex: CodexCliRunner,
+): CodexHooksFeatureActivation {
+  if (parseCodexHooksFeatureState(runCodex(['features', 'list']))) {
+    return { changed: false, rollback: () => {} };
+  }
+
+  const help = runCodex(['features', '--help']);
+  if (!supportsReversibleCodexFeatures(help)) {
+    throw new Error('Codex CLI does not expose reversible feature controls for hooks.');
+  }
+
+  try {
+    runCodex(['features', 'enable', 'hooks']);
+    if (!parseCodexHooksFeatureState(runCodex(['features', 'list']))) {
+      throw new Error('Codex hooks feature remained disabled after the enable command.');
+    }
+  } catch (error) {
+    try {
+      runCodex(['features', 'disable', 'hooks']);
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        'Codex hooks activation failed and compensating disable also failed.',
+        { cause: rollbackError },
+      );
+    }
+    throw error;
+  }
+
+  let active = true;
+  return {
+    changed: true,
+    rollback: () => {
+      if (!active) return;
+      runCodex(['features', 'disable', 'hooks']);
+      if (parseCodexHooksFeatureState(runCodex(['features', 'list']))) {
+        throw new Error('Codex hooks feature remained enabled after rollback.');
+      }
+      active = false;
+    },
+  };
+}
+
+export function rollbackFailedInstall(
+  installError: unknown,
+  featureActivation: CodexHooksFeatureActivation | null,
+  rollbackMcp: () => void,
+): never {
+  const errors = [installError];
+  try {
+    featureActivation?.rollback();
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    rollbackMcp();
+  } catch (error) {
+    errors.push(error);
+  }
+  if (errors.length === 1) throw installError;
+  throw new AggregateError(errors, 'Audrey install failed and one or more rollback steps failed.');
 }
 
 function hasCli(command: 'claude' | 'codex'): boolean {
@@ -763,6 +882,58 @@ function mcpCommandEnv(host: 'claude-code' | 'codex', scope: HookScope): NodeJS.
   return { ...process.env, CODEX_HOME: join(process.cwd(), '.codex') };
 }
 
+function codexCliRunner(scope: HookScope): CodexCliRunner | null {
+  if (!resolveCliInvocation('codex')) return null;
+  return args =>
+    runCliOutput('codex', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: mcpCommandEnv('codex', scope),
+    });
+}
+
+function codexHooksProbeRunner(
+  cwd: string,
+  env: Record<string, string | undefined>,
+): CodexHooksProbeRunner | null {
+  const invocation = resolveCliInvocation('codex');
+  if (!invocation) return null;
+  return () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        command: invocation.command,
+        argsPrefix: invocation.argsPrefix,
+        cwd,
+        version: VERSION,
+      }),
+      'utf8',
+    ).toString('base64url');
+    const raw = String(
+      execFileSync(process.execPath, [CODEX_HOOKS_PROBE_ENTRYPOINT, payload], {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 12_000,
+        windowsHide: true,
+      }),
+    );
+    const decoded = JSON.parse(raw) as CodexHooksProbeResult;
+    return parseCodexHooksListResponse({
+      id: 1,
+      result: {
+        data: [
+          {
+            cwd,
+            hooks: decoded.hooks,
+            warnings: decoded.warnings,
+            errors: decoded.errors,
+          },
+        ],
+      },
+    });
+  };
+}
+
 function replaceMcpRegistration(
   host: 'claude-code' | 'codex',
   scope: HookScope,
@@ -790,16 +961,29 @@ function replaceMcpRegistration(
   try {
     runCli(executable, addArgs, { stdio: 'inherit', env: mcpCommandEnv(host, scope) });
   } catch (error) {
-    if (previous !== null) writeFileSync(configPath, previous, 'utf8');
+    if (previous !== null) {
+      writeFileSync(configPath, previous, 'utf8');
+    } else {
+      try {
+        runCli(executable, removeArgs, { stdio: 'ignore', env: mcpCommandEnv(host, scope) });
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          'MCP registration failed and compensating removal also failed.',
+          { cause: rollbackError },
+        );
+      }
+    }
     throw error;
   }
   return backupPath;
 }
 
-function rollbackMcpRegistration(
+export function rollbackMcpRegistration(
   host: 'claude-code' | 'codex',
   scope: HookScope,
   backupPath: string | null,
+  runner: typeof runCli = runCli,
 ): void {
   if (backupPath && existsSync(backupPath)) {
     writeFileSync(mcpConfigPath(host, scope), readFileSync(backupPath, 'utf8'), 'utf8');
@@ -810,11 +994,7 @@ function rollbackMcpRegistration(
     host === 'claude-code'
       ? ['mcp', 'remove', '--scope', scope, SERVER_NAME]
       : ['mcp', 'remove', SERVER_NAME];
-  try {
-    runCli(executable, args, { stdio: 'ignore', env: mcpCommandEnv(host, scope) });
-  } catch {
-    // The original registration may not have existed.
-  }
+  runner(executable, args, { stdio: 'ignore', env: mcpCommandEnv(host, scope) });
 }
 
 function installHost(host: 'claude-code' | 'codex', options: InstallOptions): void {
@@ -836,7 +1016,13 @@ function installHost(host: 'claude-code' | 'codex', options: InstallOptions): vo
     process.env['AUDREY_AGENT'] || resolveHostAgent(host),
   );
   let hookResult: HostHookApplyResult | null;
+  let codexHooksActivation: CodexHooksFeatureActivation | null = null;
   try {
+    if (host === 'codex' && options.installHooks) {
+      const runCodex = codexCliRunner(options.scope);
+      if (!runCodex) throw new Error('Codex CLI was not found on PATH.');
+      codexHooksActivation = ensureCodexHooksFeatureEnabled(runCodex);
+    }
     hookResult = options.installHooks
       ? applyHostHookConfig({
           host,
@@ -849,8 +1035,9 @@ function installHost(host: 'claude-code' | 'codex', options: InstallOptions): vo
         })
       : null;
   } catch (error) {
-    rollbackMcpRegistration(host, options.scope, mcpBackup);
-    throw error;
+    rollbackFailedInstall(error, codexHooksActivation, () =>
+      rollbackMcpRegistration(host, options.scope, mcpBackup),
+    );
   }
   console.log(
     `[audrey] ${host}: MCP registered${hookResult ? ' and Autopilot hooks installed' : ''}.`,
@@ -915,23 +1102,30 @@ function install(): void {
     for (const host of available) installHost(host, options);
     if (options.installHooks) {
       warmAutopilot(available[0]!);
-      const trustNote = available.includes('codex')
-        ? ' Codex requires one-time hook trust via /hooks.'
-        : '';
-      console.log(
-        `[audrey] Autopilot is ready. Restart the host${available.length > 1 ? 's' : ''}.${trustNote}`,
-      );
-    } else {
-      console.log(
-        `[audrey] MCP tools are ready. Restart the host${available.length > 1 ? 's' : ''}.`,
-      );
     }
+    console.log(formatInstallCompletionMessage(available, options.installHooks));
     console.log(`[audrey] Memory store: ${resolveDataDir(process.env)}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[audrey] install failed: ${message}`);
     process.exitCode = 2;
   }
+}
+
+export function formatInstallCompletionMessage(
+  available: Array<'claude-code' | 'codex'>,
+  installHooks: boolean,
+): string {
+  const hostWord = available.length > 1 ? 'hosts' : 'host';
+  if (!installHooks) return `[audrey] MCP tools are ready. Restart the ${hostWord}.`;
+  if (available.includes('codex')) {
+    const claudeReady = available.includes('claude-code') ? ' Claude Code Autopilot is ready.' : '';
+    return (
+      `[audrey] MCP tools are ready.${claudeReady} ` +
+      `Codex hooks are installed and pending /hooks approval. Restart the ${hostWord}.`
+    );
+  }
+  return `[audrey] Autopilot is ready. Restart the ${hostWord}.`;
 }
 
 function removeHooks(host: 'claude-code' | 'codex', scope: HookScope): void {
@@ -1078,6 +1272,16 @@ export function recallPayload(results: RecallResults): {
     partial_failure: results.partialFailure ?? false,
     errors: results.errors ?? [],
   };
+}
+
+// A direct MCP tool call skips Autopilot's <audrey-memory> packet framing entirely, so a
+// tool response that carries stored memory content gets none of its anti-injection guards.
+// This attaches the same evidence-not-authority notice as a sibling field, so the JSON stays
+// machine-parseable — see toolResult's escapeMarkup option for the matching character escape.
+export function withMemoryTrustFraming<T extends object>(
+  payload: T,
+): T & { memory_trust_notice: string } {
+  return { ...payload, memory_trust_notice: MEMORY_TRUST_NOTICE };
 }
 
 function sectionTitle(section: string): string {
@@ -1587,16 +1791,149 @@ function addDoctorCheck(
   checks.push({ name, ok, severity, message, ...(hint ? { hint } : {}) });
 }
 
+const HOOK_FAILURE_LOG_FILENAME = 'hook-failures.log';
+// Rotate at 512KB so a wedged hook loop cannot grow this file unbounded; one backup
+// generation is enough for "how often has this been failing", not full forensics.
+const HOOK_FAILURE_LOG_MAX_BYTES = 512 * 1024;
+
+export function hookFailureLogPath(dataDir: string): string {
+  return join(dataDir, HOOK_FAILURE_LOG_FILENAME);
+}
+
+export interface HookFailureLogEntry {
+  timestamp: string;
+  host?: string;
+  event?: string;
+  errorClass: string;
+  message: string;
+}
+
+// The SQLite store is often the thing that is broken when a hook fails, so this log lives
+// on the filesystem independent of it. A logging failure must never become a hook failure,
+// so every I/O step here is swallowed rather than propagated.
+export function appendHookFailureLog(dataDir: string, entry: HookFailureLogEntry): void {
+  try {
+    mkdirSync(dataDir, { recursive: true });
+    const path = hookFailureLogPath(dataDir);
+    const line = `${JSON.stringify(entry)}\n`;
+    let existingSize = 0;
+    try {
+      existingSize = statSync(path).size;
+    } catch {
+      existingSize = 0;
+    }
+    if (existingSize + Buffer.byteLength(line, 'utf8') > HOOK_FAILURE_LOG_MAX_BYTES) {
+      const backupPath = `${path}.1`;
+      try {
+        rmSync(backupPath, { force: true });
+      } catch {
+        // Nothing to remove.
+      }
+      try {
+        renameSync(path, backupPath);
+      } catch {
+        // Nothing to rotate yet.
+      }
+    }
+    appendFileSync(path, line, { encoding: 'utf8', mode: 0o600 });
+  } catch {
+    // Never let a logging failure escalate into a hook failure.
+  }
+}
+
+export function readRecentHookFailures(dataDir: string, limit = 5): HookFailureLogEntry[] {
+  try {
+    const path = hookFailureLogPath(dataDir);
+    if (!existsSync(path)) return [];
+    const lines = readFileSync(path, 'utf8').split('\n').filter(Boolean);
+    const parsed: HookFailureLogEntry[] = [];
+    for (const line of lines.slice(-limit)) {
+      try {
+        const value = JSON.parse(line) as Partial<HookFailureLogEntry>;
+        if (typeof value.timestamp === 'string' && typeof value.message === 'string') {
+          parsed.push({
+            timestamp: value.timestamp,
+            ...(typeof value.host === 'string' ? { host: value.host } : {}),
+            ...(typeof value.event === 'string' ? { event: value.event } : {}),
+            errorClass: typeof value.errorClass === 'string' ? value.errorClass : 'Error',
+            message: value.message,
+          });
+        }
+      } catch {
+        continue;
+      }
+    }
+    return parsed;
+  } catch {
+    return [];
+  }
+}
+
+// Walks up from the installed entrypoint looking for the package.json that shipped it, so
+// doctor can tell a stale global install (npm-linked or otherwise) apart from a fresh one
+// without spawning the CLI just to ask its --version.
+function findNearestPackageVersion(entrypoint: string): string | null {
+  let dir = dirname(resolve(entrypoint));
+  for (let depth = 0; depth < 6; depth++) {
+    const candidate = join(dir, 'package.json');
+    if (existsSync(candidate)) {
+      try {
+        const pkg = JSON.parse(readFileSync(candidate, 'utf8')) as { version?: unknown };
+        if (typeof pkg.version === 'string') return pkg.version;
+      } catch {
+        // Fall through and keep walking up in case a malformed package.json shadows the real one.
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+function addHookVersionSkewCheck(
+  checks: DoctorCheck[],
+  host: HookHost,
+  runtimes: Array<{ nodePath: string; entrypoint: string }>,
+): void {
+  const entrypoints = Array.from(new Set(runtimes.map(runtime => runtime.entrypoint))).filter(
+    existsSync,
+  );
+  for (const entrypoint of entrypoints) {
+    const installedVersion = findNearestPackageVersion(entrypoint);
+    if (!installedVersion) continue;
+    const skewed = installedVersion !== VERSION;
+    addDoctorCheck(
+      checks,
+      `${host}-hook-version`,
+      !skewed,
+      skewed ? 'warning' : 'info',
+      skewed
+        ? `Installed ${host} hook entrypoint is v${installedVersion} but this CLI is v${VERSION} (${entrypoint}).`
+        : `installed hook entrypoint matches v${VERSION} (${entrypoint})`,
+      skewed
+        ? 'Run npm link (or reinstall audrey globally) so the installed hook matches this build, then reinstall hooks.'
+        : undefined,
+    );
+  }
+}
+
 export function buildDoctorReport({
   dataDir = resolveDataDir(process.env),
   claudeJsonPath = join(homedir(), '.claude.json'),
   env = process.env,
   nodeVersion = process.versions.node,
+  projectDir = process.cwd(),
+  codexCliRunner: injectedCodexCliRunner,
+  codexHooksProbe: injectedCodexHooksProbe,
 }: {
   dataDir?: string;
   claudeJsonPath?: string;
   env?: Record<string, string | undefined>;
   nodeVersion?: string;
+  projectDir?: string;
+  codexCliRunner?: CodexCliRunner | null;
+  codexHooksProbe?: CodexHooksProbeRunner | null;
 } = {}): DoctorReport {
   const checks: DoctorCheck[] = [];
   const statusReport = buildStatusReport({ dataDir, claudeJsonPath });
@@ -1705,6 +2042,315 @@ export function buildDoctorReport({
     addDoctorCheck(checks, 'host-config-generation', false, 'error', message);
   }
 
+  const codexHookPaths = Array.from(
+    new Set([
+      defaultHostHookPath({
+        host: 'codex',
+        scope: 'user',
+        projectDir,
+        env,
+      }),
+      defaultHostHookPath({
+        host: 'codex',
+        scope: 'project',
+        projectDir,
+        env,
+      }),
+    ]),
+  ).filter(path => existsSync(path));
+  const codexRuntimes: Array<{ nodePath: string; entrypoint: string }> = [];
+  let codexAudreyHandlersPresent = 0;
+  let codexUnparseableHandlers = 0;
+  let codexHookConfigReadable = true;
+  let codexRuntimeUsable = false;
+  let codexFeatureEnabled = false;
+  for (const hooksPath of codexHookPaths) {
+    try {
+      const settings = JSON.parse(readFileSync(hooksPath, 'utf8')) as unknown;
+      const handlerInspection = inspectHostHookDiagnostics('codex', settings);
+      codexAudreyHandlersPresent += handlerInspection.present;
+      codexUnparseableHandlers += handlerInspection.runtimeUnparseable;
+      codexRuntimes.push(...handlerInspection.runtimes);
+    } catch (err) {
+      codexHookConfigReadable = false;
+      const message = err instanceof Error ? err.message : String(err);
+      addDoctorCheck(
+        checks,
+        'codex-hook-config',
+        false,
+        'error',
+        `${hooksPath}: ${message}`,
+        'Repair the JSON or reinstall with audrey install --host codex.',
+      );
+    }
+  }
+
+  if (codexUnparseableHandlers > 0) {
+    addDoctorCheck(
+      checks,
+      'codex-hook-runtime',
+      false,
+      'error',
+      `Audrey could not parse the baked runtime paths for ${codexUnparseableHandlers} installed Codex handler(s).`,
+      'Reinstall with audrey install --host codex to refresh the handlers.',
+    );
+  } else if (codexHookConfigReadable && codexAudreyHandlersPresent === 0) {
+    addDoctorCheck(
+      checks,
+      'codex-hook-runtime',
+      true,
+      'info',
+      'no installed Audrey Codex handlers found',
+    );
+  } else if (codexRuntimes.length > 0) {
+    const missingRuntimePaths = Array.from(
+      new Set(
+        codexRuntimes.flatMap(runtime =>
+          [runtime.nodePath, runtime.entrypoint].filter(path => !existsSync(path)),
+        ),
+      ),
+    );
+    addDoctorCheck(
+      checks,
+      'codex-hook-runtime',
+      missingRuntimePaths.length === 0,
+      missingRuntimePaths.length === 0 ? 'info' : 'error',
+      missingRuntimePaths.length === 0
+        ? codexRuntimes.map(runtime => `${runtime.nodePath} -> ${runtime.entrypoint}`).join(', ')
+        : `Missing installed hook runtime paths: ${missingRuntimePaths.join(', ')}`,
+      missingRuntimePaths.length === 0
+        ? undefined
+        : 'Reinstall with audrey install --host codex to refresh baked runtime paths.',
+    );
+    codexRuntimeUsable = missingRuntimePaths.length === 0;
+    if (codexRuntimeUsable) addHookVersionSkewCheck(checks, 'codex', codexRuntimes);
+
+    const runCodex =
+      injectedCodexCliRunner === undefined ? codexCliRunner('user') : injectedCodexCliRunner;
+    if (!runCodex) {
+      addDoctorCheck(
+        checks,
+        'codex-hooks-feature',
+        false,
+        'error',
+        'Audrey Codex handlers are installed, but the Codex CLI is unavailable.',
+        'Install Codex, then rerun audrey install --host codex.',
+      );
+    } else {
+      try {
+        const enabled = parseCodexHooksFeatureState(runCodex(['features', 'list']));
+        codexFeatureEnabled = enabled;
+        addDoctorCheck(
+          checks,
+          'codex-hooks-feature',
+          enabled,
+          enabled ? 'info' : 'error',
+          enabled ? 'hooks enabled' : 'hooks disabled',
+          enabled ? undefined : 'Run audrey install --host codex to enable hooks safely.',
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        addDoctorCheck(
+          checks,
+          'codex-hooks-feature',
+          false,
+          'error',
+          message,
+          'Update Codex or reinstall with audrey install --host codex.',
+        );
+      }
+    }
+  }
+
+  if (codexRuntimeUsable && codexFeatureEnabled) {
+    const probe =
+      injectedCodexHooksProbe === undefined
+        ? codexHooksProbeRunner(process.cwd(), env)
+        : injectedCodexHooksProbe;
+    if (!probe) {
+      addDoctorCheck(
+        checks,
+        'codex-hook-trust',
+        false,
+        'error',
+        'unknown: Codex app-server is unavailable, so hook approval could not be verified.',
+        'Update Codex and rerun audrey doctor, or inspect /hooks in Codex.',
+      );
+    } else {
+      try {
+        const result = probe();
+        const configuredPaths = new Set(codexHookPaths.map(path => canonicalHostPath(path)));
+        const reportedAudreyHooks = result.hooks.filter(hook => {
+          if (!hook.sourcePath || !configuredPaths.has(canonicalHostPath(hook.sourcePath))) {
+            return false;
+          }
+          if (/^Audrey(?::|\s)/i.test(hook.statusMessage)) return true;
+          const command = hook.command.toLowerCase();
+          return codexRuntimes.some(
+            runtime =>
+              command.includes(runtime.nodePath.toLowerCase()) &&
+              command.includes(runtime.entrypoint.toLowerCase()),
+          );
+        });
+        const disabled = reportedAudreyHooks.filter(hook => !hook.enabled).length;
+        const untrusted = reportedAudreyHooks.filter(
+          hook => hook.trustStatus.toLowerCase() !== 'trusted',
+        ).length;
+        const issues: string[] = [];
+        if (reportedAudreyHooks.length === 0) {
+          issues.push('Codex did not report the installed Audrey handlers');
+        } else if (reportedAudreyHooks.length !== codexAudreyHandlersPresent) {
+          issues.push(
+            `Codex reported ${reportedAudreyHooks.length} of ${codexAudreyHandlersPresent} installed Audrey handlers`,
+          );
+        }
+        if (disabled > 0) issues.push(`${disabled} disabled`);
+        if (untrusted > 0) issues.push(`${untrusted} untrusted`);
+        if (result.errors.length > 0) {
+          issues.push(
+            `errors: ${result.errors
+              .map(error => redact(error).text.replace(/[\r\n]+/g, ' '))
+              .join('; ')}`,
+          );
+        }
+        addDoctorCheck(
+          checks,
+          'codex-hook-trust',
+          issues.length === 0,
+          issues.length === 0 ? 'info' : 'error',
+          issues.length === 0
+            ? `${reportedAudreyHooks.length} Audrey Codex hook(s) are trusted and active${result.warnings.length > 0 ? `; Codex also reported ${result.warnings.length} warning(s)` : ''}.`
+            : issues.join('; '),
+          issues.length === 0 ? undefined : 'Review and approve Audrey handlers in Codex /hooks.',
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        addDoctorCheck(
+          checks,
+          'codex-hook-trust',
+          false,
+          'error',
+          `unknown: ${redact(message).text.replace(/[\r\n]+/g, ' ')}`,
+          'Update Codex and rerun audrey doctor, or inspect /hooks in Codex.',
+        );
+      }
+    }
+  }
+
+  const claudeCodeHookPaths = Array.from(
+    new Set(
+      (['user', 'project', 'local'] as const).map(scope =>
+        defaultHostHookPath({ host: 'claude-code', scope, projectDir, env }),
+      ),
+    ),
+  ).filter(path => existsSync(path));
+
+  if (claudeCodeHookPaths.length === 0) {
+    addDoctorCheck(
+      checks,
+      'claude-code-hook-config',
+      true,
+      'info',
+      'no Claude Code settings file found at the user, project, or local scope',
+      'Run audrey install --host claude-code to add Autopilot hooks for Claude Code.',
+    );
+  } else {
+    const claudeCodeRuntimes: Array<{ nodePath: string; entrypoint: string }> = [];
+    let claudeCodeAudreyHandlersPresent = 0;
+    let claudeCodeUnparseableHandlers = 0;
+    let claudeCodeHookConfigReadable = true;
+    for (const settingsPath of claudeCodeHookPaths) {
+      try {
+        const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as unknown;
+        const handlerInspection = inspectHostHookDiagnostics('claude-code', settings);
+        claudeCodeAudreyHandlersPresent += handlerInspection.present;
+        claudeCodeUnparseableHandlers += handlerInspection.runtimeUnparseable;
+        claudeCodeRuntimes.push(...handlerInspection.runtimes);
+      } catch (err) {
+        claudeCodeHookConfigReadable = false;
+        const message = err instanceof Error ? err.message : String(err);
+        addDoctorCheck(
+          checks,
+          'claude-code-hook-config',
+          false,
+          'error',
+          `${settingsPath}: ${message}`,
+          'Repair the JSON or reinstall with audrey install --host claude-code.',
+        );
+      }
+    }
+
+    if (claudeCodeUnparseableHandlers > 0) {
+      addDoctorCheck(
+        checks,
+        'claude-code-hook-runtime',
+        false,
+        'error',
+        `Audrey could not parse the baked runtime paths for ${claudeCodeUnparseableHandlers} installed Claude Code handler(s).`,
+        'Reinstall with audrey install --host claude-code to refresh the handlers.',
+      );
+    } else if (claudeCodeHookConfigReadable && claudeCodeAudreyHandlersPresent === 0) {
+      addDoctorCheck(
+        checks,
+        'claude-code-hook-runtime',
+        true,
+        'info',
+        `no installed Audrey Claude Code handlers found in ${claudeCodeHookPaths.join(', ')}`,
+        'Run audrey install --host claude-code to enable memory packets for Claude Code.',
+      );
+    } else if (claudeCodeRuntimes.length > 0) {
+      const missingRuntimePaths = Array.from(
+        new Set(
+          claudeCodeRuntimes.flatMap(runtime =>
+            [runtime.nodePath, runtime.entrypoint].filter(path => !existsSync(path)),
+          ),
+        ),
+      );
+      addDoctorCheck(
+        checks,
+        'claude-code-hook-runtime',
+        missingRuntimePaths.length === 0,
+        missingRuntimePaths.length === 0 ? 'info' : 'error',
+        missingRuntimePaths.length === 0
+          ? claudeCodeRuntimes
+              .map(runtime => `${runtime.nodePath} -> ${runtime.entrypoint}`)
+              .join(', ')
+          : `Missing installed hook runtime paths: ${missingRuntimePaths.join(', ')}`,
+        missingRuntimePaths.length === 0
+          ? undefined
+          : 'Reinstall with audrey install --host claude-code to refresh baked runtime paths.',
+      );
+      // No Claude Code equivalent to Codex's live app-server trust probe exists, so
+      // handler presence + runtime-path liveness is as far as this check goes.
+      if (missingRuntimePaths.length === 0) {
+        addHookVersionSkewCheck(checks, 'claude-code', claudeCodeRuntimes);
+      }
+    }
+  }
+
+  const recentHookFailures = readRecentHookFailures(dataDir, 5);
+  const hookFailureLogFile = hookFailureLogPath(dataDir);
+  if (recentHookFailures.length === 0) {
+    addDoctorCheck(
+      checks,
+      'hook-failure-log',
+      true,
+      'info',
+      `no recent hook failures logged (${hookFailureLogFile})`,
+    );
+  } else {
+    const latest = recentHookFailures[recentHookFailures.length - 1]!;
+    addDoctorCheck(
+      checks,
+      'hook-failure-log',
+      false,
+      'warning',
+      `${recentHookFailures.length} recent hook failure(s) logged, most recently ${latest.timestamp} ` +
+        `[${latest.host ?? 'unknown host'}/${latest.event ?? 'unknown event'}] ${latest.errorClass}: ${latest.message}`,
+      `See ${hookFailureLogFile} for the full history.`,
+    );
+  }
+
   const serveHost = env.AUDREY_HOST;
   const serveAuth = env.AUDREY_API_KEY;
   const serveAllowNoAuth = env.AUDREY_ALLOW_NO_AUTH === '1';
@@ -1774,7 +2420,8 @@ export function formatDoctorReport(report: DoctorReport): string {
   }
 
   lines.push('');
-  lines.push(`Verdict: ${report.ok ? 'ready' : 'blocked'}`);
+  const hasUnknown = report.checks.some(check => !check.ok && check.severity === 'warning');
+  lines.push(`Verdict: ${report.ok ? (hasUnknown ? 'unknown' : 'ready') : 'blocked'}`);
   lines.push('');
   lines.push('Next steps:');
   lines.push('- Prove local behavior: audrey demo');
@@ -1819,12 +2466,20 @@ function doctor(): void {
 function toolResult(
   data: unknown,
   diagnostics?: ProfileDiagnostics,
+  options: { escapeMarkup?: boolean } = {},
 ): { content: Array<{ type: 'text'; text: string }>; _meta?: { diagnostics: ProfileDiagnostics } } {
+  const serialized = JSON.stringify(data);
+  // escapeMarkup runs on the already-serialized JSON text — the same safe-embedding idiom
+  // used to drop JSON into a <script> tag — so `<`/`>`/`&` inside stored memory content
+  // become valid \uXXXX escapes. JSON.parse decodes those back to the original character,
+  // so a machine client sees identical data; only the raw text an LLM reads before parsing
+  // loses the literal characters a memory could use to forge a tag boundary.
+  const text = options.escapeMarkup ? escapeMemoryMarkup(serialized) : serialized;
   const result: {
     content: Array<{ type: 'text'; text: string }>;
     _meta?: { diagnostics: ProfileDiagnostics };
   } = {
-    content: [{ type: 'text' as const, text: JSON.stringify(data) }],
+    content: [{ type: 'text' as const, text }],
   };
   if (diagnostics) result._meta = { diagnostics };
   return result;
@@ -2095,6 +2750,415 @@ export function registerHostPrompts(server: McpServer): void {
   );
 }
 
+// The handlers below are factored out of main() (rather than left as inline arrow functions
+// passed to server.tool) so tests can invoke the exact function the MCP server registers,
+// instead of only the pure helpers it happens to call.
+
+function storedEpisodeContent(audrey: Audrey, id: string, fallback: string): string {
+  try {
+    const row = audrey.db.prepare('SELECT content FROM episodes WHERE id = ?').get(id) as
+      { content?: string } | undefined;
+    return typeof row?.content === 'string' ? row.content : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+interface MemoryEncodeArgs {
+  content: string;
+  source: SourceType;
+  tags?: string[];
+  salience?: number;
+  private?: boolean;
+  context?: Record<string, string>;
+  affect?: Affect;
+  wait_for_consolidation?: boolean;
+}
+
+export function buildMemoryEncodeHandler(audrey: Audrey, profileEnabled: boolean) {
+  return async ({
+    content,
+    source,
+    tags,
+    salience,
+    private: isPrivate,
+    context,
+    affect,
+    wait_for_consolidation,
+  }: MemoryEncodeArgs) => {
+    try {
+      validateMemoryContent(content);
+      // memory_encode is an untrusted ingestion boundary: a caller-supplied context object
+      // must never be able to forge the Autopilot trust marker.
+      const safeContext = context ? stripReservedTrustKeys(context) : context;
+      if (profileEnabled) {
+        const { id, diagnostics, redaction } = await audrey.encodeWithDiagnostics({
+          content,
+          source,
+          tags,
+          salience,
+          private: isPrivate,
+          context: safeContext,
+          affect,
+          waitForConsolidation: wait_for_consolidation,
+        });
+        return toolResult(
+          {
+            id,
+            content: storedEpisodeContent(audrey, id, content),
+            source,
+            private: isPrivate ?? false,
+            redaction,
+          },
+          diagnostics,
+        );
+      }
+      const { id, redaction } = await audrey.encodeDetailed({
+        content,
+        source,
+        tags,
+        salience,
+        private: isPrivate,
+        context: safeContext,
+        affect,
+        waitForConsolidation: wait_for_consolidation,
+      });
+      return toolResult({
+        id,
+        content: storedEpisodeContent(audrey, id, content),
+        source,
+        private: isPrivate ?? false,
+        redaction,
+      });
+    } catch (err) {
+      return toolError(err);
+    }
+  };
+}
+
+interface MemoryRecallArgs {
+  query: string;
+  limit?: number;
+  types?: MemoryType[];
+  min_confidence?: number;
+  tags?: string[];
+  sources?: SourceType[];
+  after?: string;
+  before?: string;
+  context?: Record<string, string>;
+  mood?: { valence?: number; arousal?: number };
+  retrieval?: PublicRetrievalMode;
+  scope?: 'agent' | 'shared';
+}
+
+export function buildMemoryRecallHandler(audrey: Audrey, profileEnabled: boolean) {
+  return async ({
+    query,
+    limit,
+    types,
+    min_confidence,
+    tags,
+    sources,
+    after,
+    before,
+    context,
+    mood,
+    retrieval,
+    scope,
+  }: MemoryRecallArgs) => {
+    try {
+      const recallOptions = {
+        limit: limit ?? 10,
+        types,
+        minConfidence: min_confidence,
+        tags,
+        sources,
+        after,
+        before,
+        context,
+        mood,
+        retrieval,
+        scope,
+      };
+      if (profileEnabled) {
+        const { results, diagnostics } = await audrey.recallWithDiagnostics(query, recallOptions);
+        return toolResult(withMemoryTrustFraming(recallPayload(results)), diagnostics, {
+          escapeMarkup: true,
+        });
+      }
+      const results = await audrey.recall(query, recallOptions);
+      return toolResult(withMemoryTrustFraming(recallPayload(results)), undefined, {
+        escapeMarkup: true,
+      });
+    } catch (err) {
+      return toolError(err);
+    }
+  };
+}
+
+interface MemoryGreetingArgs {
+  context?: string;
+  scope?: 'agent' | 'shared';
+}
+
+export function buildMemoryGreetingHandler(audrey: Audrey) {
+  return async ({ context, scope }: MemoryGreetingArgs) => {
+    try {
+      const greeting = await audrey.greeting({ context, scope: scope ?? 'agent' });
+      // greeting.contextual is produced by the same recall() call as memory_recall and can
+      // carry the same partialFailure/errors degradation signal, bolted on as non-index own
+      // properties that a plain JSON.stringify would silently drop.
+      const payload = greeting.contextual
+        ? { ...greeting, contextual: recallPayload(greeting.contextual) }
+        : greeting;
+      // recent/principles/identity/unresolved are raw stored episode and semantic content,
+      // same as memory_recall's results — this response needs the same trust framing.
+      return toolResult(withMemoryTrustFraming(payload), undefined, { escapeMarkup: true });
+    } catch (err) {
+      return toolError(err);
+    }
+  };
+}
+
+interface MemoryCapsuleArgs {
+  query: string;
+  limit?: number;
+  budget_chars?: number;
+  mode?: 'balanced' | 'conservative' | 'aggressive';
+  recent_change_window_hours?: number;
+  include_risks?: boolean;
+  include_contradictions?: boolean;
+  scope?: 'agent' | 'shared';
+  cwd?: string;
+}
+
+export function buildMemoryCapsuleHandler(audrey: Audrey) {
+  return async ({
+    query,
+    limit,
+    budget_chars,
+    mode,
+    recent_change_window_hours,
+    include_risks,
+    include_contradictions,
+    scope,
+    cwd,
+  }: MemoryCapsuleArgs) => {
+    try {
+      const capsule = await audrey.capsule(query, {
+        limit,
+        budgetChars: budget_chars,
+        mode,
+        recentChangeWindowHours: recent_change_window_hours,
+        includeRisks: include_risks,
+        includeContradictions: include_contradictions,
+        cwd,
+        recall: { scope: scope ?? 'agent' },
+      });
+      // Same MemoryCapsule shape Autopilot wraps in <audrey-memory> tags for injected
+      // packets — a direct tool call gets none of that framing otherwise, and its
+      // must_follow section is exactly the content most likely to be read as a directive.
+      return toolResult(withMemoryTrustFraming(capsule), undefined, { escapeMarkup: true });
+    } catch (err) {
+      return toolError(err);
+    }
+  };
+}
+
+interface MemoryPreflightArgs {
+  action: string;
+  tool?: string;
+  session_id?: string;
+  cwd?: string;
+  files?: string[];
+  strict?: boolean;
+  limit?: number;
+  budget_chars?: number;
+  mode?: 'balanced' | 'conservative' | 'aggressive';
+  failure_window_hours?: number;
+  include_status?: boolean;
+  include_capsule?: boolean;
+  scope?: 'agent' | 'shared';
+}
+
+export function buildMemoryGuardBeforeHandler(audrey: Audrey) {
+  return async ({
+    action,
+    tool,
+    session_id,
+    cwd,
+    files,
+    strict,
+    limit,
+    budget_chars,
+    mode,
+    failure_window_hours,
+    include_status,
+    include_capsule,
+    scope,
+    acknowledge_prior_failure,
+  }: MemoryPreflightArgs & { acknowledge_prior_failure?: boolean }) => {
+    try {
+      const decision = await audrey.beforeAction(action, {
+        tool,
+        sessionId: session_id,
+        cwd,
+        files,
+        strict,
+        limit,
+        budgetChars: budget_chars,
+        mode,
+        recentFailureWindowHours: failure_window_hours,
+        includeStatus: include_status,
+        recordEvent: true,
+        includeCapsule: include_capsule,
+        scope: scope ?? 'agent',
+        acknowledgePriorFailure: acknowledge_prior_failure,
+      });
+      return toolResult(withMemoryTrustFraming(decision), undefined, { escapeMarkup: true });
+    } catch (err) {
+      return toolError(err);
+    }
+  };
+}
+
+export function buildMemoryPreflightHandler(audrey: Audrey) {
+  return async ({
+    action,
+    tool,
+    session_id,
+    cwd,
+    files,
+    strict,
+    limit,
+    budget_chars,
+    mode,
+    failure_window_hours,
+    include_status,
+    record_event,
+    include_capsule,
+    scope,
+  }: MemoryPreflightArgs & { record_event?: boolean }) => {
+    try {
+      const preflight = await audrey.preflight(action, {
+        tool,
+        sessionId: session_id,
+        cwd,
+        files,
+        strict,
+        limit,
+        budgetChars: budget_chars,
+        mode,
+        recentFailureWindowHours: failure_window_hours,
+        includeStatus: include_status,
+        recordEvent: record_event,
+        includeCapsule: include_capsule,
+        scope: scope ?? 'agent',
+      });
+      return toolResult(withMemoryTrustFraming(preflight), undefined, { escapeMarkup: true });
+    } catch (err) {
+      return toolError(err);
+    }
+  };
+}
+
+export function buildMemoryReflexesHandler(audrey: Audrey) {
+  return async ({
+    action,
+    tool,
+    session_id,
+    cwd,
+    files,
+    strict,
+    limit,
+    budget_chars,
+    mode,
+    failure_window_hours,
+    include_status,
+    record_event,
+    include_capsule,
+    include_preflight,
+    scope,
+  }: MemoryPreflightArgs & { record_event?: boolean; include_preflight?: boolean }) => {
+    try {
+      const report = await audrey.reflexes(action, {
+        tool,
+        sessionId: session_id,
+        cwd,
+        files,
+        strict,
+        limit,
+        budgetChars: budget_chars,
+        mode,
+        recentFailureWindowHours: failure_window_hours,
+        includeStatus: include_status,
+        recordEvent: record_event,
+        includeCapsule: include_capsule,
+        includePreflight: include_preflight,
+        scope: scope ?? 'agent',
+      });
+      return toolResult(withMemoryTrustFraming(report), undefined, { escapeMarkup: true });
+    } catch (err) {
+      return toolError(err);
+    }
+  };
+}
+
+interface MemoryGuardAfterArgs {
+  receipt_id: string;
+  tool?: string;
+  session_id?: string;
+  input?: unknown;
+  output?: unknown;
+  outcome?: 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown';
+  error_summary?: string;
+  cwd?: string;
+  files?: string[];
+  metadata?: Record<string, unknown>;
+  retain_details?: boolean;
+  evidence_feedback?: Record<string, 'used' | 'helpful' | 'wrong'>;
+  override_reason?: string;
+}
+
+export function buildMemoryGuardAfterHandler(audrey: Audrey) {
+  return async ({
+    receipt_id,
+    tool,
+    session_id,
+    input,
+    output,
+    outcome,
+    error_summary,
+    cwd,
+    files,
+    metadata,
+    retain_details,
+    evidence_feedback,
+    override_reason,
+  }: MemoryGuardAfterArgs) => {
+    try {
+      const result = audrey.afterAction({
+        receiptId: receipt_id,
+        tool,
+        sessionId: session_id,
+        input,
+        output,
+        outcome,
+        errorSummary: error_summary,
+        cwd,
+        files,
+        metadata,
+        retainDetails: retain_details,
+        evidenceFeedback: evidence_feedback,
+        overrideReason: override_reason,
+      });
+      return toolResult(result);
+    } catch (err) {
+      return toolError(err);
+    }
+  };
+}
+
 async function main(): Promise<void> {
   const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
@@ -2128,89 +3192,13 @@ async function main(): Promise<void> {
   server.tool(
     'memory_encode',
     memoryEncodeToolSchema,
-    async ({
-      content,
-      source,
-      tags,
-      salience,
-      private: isPrivate,
-      context,
-      affect,
-      wait_for_consolidation,
-    }) => {
-      try {
-        validateMemoryContent(content);
-        if (profileEnabled) {
-          const { id, diagnostics } = await audrey.encodeWithDiagnostics({
-            content,
-            source,
-            tags,
-            salience,
-            private: isPrivate,
-            context,
-            affect,
-            waitForConsolidation: wait_for_consolidation,
-          });
-          return toolResult({ id, content, source, private: isPrivate ?? false }, diagnostics);
-        }
-        const id = await audrey.encode({
-          content,
-          source,
-          tags,
-          salience,
-          private: isPrivate,
-          context,
-          affect,
-          waitForConsolidation: wait_for_consolidation,
-        });
-        return toolResult({ id, content, source, private: isPrivate ?? false });
-      } catch (err) {
-        return toolError(err);
-      }
-    },
+    buildMemoryEncodeHandler(audrey, profileEnabled),
   );
 
   server.tool(
     'memory_recall',
     memoryRecallToolSchema,
-    async ({
-      query,
-      limit,
-      types,
-      min_confidence,
-      tags,
-      sources,
-      after,
-      before,
-      context,
-      mood,
-      retrieval,
-      scope,
-    }) => {
-      try {
-        const recallOptions = {
-          limit: limit ?? 10,
-          types,
-          minConfidence: min_confidence,
-          tags,
-          sources,
-          after,
-          before,
-          context,
-          mood,
-          retrieval,
-          scope,
-        };
-        if (profileEnabled) {
-          const { results, diagnostics } = await audrey.recallWithDiagnostics(query, recallOptions);
-          return toolResult(results, diagnostics);
-        }
-        const results = await audrey.recall(query, recallOptions);
-        return toolResult(results);
-      } catch (err) {
-        return toolError(err);
-      }
-    },
+    buildMemoryRecallHandler(audrey, profileEnabled),
   );
 
   server.tool(
@@ -2380,13 +3368,7 @@ async function main(): Promise<void> {
           'agent keeps greeting scoped to this server agent identity. shared includes the whole store. Defaults to agent.',
         ),
     },
-    async ({ context, scope }) => {
-      try {
-        return toolResult(await audrey.greeting({ context, scope: scope ?? 'agent' }));
-      } catch (err) {
-        return toolError(err);
-      }
-    },
+    buildMemoryGreetingHandler(audrey),
   );
 
   server.tool(
@@ -2506,250 +3488,23 @@ async function main(): Promise<void> {
     },
   );
 
-  server.tool(
-    'memory_capsule',
-    {
-      query: z.string().describe('Natural-language query for the turn. Drives what gets surfaced.'),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(50)
-        .optional()
-        .describe('Max recall results to consider before categorization.'),
-      budget_chars: z
-        .number()
-        .int()
-        .min(200)
-        .max(32000)
-        .optional()
-        .describe('Token budget in characters (defaults to AUDREY_CONTEXT_BUDGET_CHARS or 4000).'),
-      mode: z
-        .enum(['balanced', 'conservative', 'aggressive'])
-        .optional()
-        .describe(
-          'Capsule mode: conservative = fewer, higher-confidence entries; aggressive = broader sweep.',
-        ),
-      recent_change_window_hours: z
-        .number()
-        .int()
-        .min(1)
-        .max(720)
-        .optional()
-        .describe('How far back "recent_changes" looks (default 24h).'),
-      include_risks: z
-        .boolean()
-        .optional()
-        .describe('Include recent tool failures as risks (default true).'),
-      include_contradictions: z
-        .boolean()
-        .optional()
-        .describe('Include open contradictions (default true).'),
-      scope: z
-        .enum(['agent', 'shared'])
-        .optional()
-        .describe(
-          'agent restricts memory recall to this MCP server agent identity. shared searches the whole store. Defaults to agent.',
-        ),
-      cwd: z
-        .string()
-        .optional()
-        .describe('Scope tool-failure risks to the project containing this directory.'),
-    },
-    async ({
-      query,
-      limit,
-      budget_chars,
-      mode,
-      recent_change_window_hours,
-      include_risks,
-      include_contradictions,
-      scope,
-      cwd,
-    }) => {
-      try {
-        const capsule = await audrey.capsule(query, {
-          limit,
-          budgetChars: budget_chars,
-          mode,
-          recentChangeWindowHours: recent_change_window_hours,
-          includeRisks: include_risks,
-          includeContradictions: include_contradictions,
-          cwd,
-          recall: { scope: scope ?? 'agent' },
-        });
-        return toolResult(capsule);
-      } catch (err) {
-        return toolError(err);
-      }
-    },
-  );
+  server.tool('memory_capsule', memoryCapsuleToolSchema, buildMemoryCapsuleHandler(audrey));
 
-  server.tool(
-    'memory_preflight',
-    memoryPreflightToolSchema,
-    async ({
-      action,
-      tool,
-      session_id,
-      cwd,
-      files,
-      strict,
-      limit,
-      budget_chars,
-      mode,
-      failure_window_hours,
-      include_status,
-      record_event,
-      include_capsule,
-      scope,
-    }) => {
-      try {
-        const preflight = await audrey.preflight(action, {
-          tool,
-          sessionId: session_id,
-          cwd,
-          files,
-          strict,
-          limit,
-          budgetChars: budget_chars,
-          mode,
-          recentFailureWindowHours: failure_window_hours,
-          includeStatus: include_status,
-          recordEvent: record_event,
-          includeCapsule: include_capsule,
-          scope: scope ?? 'agent',
-        });
-        return toolResult(preflight);
-      } catch (err) {
-        return toolError(err);
-      }
-    },
-  );
+  server.tool('memory_preflight', memoryPreflightToolSchema, buildMemoryPreflightHandler(audrey));
 
   server.tool(
     'memory_guard_before',
     memoryGuardBeforeToolSchema,
-    async ({
-      action,
-      tool,
-      session_id,
-      cwd,
-      files,
-      strict,
-      limit,
-      budget_chars,
-      mode,
-      failure_window_hours,
-      include_status,
-      include_capsule,
-      scope,
-    }) => {
-      try {
-        const decision = await audrey.beforeAction(action, {
-          tool,
-          sessionId: session_id,
-          cwd,
-          files,
-          strict,
-          limit,
-          budgetChars: budget_chars,
-          mode,
-          recentFailureWindowHours: failure_window_hours,
-          includeStatus: include_status,
-          recordEvent: true,
-          includeCapsule: include_capsule,
-          scope: scope ?? 'agent',
-        });
-        return toolResult(decision);
-      } catch (err) {
-        return toolError(err);
-      }
-    },
+    buildMemoryGuardBeforeHandler(audrey),
   );
 
   server.tool(
     'memory_guard_after',
     memoryGuardAfterToolSchema,
-    async ({
-      receipt_id,
-      tool,
-      session_id,
-      input,
-      output,
-      outcome,
-      error_summary,
-      cwd,
-      files,
-      metadata,
-      retain_details,
-      evidence_feedback,
-    }) => {
-      try {
-        const result = audrey.afterAction({
-          receiptId: receipt_id,
-          tool,
-          sessionId: session_id,
-          input,
-          output,
-          outcome,
-          errorSummary: error_summary,
-          cwd,
-          files,
-          metadata,
-          retainDetails: retain_details,
-          evidenceFeedback: evidence_feedback,
-        });
-        return toolResult(result);
-      } catch (err) {
-        return toolError(err);
-      }
-    },
+    buildMemoryGuardAfterHandler(audrey),
   );
 
-  server.tool(
-    'memory_reflexes',
-    memoryReflexesToolSchema,
-    async ({
-      action,
-      tool,
-      session_id,
-      cwd,
-      files,
-      strict,
-      limit,
-      budget_chars,
-      mode,
-      failure_window_hours,
-      include_status,
-      record_event,
-      include_capsule,
-      include_preflight,
-      scope,
-    }) => {
-      try {
-        const report = await audrey.reflexes(action, {
-          tool,
-          sessionId: session_id,
-          cwd,
-          files,
-          strict,
-          limit,
-          budgetChars: budget_chars,
-          mode,
-          recentFailureWindowHours: failure_window_hours,
-          includeStatus: include_status,
-          recordEvent: record_event,
-          includeCapsule: include_capsule,
-          includePreflight: include_preflight,
-          scope: scope ?? 'agent',
-        });
-        return toolResult(report);
-      } catch (err) {
-        return toolError(err);
-      }
-    },
-  );
+  server.tool('memory_reflexes', memoryReflexesToolSchema, buildMemoryReflexesHandler(audrey));
 
   server.tool(
     'memory_promote',
@@ -3002,7 +3757,7 @@ function parseGuardArgs(argv: string[]): {
   sessionId?: string;
   files: string[];
   json: boolean;
-  override: boolean;
+  acknowledgePriorFailure: boolean;
   failOnWarn: boolean;
   explain: boolean;
   hook: boolean;
@@ -3015,7 +3770,7 @@ function parseGuardArgs(argv: string[]): {
   let cwd: string | undefined;
   let sessionId: string | undefined;
   let json = false;
-  let override = false;
+  let acknowledgePriorFailure = false;
   let failOnWarn = false;
   let explain = false;
   let hook = false;
@@ -3038,8 +3793,14 @@ function parseGuardArgs(argv: string[]): {
       const value = token.slice('--file='.length);
       if (value) files.push(value);
     } else if (token === '--json') json = true;
-    else if (token === '--override') override = true;
-    else if (token === '--fail-on-warn') failOnWarn = true;
+    else if (token === '--acknowledge-prior-failure') acknowledgePriorFailure = true;
+    else if (token === '--override') {
+      process.stderr.write(
+        '[audrey] warning: --override is deprecated; use --acknowledge-prior-failure instead. ' +
+          'It no longer suppresses the block exit code.\n',
+      );
+      acknowledgePriorFailure = true;
+    } else if (token === '--fail-on-warn') failOnWarn = true;
     else if (token === '--explain') explain = true;
     else if (token === '--hook') hook = true;
     else if (token === '--strict') strict = true;
@@ -3055,7 +3816,7 @@ function parseGuardArgs(argv: string[]): {
     sessionId,
     files,
     json,
-    override,
+    acknowledgePriorFailure,
     failOnWarn,
     explain,
     hook,
@@ -3239,9 +4000,8 @@ function parseAutopilotArgs(argv: string[]): AutopilotCliOptions {
   return options;
 }
 
-function failClosedHookOutput(event: string | undefined, error: unknown): Record<string, unknown> {
+function failClosedHookOutput(event: string | undefined, reason: string): Record<string, unknown> {
   if (event !== 'PreToolUse') return {};
-  const reason = error instanceof Error ? error.message : String(error);
   return {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
@@ -3249,6 +4009,15 @@ function failClosedHookOutput(event: string | undefined, error: unknown): Record
       permissionDecisionReason: `Audrey Guard could not complete its safety check: ${reason}`,
     },
   };
+}
+
+function sanitizedHookErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    redact(message)
+      .text.replace(/[\r\n]+/g, ' ')
+      .trim() || 'Unknown hook failure'
+  );
 }
 
 async function autopilotHookCli(): Promise<void> {
@@ -3282,7 +4051,7 @@ async function autopilotHookCli(): Promise<void> {
     } else if (options.llmModel && config.llm) {
       config.llm.model = options.llmModel;
     }
-    audrey = new Audrey(config);
+    audrey = new Audrey(applyHookTimeoutBudget(config, options.expectedEvent));
     if (options.warmup) {
       await initializeEmbeddingProvider(audrey.embeddingProvider);
       process.stdout.write(
@@ -3294,13 +4063,21 @@ async function autopilotHookCli(): Promise<void> {
     const result = await runAutopilotHook(audrey, payload, options);
     process.stdout.write(`${JSON.stringify(result.output)}\n`);
   } catch (err) {
-    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    const message = sanitizedHookErrorMessage(err);
     process.stderr.write(`[audrey:autopilot] ${message}\n`);
+    appendHookFailureLog(options?.dataDir ?? resolveDataDir(process.env), {
+      timestamp: new Date().toISOString(),
+      ...(options?.host ? { host: options.host } : {}),
+      ...(options?.expectedEvent ? { event: options.expectedEvent } : {}),
+      errorClass: err instanceof Error ? err.constructor.name : typeof err,
+      message,
+    });
     const failClosed = ['1', 'true', 'yes'].includes(
       (process.env['AUDREY_HOOK_FAIL_CLOSED'] ?? '').toLowerCase(),
     );
-    const output = failClosed ? failClosedHookOutput(options?.expectedEvent, err) : {};
+    const output = failClosed ? failClosedHookOutput(options?.expectedEvent, message) : {};
     process.stdout.write(`${JSON.stringify(output)}\n`);
+    process.exitCode = failClosed ? 0 : 1;
   } finally {
     await audrey?.closeAsync();
   }
@@ -3390,7 +4167,9 @@ function formatGuardDecision(
 
   if (display === 'block') {
     lines.push('');
-    lines.push('Next: fix the warning and retry, or pass --override to allow this guard check.');
+    lines.push(
+      'Next: fix the blocking warning. For an exact prior failure only, retry with --acknowledge-prior-failure.',
+    );
   }
 
   return lines.join('\n');
@@ -3432,6 +4211,7 @@ async function guardCli(): Promise<void> {
       strict: args.strict || args.failOnWarn || args.hook,
       recordEvent: true,
       includeCapsule: args.includeCapsule || args.explain,
+      acknowledgePriorFailure: args.acknowledgePriorFailure,
     });
 
     if (args.hook) {
@@ -3442,11 +4222,7 @@ async function guardCli(): Promise<void> {
       console.log(formatGuardDecision(result, { explain: args.explain }));
     }
     const display = guardDisplayDecision(result);
-    if (
-      !args.hook &&
-      (display === 'block' || (args.failOnWarn && display === 'warn')) &&
-      !args.override
-    ) {
+    if (!args.hook && (display === 'block' || (args.failOnWarn && display === 'warn'))) {
       process.exitCode = 2;
     }
   } finally {
@@ -3454,13 +4230,14 @@ async function guardCli(): Promise<void> {
   }
 }
 
-function parseGuardAfterArgs(argv: string[]): {
+export function parseGuardAfterArgs(argv: string[]): {
   receipt?: string;
   tool?: string;
   sessionId?: string;
   outcome?: 'succeeded' | 'failed' | 'blocked' | 'skipped' | 'unknown';
   errorSummary?: string;
   cwd?: string;
+  overrideReason?: string;
 } {
   const out: Record<string, unknown> = {};
   for (let i = 0; i < argv.length; i++) {
@@ -3472,6 +4249,7 @@ function parseGuardAfterArgs(argv: string[]): {
     else if (token === '--outcome') out.outcome = next();
     else if (token === '--error-summary') out.errorSummary = next();
     else if (token === '--cwd') out.cwd = next();
+    else if (token === '--override-reason') out.overrideReason = next();
   }
   return out;
 }
@@ -3549,6 +4327,7 @@ async function guardAfterCli(): Promise<void> {
       outcome,
       errorSummary,
       cwd: args.cwd ?? (stdinPayload?.cwd as string | undefined),
+      overrideReason: args.overrideReason,
     });
     console.log(JSON.stringify(result));
   } finally {
@@ -3693,8 +4472,8 @@ Commands:
   greeting                      Emit session-start briefing (used by host hooks)
   reflect                       End-of-session memory capture from stdin transcript
   observe-tool                  Record a tool-trace event (--event, --tool, --outcome)
-  guard                         Check memory before an action (--json, --tool, --strict)
-  guard-after                   Record a guarded action outcome (--receipt, --outcome)
+  guard                         Check memory before an action (--json, --tool, --strict, --acknowledge-prior-failure)
+  guard-after                   Record a guarded action outcome (--receipt, --outcome, --override-reason)
   impact                        Show closed-loop feedback metrics (--window N, --limit N, --json)
   promote                       Promote rules from observed traces (--dry-run to preview)
 

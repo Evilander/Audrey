@@ -12,6 +12,23 @@ function extractJSON(text: string): string {
   return fenced ? fenced[1]!.trim() : text.trim();
 }
 
+const notifiedCloudEgressProviders = new Set<string>();
+
+/**
+ * One unmissable stderr notice per process, per provider, before the first
+ * outbound completion. Memory content (raw episode text, embedded verbatim
+ * by buildPrincipleExtractionPrompt) is about to leave the machine, and a
+ * user watching the process should see that named plainly at least once.
+ */
+function warnCloudEgressOnce(providerLabel: string, endpointHost: string): void {
+  if (notifiedCloudEgressProviders.has(providerLabel)) return;
+  notifiedCloudEgressProviders.add(providerLabel);
+  process.stderr.write(
+    `[audrey] Sending memory content to ${providerLabel} (${endpointHost}) for LLM processing. ` +
+      'Set AUDREY_LLM_PROVIDER to change this or leave it unset/"auto" for local-only heuristics.\n',
+  );
+}
+
 const PROMPT_TYPE_KEYS = [
   'principleExtraction',
   'contradictionDetection',
@@ -79,6 +96,7 @@ export class AnthropicLLMProvider implements LLMProvider {
     options: LLMCompletionOptions = {},
   ): Promise<LLMCompletionResult> {
     requireApiKey(this.apiKey, 'Anthropic LLM', 'ANTHROPIC_API_KEY');
+    warnCloudEgressOnce('anthropic', 'api.anthropic.com');
     const systemMsg = messages.find(m => m.role === 'system')?.content;
     const nonSystemMsgs = messages.filter(m => m.role !== 'system');
 
@@ -152,6 +170,7 @@ export class OpenAILLMProvider implements LLMProvider {
     options: LLMCompletionOptions = {},
   ): Promise<LLMCompletionResult> {
     requireApiKey(this.apiKey, 'OpenAI LLM', 'OPENAI_API_KEY');
+    warnCloudEgressOnce('openai', 'api.openai.com');
     // GPT-5 / o-series reject `max_tokens` and require `max_completion_tokens`,
     // which also counts hidden reasoning tokens — give those models extra headroom
     // so reasoning doesn't starve the visible completion (and yield empty content).

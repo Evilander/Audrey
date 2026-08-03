@@ -249,6 +249,7 @@ const scenarios = [
             'Must-follow release rule: before npm run deploy, run npm run db:generate and npm pack --dry-run.',
           source: 'direct-observation',
           tags: ['must-follow', 'release'],
+          context: { audrey_trust: 'user-verified' },
           salience: 0.98,
         },
       ],
@@ -261,6 +262,7 @@ const scenarios = [
           'Must-follow release rule: before npm run deploy, run npm run db:generate and npm pack --dry-run.',
         source: 'direct-observation',
         tags: ['must-follow', 'release'],
+        context: { audrey_trust: 'user-verified' },
         salience: 0.98,
       });
     },
@@ -492,6 +494,7 @@ const scenarios = [
           content: 'Must-follow project rule: release validation requires npm test before publish.',
           source: 'direct-observation',
           tags: ['must-follow', 'release'],
+          context: { audrey_trust: 'user-verified' },
           salience: 0.9,
         },
         {
@@ -499,6 +502,7 @@ const scenarios = [
             'Conflicting must-follow project rule: release validation requires pnpm test before publish.',
           source: 'direct-observation',
           tags: ['must-follow', 'release', 'conflict'],
+          context: { audrey_trust: 'user-verified' },
           salience: 0.9,
         },
       ],
@@ -510,6 +514,7 @@ const scenarios = [
         content: 'Must-follow project rule: release validation requires npm test before publish.',
         source: 'direct-observation',
         tags: ['must-follow', 'release'],
+        context: { audrey_trust: 'user-verified' },
         salience: 0.9,
       });
       await audrey.encode({
@@ -517,6 +522,7 @@ const scenarios = [
           'Conflicting must-follow project rule: release validation requires pnpm test before publish.',
         source: 'direct-observation',
         tags: ['must-follow', 'release', 'conflict'],
+        context: { audrey_trust: 'user-verified' },
         salience: 0.9,
       });
     },
@@ -539,6 +545,7 @@ const scenarios = [
             'Must-follow delete customer data rule: before delete customer data actions or deleting customer data, run npm run export:snapshot and verify the backup.',
           source: 'direct-observation',
           tags: ['must-follow', 'delete', 'backup'],
+          context: { audrey_trust: 'user-verified' },
           salience: 1,
         },
       ],
@@ -552,6 +559,7 @@ const scenarios = [
           'Must-follow delete customer data rule: before delete customer data actions or deleting customer data, run npm run export:snapshot and verify the backup.',
         source: 'direct-observation',
         tags: ['must-follow', 'delete', 'backup'],
+        context: { audrey_trust: 'user-verified' },
         salience: 1,
       });
     },

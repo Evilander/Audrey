@@ -28,7 +28,8 @@ export type RedactionClass =
   | 'us_ssn'
   | 'signed_url_signature'
   | 'session_cookie'
-  | 'high_entropy_secret';
+  | 'high_entropy_secret'
+  | 'passphrase';
 
 interface RedactionRule {
   readonly class: RedactionClass;
@@ -178,6 +179,17 @@ const RULES: RedactionRule[] = [
     },
   },
   {
+    // Independent of looksLikeWordIdentifier: catches space-separated BIP39
+    // mnemonics (which never form a single token at all) and hyphen-joined
+    // word runs long enough that they're implausible as identifiers.
+    class: 'passphrase',
+    pattern: /\b[a-z]{3,12}(?:[ -][a-z]{3,12}){7,}\b/g,
+    replacement: (match: string) => {
+      const words = match.split(/[ -]/);
+      return looksLikeOrdinaryProse(words) ? match : '[REDACTED:passphrase]';
+    },
+  },
+  {
     class: 'high_entropy_secret',
     pattern: /(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/=_-]{32,}(?![A-Za-z0-9+/=_-])/g,
     replacement: (match: string) =>
@@ -225,8 +237,13 @@ function shannonEntropy(value: string): number {
  * this shape explicitly.
  *
  * Each segment must be consistently cased (all-lowercase or all-uppercase)
- * the way machine identifiers are. Memorable passphrases such as
- * "Falcon-River-Cobalt-Meadow" use title-cased words and stay redactable.
+ * the way machine identifiers are. This also exempts short (fewer than
+ * eight words) all-lowercase dash-joined phrases such as
+ * "correct-horse-battery-staple" — real Diceware passphrases are not
+ * reliably title-cased, but narrowing this exemption further would start
+ * misclassifying real identifiers as secrets. Longer lowercase word runs
+ * (BIP39-length passphrases and mnemonics) are still caught below by the
+ * dedicated 'passphrase' rule, which does not consult this exemption.
  */
 function looksLikeWordIdentifier(value: string): boolean {
   const segments = value.split(/[_\-.]+/).filter(Boolean);
@@ -236,9 +253,133 @@ function looksLikeWordIdentifier(value: string): boolean {
   );
 }
 
+/**
+ * Common English function words. A real Diceware/BIP39 passphrase is drawn
+ * from a wordlist chosen for randomness, so a run of eight or more such
+ * words essentially never contains one of these; ordinary prose of the same
+ * length almost always does. This is what lets the 'passphrase' rule below
+ * catch bare word-salad secrets without flagging normal sentences.
+ */
+const PASSPHRASE_STOPWORDS = new Set([
+  'a',
+  'an',
+  'the',
+  'and',
+  'or',
+  'but',
+  'is',
+  'are',
+  'was',
+  'were',
+  'be',
+  'been',
+  'being',
+  'to',
+  'of',
+  'in',
+  'on',
+  'at',
+  'for',
+  'with',
+  'as',
+  'by',
+  'from',
+  'that',
+  'this',
+  'these',
+  'those',
+  'it',
+  'its',
+  'he',
+  'she',
+  'they',
+  'we',
+  'you',
+  'not',
+  'has',
+  'have',
+  'had',
+  'will',
+  'would',
+  'can',
+  'could',
+  'should',
+  'do',
+  'does',
+  'did',
+  'if',
+  'then',
+  'than',
+  'so',
+  'no',
+  'yes',
+  'my',
+  'your',
+  'his',
+  'her',
+  'our',
+  'their',
+  'what',
+  'which',
+  'who',
+  'when',
+  'where',
+  'why',
+  'how',
+  'all',
+  'any',
+  'some',
+  'more',
+  'most',
+  'other',
+  'such',
+  'only',
+  'own',
+  'same',
+  'too',
+  'very',
+  'just',
+  'about',
+  'into',
+  'over',
+  'after',
+  'before',
+  'between',
+  'during',
+  'without',
+  'under',
+  'again',
+  'once',
+  'here',
+  'there',
+  'near',
+]);
+
+function looksLikeOrdinaryProse(words: string[]): boolean {
+  return words.some(word => PASSPHRASE_STOPWORDS.has(word));
+}
+
+/**
+ * Filesystem paths share the secret alphabet (letters, digits, /, -, _),
+ * and a mixed-case POSIX path past 32 chars can cross the entropy gate —
+ * which would mangle cwd/file metadata at encode time and silently break
+ * project scoping. Two or more separator-delimited word-like segments is a
+ * path shape; base64 material essentially never splits into short clean
+ * segments and, unlike paths, routinely contains '+' or '='. A secret
+ * deliberately formatted to look like a path stays plaintext — bounded
+ * risk, versus systematically destroying real path metadata.
+ */
+function looksLikeFilesystemPath(value: string): boolean {
+  if (/[+=]/.test(value)) return false;
+  const segments = value.split('/');
+  if (segments.length < 3) return false;
+  return segments.every(segment => segment.length <= 28 && /^[A-Za-z0-9._~-]*$/.test(segment));
+}
+
 function looksLikeHighEntropySecret(value: string): boolean {
   if (value.length < 32) return false;
   if (looksLikeWordIdentifier(value)) return false;
+  if (looksLikeFilesystemPath(value)) return false;
   const classes = [
     /[a-z]/.test(value),
     /[A-Z]/.test(value),
@@ -294,6 +435,22 @@ function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY_PATTERN.test(key);
 }
 
+/**
+ * Assigns an own property without ever going through [[Set]]. A literal key
+ * named "__proto__" on a normal object triggers Object.prototype's accessor
+ * via bracket/dot assignment, silently swapping the object's prototype
+ * instead of storing the value — this is how redactJson previously lost or
+ * corrupted a payload nested under a "__proto__" key.
+ */
+function setOwnProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
 export function redactJson(value: unknown): {
   value: unknown;
   redactions: RedactionHit[];
@@ -334,7 +491,7 @@ export function redactJson(value: unknown): {
         if (keyRedaction.redactions.length > 0) addHits(keyRedaction.redactions);
         const redactedKey = keyRedaction.text;
         const keyIsSensitive = isSensitiveKey(key) || keyRedaction.redactions.length > 0;
-        out[redactedKey] = walk(val, key, sensitiveAncestor || keyIsSensitive);
+        setOwnProperty(out, redactedKey, walk(val, key, sensitiveAncestor || keyIsSensitive));
       }
       return out;
     }

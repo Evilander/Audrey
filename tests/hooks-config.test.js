@@ -4,17 +4,20 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
   applyHostHookConfig,
+  declaredHookTimeoutMs,
   defaultHostHookPath,
   formatHostHookConfig,
+  internalCallTimeoutMs,
   mergeHostHookSettings,
   removeHostHookConfig,
   removeHostHookSettings,
 } from '../dist/mcp-server/hooks.js';
+import { SERVER_NAME } from '../dist/mcp-server/config.js';
 
 const TEST_DIR = resolve('.tmp-vitest', 'hooks-config');
 const NODE_PATH = 'C:\\Program Files\\nodejs\\node.exe';
 const ENTRYPOINT = 'C:\\Program Files\\Audrey Memory\\dist\\mcp-server\\index.js';
-const SIDE_EFFECTFUL_MATCHER = '^(Bash|Edit|Write|NotebookEdit|apply_patch)$';
+const SIDE_EFFECTFUL_MATCHER = `^(Bash|Edit|MultiEdit|Write|NotebookEdit|apply_patch|mcp__(?!${SERVER_NAME}__).*)$`;
 
 function parseConfig(host) {
   return JSON.parse(
@@ -99,6 +102,13 @@ describe('formatHostHookConfig', () => {
     expect(config.hooks.PreToolUse[0].matcher).toBe(SIDE_EFFECTFUL_MATCHER);
     expect(config.hooks.PostToolUse[0].matcher).toBe(SIDE_EFFECTFUL_MATCHER);
     expect(config.hooks.PostToolUseFailure[0].matcher).toBe(SIDE_EFFECTFUL_MATCHER);
+    expect(new RegExp(SIDE_EFFECTFUL_MATCHER).test('MultiEdit')).toBe(true);
+    expect(new RegExp(SIDE_EFFECTFUL_MATCHER).test('mcp__github__create_pull_request')).toBe(true);
+    // Audrey's own server must not guard itself: recalling memory would
+    // trigger a full Guard preflight to guard the act of reading memory.
+    expect(new RegExp(SIDE_EFFECTFUL_MATCHER).test(`mcp__${SERVER_NAME}__memory_recall`)).toBe(
+      false,
+    );
     expect(config.hooks.PostCompact[0].matcher).toBe('manual|auto');
     expect(config.hooks.Stop[0].matcher).toBeUndefined();
     expect(JSON.stringify(config)).not.toContain('"matcher":".*"');
@@ -394,5 +404,27 @@ describe('defaultHostHookPath', () => {
     expect(defaultHostHookPath({ host: 'codex', scope: 'user', projectDir, env })).toBe(
       join(env.CODEX_HOME, 'hooks.json'),
     );
+  });
+});
+
+describe('hook timeout budget', () => {
+  it('reports the declared host timeout for each hook event in milliseconds', () => {
+    expect(declaredHookTimeoutMs('PreToolUse')).toBe(30_000);
+    expect(declaredHookTimeoutMs('PostToolUse')).toBe(20_000);
+    expect(declaredHookTimeoutMs('PostToolUseFailure')).toBe(20_000);
+    expect(declaredHookTimeoutMs('UserPromptSubmit')).toBe(30_000);
+    expect(declaredHookTimeoutMs('SessionStart')).toBe(30_000);
+    expect(declaredHookTimeoutMs('NotAHookEvent')).toBeUndefined();
+  });
+
+  it('leaves a safety margin below the declared host timeout so an internal abort wins the race', () => {
+    expect(internalCallTimeoutMs('PreToolUse')).toBeLessThan(declaredHookTimeoutMs('PreToolUse'));
+    expect(internalCallTimeoutMs('PostToolUse')).toBeLessThan(declaredHookTimeoutMs('PostToolUse'));
+    expect(internalCallTimeoutMs('PreToolUse')).toBeGreaterThan(0);
+    expect(internalCallTimeoutMs('NotAHookEvent')).toBeUndefined();
+  });
+
+  it('never returns a non-positive budget even for a margin larger than the declared timeout', () => {
+    expect(internalCallTimeoutMs('PostToolUse', 1_000_000)).toBeGreaterThanOrEqual(1000);
   });
 });

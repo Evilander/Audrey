@@ -35,8 +35,10 @@ const STOPWORDS = new Set([
   'did',
   'do',
   'does',
+  'find',
   'for',
   'from',
+  'give',
   'had',
   'has',
   'have',
@@ -45,6 +47,7 @@ const STOPWORDS = new Set([
   'in',
   'is',
   'it',
+  'lookup',
   'me',
   'my',
   'now',
@@ -53,8 +56,8 @@ const STOPWORDS = new Set([
   'or',
   'our',
   's',
-  'sam',
   'she',
+  'show',
   'that',
   'the',
   'their',
@@ -62,6 +65,7 @@ const STOPWORDS = new Set([
   'there',
   'they',
   'this',
+  'tell',
   'to',
   'was',
   'we',
@@ -86,6 +90,7 @@ const IDENTIFIER_TERMS = new Set([
   'identifier',
   'key',
   'number',
+  'passport',
   'password',
   'secret',
   'ssn',
@@ -118,6 +123,12 @@ interface SemanticWithSimilarity extends SemanticRow {
 
 interface ProceduralWithSimilarity extends ProceduralRow {
   similarity: number;
+  // The procedures table has no such column yet, so this is always
+  // undefined today (a no-op bonus) until the schema adds it — declared
+  // optional here so computeProceduralConfidence can read it now and start
+  // getting real values as soon as the column exists, with no further
+  // changes to this file.
+  source_type_diversity?: number;
 }
 
 interface RecallFilters {
@@ -221,19 +232,56 @@ function hasIdentifierIntent(query: string): boolean {
   return asksForValue && mentionsIdentifier;
 }
 
-function hasIdentifierEvidence(content: string): boolean {
-  const tokens = significantTokens(content);
-  if (tokens.some(token => IDENTIFIER_TERMS.has(token))) {
-    return true;
+function looksLikeIdentifierValue(raw: string): boolean {
+  const value = raw.replace(/^["']|["']$/g, '').replace(/[.,;]+$/, '');
+  if (value.length < 4) return false;
+  if (/^sk-[a-z0-9_-]{4,}$/i.test(value)) return true;
+  if (/^\d{4,}$/.test(value)) return true;
+  if (/[a-z]/i.test(value) && /\d/.test(value)) return true;
+  return /[_@./-]/.test(value) && /[a-z0-9]/i.test(value);
+}
+
+function hasIdentifierValueEvidence(content: string): boolean {
+  if (/\bsk-[a-z0-9_-]{4,}\b/i.test(content)) return true;
+
+  const labeledValue =
+    /\b(?:account(?:\s+(?:id|number))?|api\s+key|credential|id|identifier|passport(?:\s+(?:id|number))?|password|secret|ssn|token)\b\s*(?:(?:is|equals)\s+|[:=]\s*|\s+)(["']?[a-z0-9][a-z0-9_.:@/-]*["']?)/gi;
+  for (const match of content.matchAll(labeledValue)) {
+    if (looksLikeIdentifierValue(match[1]!)) return true;
   }
-  return /(?:\b\d{4,}\b|sk-[a-z0-9_-]+)/i.test(content);
+  return false;
+}
+
+function identifierKinds(text: string): Set<string> {
+  const normalized = String(text || '').toLowerCase();
+  const kinds = new Set<string>();
+  if (/\baccount\b/.test(normalized)) kinds.add('account');
+  if (/\bpassport\b/.test(normalized)) kinds.add('passport');
+  if (/\b(?:ssn|social security)\b/.test(normalized)) kinds.add('ssn');
+  if (/\b(?:api\s+key|credential|key|password|secret|token)\b/.test(normalized)) {
+    kinds.add('credential');
+  }
+  if (/\b(?:id|identifier)\b/.test(normalized)) kinds.add('id');
+  if (kinds.size === 0 && /\bnumber\b/.test(normalized)) kinds.add('number');
+  return kinds;
+}
+
+function hasIdentifierAnchor(query: string, content: string): boolean {
+  const queryTokens = significantTokens(query);
+  const contentTokens = new Set(significantTokens(content));
+  const queryKinds = identifierKinds(query);
+  const contentKinds = identifierKinds(content);
+  if (![...queryKinds].some(kind => contentKinds.has(kind))) return false;
+
+  const contextTokens = queryTokens.filter(token => !IDENTIFIER_TERMS.has(token));
+  return contextTokens.length === 0 || contextTokens.every(token => contentTokens.has(token));
 }
 
 function adjustedScore(query: string, entry: RecallResult): { score: number; coverage: number } {
   const coverage = lexicalCoverage(query, entry.content);
   let score = entry.score;
 
-  if (hasIdentifierIntent(query) && !hasIdentifierEvidence(entry.content)) {
+  if (hasIdentifierIntent(query) && !hasIdentifierValueEvidence(entry.content)) {
     score *= 0.02;
   }
 
@@ -265,20 +313,55 @@ function shouldSuppressDuplicate(existing: RecallResult, candidate: RecallResult
   if (existing.type !== candidate.type) return false;
   const existingReliability = reliabilityForRecallSource(existing.source);
   const candidateReliability = reliabilityForRecallSource(candidate.source);
+
+  if (existingReliability === candidateReliability) {
+    // The reliability gap below can never fire for two results from the same
+    // source class (e.g. two consolidation-derived semantics both at 0.85),
+    // so an equal-reliability duplicate pair falls back to the score, with a
+    // deterministic id tiebreak so ordering never depends on iteration order.
+    // With no reliability signal to lean on, the general 0.5 overlap gate is
+    // too loose here — "low salience episode memory" and "high salience
+    // episode memory" clear it while describing opposite things, so this
+    // branch additionally requires near-identical content before treating
+    // the pair as a duplicate at all.
+    if (overlap < 0.95) return false;
+    if (existing.score > candidate.score) return true;
+    if (existing.score < candidate.score) return false;
+    return existing.id < candidate.id;
+  }
+
   if (existingReliability < candidateReliability) return false;
   if (existingReliability - candidateReliability < 0.2) return false;
   return existing.score >= candidate.score * 0.95;
 }
 
-function applyResultGuards(query: string, results: RecallResult[], limit: number): RecallResult[] {
+function applyResultGuards(
+  query: string,
+  results: RecallResult[],
+  limit: number,
+  retrieval: NonNullable<RecallOptions['retrieval']>,
+): RecallResult[] {
   const identifierIntent = hasIdentifierIntent(query);
   const rescored = results
     .map(entry => {
       const { score, coverage } = adjustedScore(query, entry);
       return { ...entry, score, lexicalCoverage: coverage };
     })
-    .filter(entry => !identifierIntent || entry.score > 0.05)
-    .sort((a, b) => b.score - a.score);
+    .filter(
+      entry =>
+        !identifierIntent ||
+        (hasIdentifierValueEvidence(entry.content) &&
+          (retrieval === 'keyword'
+            ? entry.lexicalCoverage === 1
+            : hasIdentifierAnchor(query, entry.content))),
+    )
+    // Tie-break on id, not just score: shouldSuppressDuplicate's own id
+    // tiebreak only produces a deterministic winner if the smaller-id member
+    // of an exact-score tie is guaranteed to be processed (and accepted)
+    // first. Without this, which one wins would depend on whatever order
+    // fuseResults happened to emit them in, and a duplicate could survive
+    // simply by landing on the "processed first" side of an arbitrary order.
+    .sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   const accepted: RecallResult[] = [];
   for (const candidate of rescored) {
@@ -334,6 +417,8 @@ function computeSemanticConfidence(
     daysSinceRetrieval,
     weights: confidenceConfig.weights,
     customSourceReliability: confidenceConfig.sourceReliability,
+    sourceTypeDiversity: sem.source_type_diversity,
+    sourceDiversityWeight: confidenceConfig.sourceDiversityWeight,
   });
   confidence *= interferenceModifier(
     sem.interference_count || 0,
@@ -363,6 +448,8 @@ function computeProceduralConfidence(
     daysSinceRetrieval,
     weights: confidenceConfig.weights,
     customSourceReliability: confidenceConfig.sourceReliability,
+    sourceTypeDiversity: proc.source_type_diversity,
+    sourceDiversityWeight: confidenceConfig.sourceDiversityWeight,
   });
   confidence *= interferenceModifier(
     proc.interference_count || 0,
@@ -899,12 +986,13 @@ export async function* recallStream(
   let ftsLookupSucceeded = false;
   if (retrieval !== 'vector') {
     const candidateK = initialCandidateK(limit, Boolean(hasFilters));
+    const ftsQuery = hasIdentifierIntent(query) ? significantTokens(query).join(' ') : query;
     try {
       ftsIds = profile
         ? profile.measureSync('recall.fts_lookup', () =>
-            ftsIdsByType(db, query, searchTypes, candidateK, agentFilter),
+            ftsIdsByType(db, ftsQuery, searchTypes, candidateK, agentFilter),
           )
-        : ftsIdsByType(db, query, searchTypes, candidateK, agentFilter);
+        : ftsIdsByType(db, ftsQuery, searchTypes, candidateK, agentFilter);
       ftsLookupSucceeded = true;
     } catch (err) {
       recordPartialFailure(options, 'fts', 'recall.fts_lookup', err);
@@ -934,9 +1022,9 @@ export async function* recallStream(
 
     return profile
       ? profile.measureSync('recall.result_guards', () =>
-          applyResultGuards(query, resultsToGuard, limit),
+          applyResultGuards(query, resultsToGuard, limit, retrieval),
         )
-      : applyResultGuards(query, resultsToGuard, limit);
+      : applyResultGuards(query, resultsToGuard, limit, retrieval);
   };
 
   let top = fuseAndGuard(vectorResults);

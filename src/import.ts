@@ -59,6 +59,8 @@ const exportedEpisodeSchema = z.object({
   superseded_by: optionalIdSchema,
   consolidated: z.union([z.literal(0), z.literal(1)]).optional(),
   private: z.union([z.literal(0), z.literal(1)]).optional(),
+  usage_count: countSchema.optional(),
+  last_used_at: optionalTextSchema,
 });
 
 const exportedSemanticSchema = z.object({
@@ -83,6 +85,8 @@ const exportedSemanticSchema = z.object({
   challenge_count: countSchema.optional(),
   interference_count: countSchema.optional(),
   salience: scoreSchema.optional(),
+  usage_count: countSchema.optional(),
+  last_used_at: optionalTextSchema,
 });
 
 const exportedProcedureSchema = z.object({
@@ -101,6 +105,8 @@ const exportedProcedureSchema = z.object({
   retrieval_count: countSchema.optional(),
   interference_count: countSchema.optional(),
   salience: scoreSchema.optional(),
+  usage_count: countSchema.optional(),
+  last_used_at: optionalTextSchema,
 });
 
 const exportedCausalLinkSchema = z.object({
@@ -166,6 +172,14 @@ const exportedMemoryEventSchema = z.object({
   cwd: optionalTextSchema,
   file_fingerprints: optionalTextSchema,
   redaction_state: z.enum(['unreviewed', 'redacted', 'clean', 'quarantined']).nullable().optional(),
+  action_key: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/, 'action_key must be 64 lowercase hexadecimal characters')
+    .nullable()
+    .optional(),
+  hook_host: optionalTextSchema,
+  hook_tool_use_id: optionalTextSchema,
+  receipt_id: optionalTextSchema,
   metadata: optionalTextSchema,
   created_at: isoLikeStringSchema,
 });
@@ -198,6 +212,23 @@ interface CountRow {
 
 function jsonOrNull(value: unknown): string | null {
   return value == null ? null : JSON.stringify(value);
+}
+
+function indexedValueFromMetadata(metadata: string | null | undefined, key: string): string | null {
+  if (!metadata) return null;
+  try {
+    const parsed = JSON.parse(metadata) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const value = (parsed as Record<string, unknown>)[key];
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function actionKeyFromMetadata(metadata: string | null | undefined): string | null {
+  const actionKey = indexedValueFromMetadata(metadata, 'audrey_guard_action_key');
+  return actionKey && /^[a-f0-9]{64}$/.test(actionKey) ? actionKey : null;
 }
 
 function isDatabaseEmpty(db: Database.Database): boolean {
@@ -264,8 +295,8 @@ export async function importMemories(
   const insertEpisode = db.prepare(`
     INSERT INTO episodes (id, content, embedding, source, agent, source_reliability, salience, context, affect, tags,
       causal_trigger, causal_consequence, created_at, embedding_model, embedding_version,
-      supersedes, superseded_by, consolidated, "private")
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      supersedes, superseded_by, consolidated, "private", usage_count, last_used_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVecEpisode = db.prepare(
     'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
@@ -276,8 +307,8 @@ export async function importMemories(
       evidence_count, supporting_count, contradicting_count, source_type_diversity,
       consolidation_checkpoint, embedding_model, embedding_version, consolidation_model,
       consolidation_prompt_hash, created_at, last_reinforced_at, retrieval_count, challenge_count,
-      interference_count, salience)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      interference_count, salience, usage_count, last_used_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVecSemantic = db.prepare(
     'INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
@@ -286,8 +317,8 @@ export async function importMemories(
   const insertProcedure = db.prepare(`
     INSERT INTO procedures (id, content, agent, embedding, state, trigger_conditions, evidence_episode_ids,
       success_count, failure_count, embedding_model, embedding_version, created_at, last_reinforced_at,
-      retrieval_count, interference_count, salience)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      retrieval_count, interference_count, salience, usage_count, last_used_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVecProcedure = db.prepare(
     'INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
@@ -320,13 +351,9 @@ export async function importMemories(
     INSERT INTO memory_events (
       id, session_id, event_type, source, actor_agent, tool_name,
       input_hash, output_hash, outcome, error_summary, cwd, file_fingerprints,
-      redaction_state, metadata, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const upsertConfig = db.prepare(`
-    INSERT INTO audrey_config (key, value) VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      redaction_state, action_key, hook_host, hook_tool_use_id, receipt_id,
+      metadata, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const writeImport = db.transaction(() => {
@@ -354,6 +381,8 @@ export async function importMemories(
         ep.superseded_by ?? null,
         ep.consolidated ?? 0,
         ep.private ?? 0,
+        ep.usage_count ?? 0,
+        ep.last_used_at ?? null,
       );
       insertVecEpisode.run(
         ep.id,
@@ -392,6 +421,8 @@ export async function importMemories(
         sem.challenge_count ?? 0,
         sem.interference_count ?? 0,
         sem.salience ?? 0.5,
+        sem.usage_count ?? 0,
+        sem.last_used_at ?? null,
       );
       insertVecSemantic.run(sem.id, ownerAgent, embeddingBuffer, sem.state);
       insertFTSSemantic(db, sem.id, sem.content);
@@ -418,6 +449,8 @@ export async function importMemories(
         proc.retrieval_count ?? 0,
         proc.interference_count ?? 0,
         proc.salience ?? 0.5,
+        proc.usage_count ?? 0,
+        proc.last_used_at ?? null,
       );
       insertVecProcedure.run(proc.id, ownerAgent, embeddingBuffer, proc.state);
       insertFTSProcedure(db, proc.id, proc.content);
@@ -495,14 +528,19 @@ export async function importMemories(
         event.cwd ?? null,
         event.file_fingerprints ?? null,
         event.redaction_state ?? 'unreviewed',
+        event.action_key !== undefined ? event.action_key : actionKeyFromMetadata(event.metadata),
+        event.hook_host !== undefined
+          ? event.hook_host
+          : indexedValueFromMetadata(event.metadata, 'autopilot_host'),
+        event.hook_tool_use_id !== undefined
+          ? event.hook_tool_use_id
+          : indexedValueFromMetadata(event.metadata, 'autopilot_tool_use_id'),
+        event.receipt_id !== undefined
+          ? event.receipt_id
+          : indexedValueFromMetadata(event.metadata, 'receipt_id'),
         event.metadata ?? null,
         event.created_at,
       );
-    }
-
-    for (const [key, value] of Object.entries((snapshot.config || {}) as Record<string, unknown>)) {
-      if (key !== 'schema_version') continue;
-      upsertConfig.run(key, String(value));
     }
   });
 
