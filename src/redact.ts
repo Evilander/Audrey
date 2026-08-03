@@ -359,9 +359,27 @@ function looksLikeOrdinaryProse(words: string[]): boolean {
   return words.some(word => PASSPHRASE_STOPWORDS.has(word));
 }
 
+/**
+ * Filesystem paths share the secret alphabet (letters, digits, /, -, _),
+ * and a mixed-case POSIX path past 32 chars can cross the entropy gate —
+ * which would mangle cwd/file metadata at encode time and silently break
+ * project scoping. Two or more separator-delimited word-like segments is a
+ * path shape; base64 material essentially never splits into short clean
+ * segments and, unlike paths, routinely contains '+' or '='. A secret
+ * deliberately formatted to look like a path stays plaintext — bounded
+ * risk, versus systematically destroying real path metadata.
+ */
+function looksLikeFilesystemPath(value: string): boolean {
+  if (/[+=]/.test(value)) return false;
+  const segments = value.split('/');
+  if (segments.length < 3) return false;
+  return segments.every(segment => segment.length <= 28 && /^[A-Za-z0-9._~-]*$/.test(segment));
+}
+
 function looksLikeHighEntropySecret(value: string): boolean {
   if (value.length < 32) return false;
   if (looksLikeWordIdentifier(value)) return false;
+  if (looksLikeFilesystemPath(value)) return false;
   const classes = [
     /[a-z]/.test(value),
     /[A-Z]/.test(value),

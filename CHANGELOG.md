@@ -7,6 +7,7 @@
 - `memory_encode`, `POST /v1/encode`, and `Audrey.encode` now redact content, context values, and affect labels before anything reaches the episodes table, the full-text index, or the embedding model. Previously only tool-trace capture was redacted; a secret pasted into an explicit "remember this" call was stored in plaintext. The MCP tool result now echoes the stored (redacted) content plus a redaction summary instead of reflecting the caller's raw input, and batch encodes embed the redacted text rather than the original.
 - A dedicated redaction rule catches multi-word passphrases and BIP39-style mnemonics (eight or more space- or hyphen-joined lowercase words). The previous identifier exemption treated exactly that shape as a machine identifier and let it through.
 - `redactJson` handles a literal `__proto__` key as ordinary data: the nested value is redacted and preserved instead of silently vanishing through the prototype setter.
+- The high-entropy secret rule exempts filesystem-path shapes. Long mixed-case POSIX paths could cross the entropy gate, which mangled stored `cwd` metadata and silently broke Guard project scoping on affected machines.
 - Memories marked `private` are excluded from the episode content sent to a configured cloud LLM during consolidation. They still consolidate through the local heuristic path.
 - The first cloud LLM completion in a process prints a one-time stderr notice naming the provider and endpoint before any memory content leaves the machine.
 
