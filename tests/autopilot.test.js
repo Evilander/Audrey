@@ -417,7 +417,7 @@ describe('Audrey Autopilot', () => {
       { host: 'codex' },
     );
 
-    expect(result.output.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(result.output).toHaveProperty('hookSpecificOutput.permissionDecision', 'deny');
     expect(result.output.hookSpecificOutput?.permissionDecisionReason).toContain(policyId);
     const receipt = audrey.db
       .prepare('SELECT file_fingerprints, metadata FROM memory_events WHERE id = ?')
