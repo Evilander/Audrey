@@ -237,6 +237,29 @@ describe('redact', () => {
     expect(Object.prototype.hasOwnProperty.call(result.value, '__proto__')).toBe(true);
   });
 
+  it('leaves long mixed-case filesystem paths untouched', () => {
+    // A 32+ char mixed-case POSIX path matches the high-entropy alphabet and
+    // can cross the entropy gate, which mangled stored cwd context and broke
+    // Guard project scoping on CI-depth checkout paths.
+    for (const path of [
+      '/home/runner/work/Audrey/Audrey/test-autopilot-data/project-a',
+      '/home/tyler/Projects/MyApp/src/components',
+      '/Users/casey/Development/ServiceMesh/ingress-gateway/config',
+      'C:/Users/Someone/AppData/Local/Programs/example-tool',
+    ]) {
+      const result = redact(path);
+      expect(result.state).toBe('clean');
+      expect(result.text).toBe(path);
+    }
+  });
+
+  it('still redacts base64 material even when it contains slashes', () => {
+    const secret = 'dGhpcyBpcyBub3QgYSBwYXRo/aXQgaXM+c2VjcmV0IG1hdGVyaWFs+with+plus=';
+    const result = redact(`token ${secret}`);
+    expect(result.state).toBe('redacted');
+    expect(result.text).not.toContain(secret);
+  });
+
   it('summarizeRedactions reports class:count pairs', () => {
     expect(summarizeRedactions([])).toBe('clean');
     expect(
