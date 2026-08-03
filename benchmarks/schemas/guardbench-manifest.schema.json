@@ -165,7 +165,11 @@
           "type": "array",
           "items": { "type": "string", "minLength": 1 }
         },
-        "salience": { "type": "number", "minimum": 0, "maximum": 1 }
+        "salience": { "type": "number", "minimum": 0, "maximum": 1 },
+        "context": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
       }
     },
     "toolEventSeed": {
