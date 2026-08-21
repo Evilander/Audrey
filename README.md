@@ -94,6 +94,29 @@ Audrey treats memory as more than a pile of text chunks.
 
 Every context packet includes memory IDs, confidence, provenance where available, and a reason for inclusion. Uncertain or disputed memories are labeled as such. Retrieved content is wrapped with a simple rule: memory is evidence, not authority; current system and user instructions always win.
 
+## When a memory stops being true
+
+Age is not the only way a memory goes wrong. A note saying "ship with `npm run deploy:prod`" is perfectly recent, well sourced, and completely wrong the day that script is deleted. Worse, every recall reinforces it, because retrieval counts as evidence that a memory is useful. A confidently stated, well-supported, false instruction is more damaging than no memory at all.
+
+So Audrey checks. When a memory is written, it records the claims inside it that can be verified against the project — repository-relative paths and package script names — and keeps only the ones that resolve at that moment. That last part is what makes the signal worth anything: a claim that never resolved is a guess about a typo, while a claim that resolved once and no longer does is the world moving out from under a memory that still asserts it.
+
+```bash
+audrey ground
+```
+
+```text
+[audrey] Grounding memories against /home/you/project
+[audrey] Checked 14: 12 still true, 2 broken, 0 repaired.
+[audrey]   01K8ZQ... references a missing npm_script: deploy:prod
+[audrey]   01K8ZR... references a missing path: scripts/release.mjs
+```
+
+Broken memories are not deleted. They keep their content, say plainly what they still refer to, and take a confidence penalty so they stop leading by default while remaining readable and repairable. They also stop being eligible for the packet's must-follow section — that is the section that can force a Guard block, and a rule naming a file that no longer exists is a rule nobody can follow.
+
+Repair is symmetric. Restore the file or the script and the next check clears the flag. A checkout that has moved reports unknown rather than broken, because a memory should not be discredited for describing a project this machine cannot currently see.
+
+Memories with no checkable claims are left unlabeled. Silence is not a clean bill of health, and presenting it as one would be the same mistake pointed the other way.
+
 ## What Audrey deliberately does not do
 
 Audrey does not upload your memory to a hosted service by default. It does not treat every sentence as permanent truth. It does not promote instructions from arbitrary tool output into trusted policy. It does not claim that a small local benchmark proves state-of-the-art memory quality.
@@ -312,7 +335,8 @@ episode
   ├─ transactional SQLite + vector + FTS write
   ├─ agent-scoped interference / resonance / validation
   ├─ reinforcement or contradiction evidence
-  └─ sleep-time consolidation into semantic or procedural memory
+  ├─ sleep-time consolidation into semantic or procedural memory
+  └─ grounding checks that stored claims still hold in the project
 
 query
   ├─ bounded vector candidates
@@ -326,12 +350,12 @@ Agent-scoped vector search uses a native `sqlite-vec` partition key before neare
 
 ### MCP surface
 
-Audrey exposes 22 MCP tools plus status, recent-memory, and principle resources and briefing/recall/reflection prompts. The main groups are:
+Audrey exposes 23 MCP tools plus status, recent-memory, and principle resources and briefing/recall/reflection prompts. The main groups are:
 
 - capture: `memory_encode`, `memory_reflect`, `memory_observe_tool`
 - retrieval: `memory_recall`, `memory_capsule`, `memory_greeting`
 - action safety: `memory_preflight`, `memory_guard_before`, `memory_guard_after`, `memory_reflexes`
-- lifecycle: `memory_consolidate`, `memory_dream`, `memory_decay`, `memory_resolve_truth`
+- lifecycle: `memory_consolidate`, `memory_dream`, `memory_decay`, `memory_resolve_truth`, `memory_ground`
 - governance: `memory_validate`, `memory_promote`, `memory_forget`, `memory_export`, `memory_import`, `memory_status`, `memory_introspect`
 
 The server also sends host instructions explaining the Guard receipt loop when lifecycle hooks are unavailable.
@@ -374,6 +398,8 @@ Provider secrets are never embedded in generated hook commands. `--include-secre
 - Monitor `audrey status --json --fail-on-unhealthy`.
 - Keep the hook runtime on a stable installed path.
 - Load-test concurrent writers for your topology; SQLite WAL is not a distributed coordination layer.
+
+`npm audit --omit=dev` reports two high-severity advisories against `sharp`, pulled in as a hard dependency of `@huggingface/transformers` for the local embedding runtime. There is no patched release compatible with the version range that package declares. Audrey never imports `sharp` — it is image-preprocessing code that a text-only embedding pipeline does not reach — but the package is installed, so the advisory is genuine and unresolved rather than dismissed. Running with `AUDREY_EMBEDDING_PROVIDER` set to a hosted provider avoids the dependency path entirely.
 
 ### Benchmarks and evidence
 
