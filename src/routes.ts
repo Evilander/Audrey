@@ -590,11 +590,9 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         retainDetails: body.retain_details ?? body.retainDetails,
         evidenceFeedback: body.evidence_feedback ?? body.evidenceFeedback,
         actorAgent: resolveActingAgent(c, body),
-        // Assumes controller.afterAction (src/controller.ts) grows an
-        // `overrideReason` field on GuardAfterInput: a non-empty reason lets a
-        // succeeded outcome be recorded against a receipt that was blocked for
-        // a reason other than an exact repeated failure. Update this call if
-        // the landed parameter name or semantics differ.
+        // A non-empty reason lets a succeeded outcome be recorded against a
+        // receipt that was blocked for a reason other than an exact repeated
+        // failure. See GuardAfterInput.overrideReason in src/controller.ts.
         overrideReason: body.override_reason ?? body.overrideReason,
       });
       return c.json(result);

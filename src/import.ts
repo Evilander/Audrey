@@ -4,6 +4,8 @@ import type { EmbeddingProvider } from './types.js';
 import { insertFTSEpisode, insertFTSSemantic, insertFTSProcedure } from './fts.js';
 import { sourceReliability } from './confidence.js';
 import { requireAgent } from './utils.js';
+import { redact, redactJson } from './redact.js';
+import { stripReservedTrustKeys } from './trust.js';
 
 export const MAX_IMPORT_CONTENT_LENGTH = 50_000;
 export const MAX_IMPORT_ROWS_PER_SECTION = 25_000;
@@ -34,7 +36,15 @@ const idSchema = z
 const optionalIdSchema = idSchema.nullable().optional();
 const contentSchema = z.string().min(1).max(MAX_IMPORT_CONTENT_LENGTH);
 const optionalTextSchema = z.string().max(MAX_IMPORT_CONTENT_LENGTH).nullable().optional();
-const isoLikeStringSchema = z.string().min(1).max(64);
+// A timestamp a caller supplies is load-bearing: it drives decay half-lives,
+// retention sweeps, and the legacy-trust cutoff. The old shape accepted any
+// string up to 64 characters, so "not-a-date" parsed fine and then poisoned
+// every date computation downstream as NaN.
+const isoLikeStringSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine(value => !Number.isNaN(Date.parse(value)), 'must be a parseable timestamp');
 const countSchema = z.number().int().nonnegative();
 const scoreSchema = z.number().finite().min(0).max(1);
 const jsonObjectSchema = z.record(z.string(), z.unknown());
@@ -248,6 +258,59 @@ function isDatabaseEmpty(db: Database.Database): boolean {
   );
 }
 
+/**
+ * A snapshot is a file someone handed us, so import is an untrusted
+ * ingestion boundary exactly like the MCP, HTTP and CLI encode paths — and
+ * it has to enforce the same two invariants they do.
+ *
+ * Redaction: every other writer filters through redact() before a row
+ * lands, and import did not, so a snapshot's contents were stored verbatim
+ * and embedded verbatim. Sanitizing happens here, before embedBatch, so the
+ * vector cannot encode a secret the stored row scrubbed. Re-redacting
+ * content that a current Audrey already redacted on the way out is a no-op;
+ * the pass only bites on pre-firewall exports and hand-crafted payloads.
+ *
+ * Trust: TRUST_CONTEXT_KEY is the marker that separates a memory Autopilot
+ * captured in-process from one that merely claims a trusted source, and it
+ * is stripped at every other boundary. Import skipping the strip meant a
+ * crafted snapshot could hand itself verified control-memory trust and
+ * escalate straight into Guard's must-follow set.
+ *
+ * A trusted-source memory whose timestamp predates LEGACY_TRUST_CUTOFF_ISO
+ * still resolves to 'legacy' trust after this pass. That is deliberate:
+ * restoring your own older backup has to keep working, and legacy trust
+ * carries a lower severity than verified. Admin gating remains the control
+ * for snapshots of unknown provenance.
+ */
+function sanitizeImportedMemories(snapshot: ImportSnapshot): void {
+  const cleanText = (value: string): string => redact(value).text;
+  const cleanOptionalText = (value: string | null | undefined): string | null | undefined =>
+    typeof value === 'string' ? cleanText(value) : value;
+  const cleanObject = (
+    value: Record<string, unknown> | null | undefined,
+  ): Record<string, unknown> | null | undefined => {
+    if (value == null) return value;
+    const stripped = stripReservedTrustKeys(value as Record<string, string>);
+    return redactJson(stripped ?? {}).value as Record<string, unknown>;
+  };
+
+  for (const episode of snapshot.episodes) {
+    episode.content = cleanText(episode.content);
+    episode.context = cleanObject(episode.context);
+    episode.affect = cleanObject(episode.affect);
+    episode.causal_trigger = cleanOptionalText(episode.causal_trigger);
+    episode.causal_consequence = cleanOptionalText(episode.causal_consequence);
+  }
+  for (const semantic of snapshot.semantics ?? []) {
+    semantic.content = cleanText(semantic.content);
+    semantic.conditions = cleanOptionalText(semantic.conditions);
+  }
+  for (const procedure of snapshot.procedures ?? []) {
+    procedure.content = cleanText(procedure.content);
+    procedure.trigger_conditions = cleanOptionalText(procedure.trigger_conditions);
+  }
+}
+
 function validateSnapshotBudget(snapshot: ImportSnapshot): void {
   const totalBytes = [
     ...snapshot.episodes.map(ep => ep.content.length),
@@ -266,12 +329,15 @@ export async function importMemories(
   embeddingProvider: EmbeddingProvider,
   rawSnapshot: unknown,
 ): Promise<void> {
+  // Fail fast before paying for embeddings. This is not the authoritative
+  // check — see the re-check inside writeImport.
   if (!isDatabaseEmpty(db)) {
     throw new Error('Cannot import into a database that is not empty');
   }
 
   const snapshot: ImportSnapshot = importSnapshotSchema.parse(rawSnapshot);
   validateSnapshotBudget(snapshot);
+  sanitizeImportedMemories(snapshot);
   const episodes = snapshot.episodes;
   const semantics = snapshot.semantics || [];
   const procedures = snapshot.procedures || [];
@@ -357,6 +423,15 @@ export async function importMemories(
   `);
 
   const writeImport = db.transaction(() => {
+    // Authoritative emptiness check. The one above runs before an await on
+    // embedBatch, which can take seconds for a large snapshot; a concurrent
+    // encode over the same connection during that window would otherwise
+    // let foreign rows merge into live data and leave semantics pointing at
+    // evidence episode ids from another store.
+    if (!isDatabaseEmpty(db)) {
+      throw new Error('Cannot import into a database that is not empty');
+    }
+
     for (let i = 0; i < episodes.length; i++) {
       const ep = episodes[i]!;
       const ownerAgent = requireAgent(ep.agent, 'default');

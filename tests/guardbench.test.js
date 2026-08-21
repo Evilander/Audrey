@@ -651,8 +651,8 @@ describe('GuardBench harness', () => {
     }
   });
 
-  it('reports 1.1 release readiness without hiding publish blockers', async () => {
-    const report = await verifyReleaseReadiness({ targetVersion: '1.1.3', allowPending: true });
+  it('reports release readiness without hiding publish blockers', async () => {
+    const report = await verifyReleaseReadiness({ targetVersion: '1.2.0', allowPending: true });
 
     expect(report.ok).toBe(true);
     expect(report.ready).toBe(false);
@@ -671,15 +671,13 @@ describe('GuardBench harness', () => {
     expect(blockers).toContain('PyPI publish credentials');
   });
 
-  it('keeps the 1.1 release cut idempotent after it is applied', () => {
-    const report = prepareReleaseCut({ targetVersion: '1.1.3', date: '2026-07-13' });
+  it('keeps the release cut idempotent after it is applied', () => {
+    const report = prepareReleaseCut({ targetVersion: '1.2.0', date: '2026-08-21' });
 
     expect(report.ok).toBe(true);
     expect(report.apply).toBe(false);
-    expect(report.currentVersions.packageJson).toBe('1.1.3');
-    expect(report.files.filter(file => file.changed).map(file => file.path)).toEqual([
-      'package.json',
-    ]);
+    expect(report.currentVersions.packageJson).toBe('1.2.0');
+    expect(report.files.filter(file => file.changed).map(file => file.path)).toEqual([]);
     expect(report.nextCommands).toContain('npm run release:gate:paper');
   });
 
@@ -787,17 +785,40 @@ describe('GuardBench harness', () => {
     );
   });
 
-  it('generates final 1.0 release notes without placeholder markers', () => {
-    const section = releaseChangelogSection('1.0.0', '2026-05-13');
+  it('opens an empty dated section rather than inventing release notes', () => {
+    // A cut cannot know what changed. This used to emit a fixed block of
+    // 1.0-era notes under whatever version was being cut, so every later
+    // release published a changelog claiming to add Guard and GuardBench.
+    const section = releaseChangelogSection('1.4.0', '2026-09-01');
 
-    expect(section).toContain('## 1.0.0 - 2026-05-13');
-    expect(section).toContain('### Audrey Guard');
-    expect(section).toContain('### GuardBench And Paper Artifacts');
+    expect(section).toContain('## 1.4.0 - 2026-09-01');
+    expect(section).not.toContain('### Audrey Guard');
+    expect(section).not.toContain('### GuardBench And Paper Artifacts');
     expect(section).not.toMatch(/\bTODO\b/i);
     expect(section).not.toContain('Release Cut Checklist');
-    expect(targetChangelogStatus(`# Changelog\n\n${section}`, '1.0.0').placeholderMarkers).toEqual(
+    expect(targetChangelogStatus(`# Changelog\n\n${section}`, '1.4.0').placeholderMarkers).toEqual(
       [],
     );
+  });
+
+  it('promotes accumulated Unreleased notes into the cut version', () => {
+    const changelog = `# Changelog
+
+## Unreleased
+
+- Something that actually shipped this cycle.
+
+## 1.1.3 - 2026-07-13
+
+- Older notes.
+`;
+    const updated = insertChangelogSection(changelog, '1.2.0', '2026-08-21');
+
+    expect(updated).toContain('## 1.2.0 - 2026-08-21');
+    expect(updated).toContain('- Something that actually shipped this cycle.');
+    expect(updated).not.toContain('## Unreleased');
+    // The promoted notes stay attached to their heading, not duplicated.
+    expect(updated.match(/Something that actually shipped/g)).toHaveLength(1);
   });
 
   it('rejects placeholder release-cut changelog sections as final readiness evidence', () => {

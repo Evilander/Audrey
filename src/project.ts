@@ -62,7 +62,16 @@ function resolveWorktreeCommonDir(gitFilePath: string, worktreeDir: string): str
   // Windows git writes backslash separators; normalize before resolving, or
   // POSIX path.resolve treats the whole pointer as a single literal segment.
   const pointerPath = pointer.replace(/\\/g, '/');
-  const gitDir = isAbsolute(pointerPath) ? pointerPath : resolve(worktreeDir, pointerPath);
+  // A drive-qualified pointer is absolute even when the running platform's
+  // isAbsolute says otherwise. posix.isAbsolute('C:/repo/.git') is false, so
+  // without this the pointer gets joined onto the worktree directory and
+  // resolves to a concatenated path that never existed. Such a pointer is
+  // still unresolvable on a POSIX host — a drive letter has no meaning
+  // there — but it should fail by not existing, not by silently becoming a
+  // different path.
+  const driveQualified = /^[A-Za-z]:\//.test(pointerPath);
+  const gitDir =
+    isAbsolute(pointerPath) || driveQualified ? pointerPath : resolve(worktreeDir, pointerPath);
   if (!existsSync(gitDir)) return undefined;
 
   const normalized = gitDir.replace(/\\/g, '/');

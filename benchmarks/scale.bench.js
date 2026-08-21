@@ -37,6 +37,7 @@ export const SCALE_PERF_BUDGETS = Object.freeze({
   preflightP95Ms: 2000,
   coldReopenSteadyP95Ms: 300,
   coldReopenCatchUpMs: 800,
+  mergeLookupP95Ms: 50,
 });
 
 function roundMs(value) {
@@ -321,10 +322,38 @@ export async function runScaleBenchmark({
       preflightTimes.push(performance.now() - startedAt);
     }
 
+    // Consolidation's merge lookup, against the seeded semantics table.
+    // This runs once per extracted principle inside the consolidation write
+    // transaction, so a linear scan here holds SQLite's write lock against
+    // every concurrent Guard hook for its whole duration. The query mirrors
+    // findActiveSemanticMatch in src/consolidate.ts; measuring it here is
+    // what stops that path from silently reverting to a full partition scan
+    // (2.2ms at 500 rows, 176ms at 30,000) while every other budget in this
+    // file stays green.
+    const mergeProbe = audrey.embeddingProvider.vectorToBuffer(
+      await audrey.embeddingProvider.embed('deployment retry backoff principle'),
+    );
+    const mergeLookup = audrey.db.prepare(`
+      SELECT s.id, (1.0 - v.distance) AS similarity
+      FROM vec_semantics v
+      JOIN semantics s ON s.id = v.id
+      WHERE v.embedding MATCH ? AND k = ?
+        AND v.agent = ? AND s.agent = ?
+        AND (s.state = 'active' OR s.state = 'context_dependent')
+      ORDER BY v.distance ASC
+      LIMIT 1
+    `);
+    const mergeLookupTimes = [];
+    for (let i = 0; i < runs; i += 1) {
+      const startedAt = performance.now();
+      mergeLookup.get(mergeProbe, 20, audrey.agent, audrey.agent);
+      mergeLookupTimes.push(performance.now() - startedAt);
+    }
+
     audrey.close();
 
     // Cold createDatabase() reopen, steady state: everything is already
-    // synced, so this should cost a handful of MAX(rowid) lookups rather
+    // synced, so this should cost a handful of MAX(id) lookups rather
     // than a full table scan.
     const steadyReopenTimes = [];
     let anyMigrated = false;
@@ -413,6 +442,7 @@ export async function runScaleBenchmark({
       preflight_ms: stats(preflightTimes),
       cold_reopen_steady_ms: stats(steadyReopenTimes),
       cold_reopen_catch_up_ms: coldReopenCatchUpMs,
+      merge_lookup_ms: stats(mergeLookupTimes),
     };
 
     assertBudget('recentFailures p95', result.recent_failures_ms.p95, budgets.recentFailuresP95Ms);
@@ -428,12 +458,14 @@ export async function runScaleBenchmark({
       result.cold_reopen_catch_up_ms,
       budgets.coldReopenCatchUpMs,
     );
+    assertBudget('merge lookup p95', result.merge_lookup_ms.p95, budgets.mergeLookupP95Ms);
 
     out(
       `Audrey scale gate passed: recentFailures p95=${result.recent_failures_ms.p95}ms, ` +
         `capsule p95=${result.capsule_ms.p95}ms, preflight p95=${result.preflight_ms.p95}ms, ` +
         `cold reopen steady p95=${result.cold_reopen_steady_ms.p95}ms, ` +
-        `cold reopen catch-up=${result.cold_reopen_catch_up_ms}ms`,
+        `cold reopen catch-up=${result.cold_reopen_catch_up_ms}ms, ` +
+        `merge lookup p95=${result.merge_lookup_ms.p95}ms`,
     );
     return result;
   } finally {

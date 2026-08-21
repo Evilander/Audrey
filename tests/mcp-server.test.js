@@ -2552,7 +2552,7 @@ describe('MCP tool: memory_status', () => {
     expect(status.procedures).toBe(0);
     expect(status.vec_procedures).toBe(0);
     expect(status.dimensions).toBe(8);
-    expect(status.schema_version).toBe(14);
+    expect(status.schema_version).toBe(15);
     expect(status.healthy).toBe(true);
     expect(status.pending_consolidation_count).toBeGreaterThanOrEqual(0);
     expect(status.embedding_warm).toBe(false);

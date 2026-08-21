@@ -341,10 +341,6 @@ function handlerRuntime(value: unknown): HostHookRuntime | null {
   return { nodePath: argv[0]!, entrypoint: argv[1]! };
 }
 
-export function inspectHostHookRuntimes(host: HookHost, existing: unknown): HostHookRuntime[] {
-  return inspectHostHookDiagnostics(host, existing).runtimes;
-}
-
 export function inspectHostHookDiagnostics(host: HookHost, existing: unknown): HostHookInspection {
   assertHost(host);
   const settings = settingsRecord(existing, 'Existing hook settings');
