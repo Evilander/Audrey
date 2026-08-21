@@ -122,6 +122,15 @@ export interface RecallResult {
   moodCongruence?: number;
   lexicalCoverage?: number;
   provenance?: EpisodicProvenance | SemanticProvenance | ProceduralProvenance;
+  /**
+   * Present only when the memory carries checkable claims about its project.
+   * 'broken' means something it still asserts — a path, a package script —
+   * has since stopped existing. Absent means unanchored, which is not the
+   * same as verified, so an unanchored memory is never labelled either way.
+   */
+  grounding?: 'grounded' | 'broken';
+  /** Plain statement of what a 'broken' memory still refers to. */
+  groundingNote?: string;
 }
 
 export interface RecallError {

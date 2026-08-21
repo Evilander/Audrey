@@ -255,7 +255,7 @@ export async function buildPreflight(
     options.cwd ? `cwd:${options.cwd}` : '',
   ].filter(Boolean);
   const query = queryParts.join('\n');
-  // failureWindowHours/failureLimit let this single capsule call answer the
+  // recentFailureWindowHours/failureLimit let this single capsule call answer the
   // tool-failure question at the width Guard needs (see events.ts), instead
   // of buildPreflight running its own separate recentFailures() scan below.
   const capsule = await audrey.capsule(query, {
@@ -263,7 +263,7 @@ export async function buildPreflight(
     budgetChars: options.budgetChars ?? 3000,
     mode: options.mode ?? 'conservative',
     recentChangeWindowHours: options.recentChangeWindowHours ?? 72,
-    failureWindowHours: options.recentFailureWindowHours ?? 168,
+    recentFailureWindowHours: options.recentFailureWindowHours ?? 168,
     failureLimit: 20,
     includeRisks: true,
     includeContradictions: true,
@@ -337,9 +337,22 @@ export async function buildPreflight(
           );
         }
       }
-    } catch {
-      // The primary capsule path already reports recall degradation. Avoid
-      // converting a supplemental sweep failure into duplicate noise.
+    } catch (err: unknown) {
+      // This sweep exists precisely because the capsule can rank a
+      // must-follow memory below its cutoff, so losing it silently means
+      // Guard misses the one control directive it was asked to enforce and
+      // says nothing. The capsule's own recall_errors do not cover this
+      // path: it has its own recall call and its own per-result context
+      // read, either of which can fail on their own.
+      addWarning(warnings, seen, {
+        type: 'memory_health',
+        severity: 'high',
+        message: 'Audrey could not complete the must-follow control sweep; rules may be missing.',
+        reason: shorten(err instanceof Error ? err.message : String(err), 220),
+        evidence_id: 'recall:must-follow-sweep',
+        recommended_action:
+          'Run audrey status and repair the degraded recall path before relying on Guard.',
+      });
     }
   }
 
@@ -362,7 +375,7 @@ export async function buildPreflight(
   }
 
   // matchingFailures reuses the tool-failure patterns the capsule call above
-  // already fetched (failureWindowHours/failureLimit sized to match Guard's
+  // already fetched (recentFailureWindowHours/failureLimit sized to match Guard's
   // needs) instead of running a second, separately-parameterized
   // recentFailures() scan — that scan is expensive enough on a large event
   // table that doubling it is material on every guarded tool call.

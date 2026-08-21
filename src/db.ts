@@ -213,8 +213,8 @@ interface MigrateTableOptions {
   markKey: string;
 }
 
-interface MaxRowidRow {
-  m: number | null;
+interface MaxIdRow {
+  m: string | null;
 }
 
 const VEC0_MIGRATION_SPECS: Vec0MigrationSpec[] = [
@@ -276,21 +276,37 @@ type VecSyncSource = 'episodes' | 'semantics' | 'procedures';
 
 const VEC_SYNC_SOURCES: readonly VecSyncSource[] = ['episodes', 'semantics', 'procedures'];
 
+/**
+ * Keyed on id, not rowid, and deliberately a different config key from the
+ * `vec_sync_rowid_*` marks earlier versions wrote.
+ *
+ * SQLite hands out max(rowid)+1, so deleting the row that holds the current
+ * maximum makes the next insert reuse that rowid. A rowid high-water mark
+ * then reads as already-synced and the new row never reaches its vec0
+ * table — silently, permanently, with no error and no migrated flag. Memory
+ * ids are ULIDs: monotonic, and never recycled by a delete.
+ *
+ * The key rename matters for the upgrade. A stored numeric mark like "412"
+ * compares lexicographically against ULIDs beginning with "0", so reusing
+ * the old key would make every existing row look already-synced. A fresh
+ * key starts empty and every id sorts above it, which costs one full
+ * catch-up scan on first open and is correct from then on.
+ */
 function vecSyncMarkKey(source: VecSyncSource): string {
-  return `vec_sync_rowid_${source}`;
+  return `vec_sync_id_${source}`;
 }
 
-function readConfigNumber(db: Database.Database, key: string): number {
+function readConfigText(db: Database.Database, key: string): string {
   const row = db.prepare('SELECT value FROM audrey_config WHERE key = ?').get(key) as
     ConfigRow | undefined;
-  return row ? Number(row.value) : 0;
+  return row ? String(row.value) : '';
 }
 
-function writeConfigNumber(db: Database.Database, key: string, value: number): void {
+function writeConfigText(db: Database.Database, key: string, value: string): void {
   db.prepare(
     `INSERT INTO audrey_config (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-  ).run(key, String(value));
+  ).run(key, value);
 }
 
 export function dropVec0Tables(db: Database.Database): void {
@@ -330,17 +346,17 @@ function migrateTable(
     markKey,
   }: MigrateTableOptions,
 ): boolean {
-  const mark = readConfigNumber(db, markKey);
-  const maxRowidRow = db.prepare(`SELECT MAX(rowid) AS m FROM ${source}`).get() as MaxRowidRow;
-  const maxRowid = maxRowidRow.m ?? 0;
-  if (maxRowid <= mark) return false;
+  const mark = readConfigText(db, markKey);
+  const maxIdRow = db.prepare(`SELECT MAX(id) AS m FROM ${source}`).get() as MaxIdRow;
+  const maxId = maxIdRow.m ?? '';
+  if (maxId === '' || maxId <= mark) return false;
 
   const rows = db
     .prepare(
       `
     SELECT ${selectCols}
     FROM ${source} source_row
-    WHERE source_row.rowid > ?
+    WHERE source_row.id > ?
       AND source_row.embedding IS NOT NULL
       AND NOT EXISTS (
         SELECT 1 FROM ${target} target_row WHERE target_row.id = source_row.id
@@ -365,7 +381,7 @@ function migrateTable(
 
   if (inserted < rows.length) return true;
 
-  writeConfigNumber(db, markKey, maxRowid);
+  writeConfigText(db, markKey, maxId);
   return false;
 }
 
@@ -494,7 +510,7 @@ function addColumnIfMissing(
   }
 }
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
   {
@@ -669,6 +685,38 @@ const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
           ON semantics(id) WHERE embedding IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_procedures_embedding_present
           ON procedures(id) WHERE embedding IS NOT NULL;
+      `);
+    },
+  },
+  {
+    version: 15,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_anchors (
+          id TEXT PRIMARY KEY,
+          memory_id TEXT NOT NULL,
+          memory_type TEXT NOT NULL CHECK(memory_type IN ('episodic','semantic','procedural')),
+          agent TEXT NOT NULL DEFAULT 'default',
+          project_root TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('path','npm_script')),
+          value TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'intact' CHECK(state IN ('intact','broken')),
+          created_at TEXT NOT NULL,
+          last_verified_at TEXT,
+          broken_at TEXT
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_anchors_unique
+          ON memory_anchors(memory_id, project_root, kind, value);
+        CREATE INDEX IF NOT EXISTS idx_memory_anchors_memory
+          ON memory_anchors(memory_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_anchors_sweep
+          ON memory_anchors(agent, project_root, last_verified_at);
+        CREATE INDEX IF NOT EXISTS idx_memory_anchors_broken
+          ON memory_anchors(memory_id) WHERE state = 'broken';
+
+        CREATE INDEX IF NOT EXISTS idx_episodes_must_follow_tag
+          ON episodes(id) WHERE tags LIKE '%"must-follow"%';
       `);
     },
   },

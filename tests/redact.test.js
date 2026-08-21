@@ -260,6 +260,56 @@ describe('redact', () => {
     expect(result.text).not.toContain(secret);
   });
 
+  it('redacts path-shaped secrets that carry no + or = to opt out with', () => {
+    // The base64 test above is opted out of the path shape by its '+' and '='.
+    // These are not: three clean segments, path alphabet only. A blanket
+    // path-shape exemption left every one of them in plaintext.
+    for (const secret of [
+      'aZ9kLpQ2/mR7vT4wX1yB6cD8eF3gH5jK/nP0sU2vW9xY',
+      'QpW2yb5ZQiUqGUhnI47YuSKF/1pfCFy/Pbc0NISw',
+      'IUhc4vpwkC1ZmQjA4w/F4N0snk5Dea6/C6prbMI3',
+    ]) {
+      const result = redact(`token ${secret}`);
+      expect(result.state).toBe('redacted');
+      expect(result.text).not.toContain(secret);
+    }
+  });
+
+  it('keeps the path-shape entropy bar above real paths and below random keys', () => {
+    // Guards the calibration in PATH_SHAPE_ENTROPY_MIN from being widened
+    // back into a blanket exemption. Randomly generated 40-char AWS secret
+    // access keys draw from an alphabet containing '/', so a slice of them
+    // land in the path shape by chance; almost none may survive.
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/+';
+    let leaked = 0;
+    const total = 4000;
+    for (let i = 0; i < total; i++) {
+      let key = '';
+      for (let c = 0; c < 40; c++) key += alphabet[Math.floor(Math.random() * alphabet.length)];
+      if (redact(`aws_secret_access_key = ${key}`).state === 'clean') leaked++;
+    }
+    expect(leaked / total).toBeLessThan(0.005);
+  });
+
+  it('treats a sensitive word anywhere in a compound key as sensitive', () => {
+    // Canonical credential fields are compounds. A suffix-anchored key
+    // pattern matched none of them, so redactJson's sensitive-ancestor
+    // fallback never fired for the exact names credentials ship under.
+    for (const key of ['aws_secret_access_key', 'stripe_secret_key', 'client_secret_value']) {
+      const result = redactJson({ [key]: 'plain-value-here' });
+      expect(result.state).toBe('redacted');
+      expect(result.value[key]).not.toBe('plain-value-here');
+    }
+  });
+
+  it('does not treat count and collection fields as sensitive', () => {
+    const result = redactJson({ tokens: 'a b c', budget_chars: 'many', token_count: 512 });
+    expect(result.value.tokens).toBe('a b c');
+    expect(result.value.budget_chars).toBe('many');
+    // Numbers never route through string redaction regardless of key.
+    expect(result.value.token_count).toBe(512);
+  });
+
   it('summarizeRedactions reports class:count pairs', () => {
     expect(summarizeRedactions([])).toBe('clean');
     expect(

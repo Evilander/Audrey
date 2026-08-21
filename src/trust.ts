@@ -81,10 +81,6 @@ export function controlTrustFor(input: {
   return isBeforeLegacyCutoff(input.createdAt) ? 'legacy' : 'untrusted';
 }
 
-export function isReservedTrustKey(key: string): boolean {
-  return key === TRUST_CONTEXT_KEY;
-}
-
 export function stripReservedTrustKeys<T extends Record<string, string>>(
   context: T | undefined,
 ): T | undefined {

@@ -960,8 +960,13 @@ describe('Audrey Autopilot', () => {
   });
 
   it('prunes memory_events past the retention window on Stop, gated by the same interval discipline as consolidation', async () => {
+    // Every timestamp here derives from baseNow, never from Date.now(). The
+    // hook runs with `now: baseNow`, so seeding against the real clock would
+    // drift out of the retention window as wall-clock time advanced past the
+    // fixed date and silently break this test.
+    const baseNow = new Date('2026-08-01T00:00:00.000Z');
     const insertEvent = (id, daysAgo) => {
-      const createdAt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString();
+      const createdAt = new Date(baseNow.getTime() - daysAgo * 24 * 60 * 60 * 1000).toISOString();
       audrey.db
         .prepare(
           `INSERT INTO memory_events (id, event_type, source, redaction_state, created_at)
@@ -980,8 +985,6 @@ describe('Audrey Autopilot', () => {
     // ride on that gate.
     insertEvent('retention-old-1', 100);
     insertEvent('retention-recent-1', 10);
-
-    const baseNow = new Date('2026-08-01T00:00:00.000Z');
     await runAutopilotHook(audrey, payload('Stop'), {
       host: 'codex',
       now: baseNow,
