@@ -10,7 +10,10 @@ class AudreyModel(BaseModel):
 
 
 class Affect(AudreyModel):
-    valence: float
+    # Optional to match src/types.ts and the MCP tool schemas, which both
+    # accept an affect carrying only arousal or only a label. Requiring it
+    # here rejected payloads the server accepts.
+    valence: float | None = None
     arousal: float | None = None
     label: str | None = None
 

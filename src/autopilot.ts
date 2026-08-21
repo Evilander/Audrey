@@ -3,7 +3,7 @@ import type { Audrey } from './audrey.js';
 import type { MemoryCapsule, CapsuleEntry } from './capsule.js';
 import { MemoryController, type ControllerGuardResult } from './controller.js';
 import { deleteEventsBefore } from './events.js';
-import { projectNamespace } from './project.js';
+import { projectNamespace, projectRoot } from './project.js';
 import { redact } from './redact.js';
 import { TRUST_CONTEXT_KEY, USER_VERIFIED_TRUST } from './trust.js';
 import type { AudreyConfig } from './types.js';
@@ -1482,8 +1482,48 @@ function runEventRetention(audrey: Audrey, options: AutopilotHookOptions): void 
   }
 }
 
-async function runMaintenance(audrey: Audrey, options: AutopilotHookOptions): Promise<boolean> {
+/**
+ * Re-checks the anchors of memories that describe this project, so a memory
+ * that outlived the file or script it names stops being presented as
+ * current. Shares the retention sweep's interval discipline and its
+ * fail-soft posture: grounding is an annotation, and a sweep that cannot run
+ * must never take the hook down with it.
+ */
+function runGroundingSweep(
+  audrey: Audrey,
+  options: AutopilotHookOptions,
+  cwd: string | undefined,
+): void {
+  const intervalMs = (options.maintenanceIntervalHours ?? 24) * 60 * 60 * 1000;
+  const now = options.now ?? new Date();
+  const lastKey = `autopilot_last_grounding:${audrey.agent}`;
+  const last = audrey.db.prepare('SELECT value FROM audrey_config WHERE key = ?').get(lastKey) as
+    { value: string } | undefined;
+  if (last && now.getTime() - Date.parse(last.value) < intervalMs) return;
+
+  try {
+    const report = audrey.ground({ projectRoot: projectRoot(cwd ?? process.cwd()), now });
+    audrey.db
+      .prepare(
+        `INSERT INTO audrey_config (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(lastKey, now.toISOString());
+    if (report.newlyBroken.length > 0) {
+      audrey.emit('grounding', report);
+    }
+  } catch (error) {
+    reportMaintenanceError(audrey, 'grounding', error);
+  }
+}
+
+async function runMaintenance(
+  audrey: Audrey,
+  options: AutopilotHookOptions,
+  cwd?: string,
+): Promise<boolean> {
   runEventRetention(audrey, options);
+  runGroundingSweep(audrey, options, cwd);
 
   const intervalMs = (options.maintenanceIntervalHours ?? 24) * 60 * 60 * 1000;
   const now = options.now ?? new Date();
@@ -1560,7 +1600,11 @@ async function maintenanceHook(
     clearInjectedIds(audrey, options.host, payload);
   }
   pruneStaleInjectedIds(audrey, options.now ?? new Date());
-  return { event, output: {}, maintenanceRan: await runMaintenance(audrey, options) };
+  return {
+    event,
+    output: {},
+    maintenanceRan: await runMaintenance(audrey, options, text(payload.cwd)),
+  };
 }
 
 export async function runAutopilotHook(

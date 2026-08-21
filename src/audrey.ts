@@ -89,6 +89,13 @@ import {
 } from 'node:path';
 import { ProfileRecorder, type ProfileDiagnostics } from './profile.js';
 import { performance } from 'node:perf_hooks';
+import {
+  recordAnchors,
+  verifyAnchors,
+  type GroundingReport,
+  type VerifyAnchorsOptions,
+} from './grounding.js';
+import { projectRoot } from './project.js';
 
 export type ValidateErrorCode =
   'PREFLIGHT_NOT_FOUND' | 'PREFLIGHT_WRONG_TYPE' | 'LINEAGE_REJECTED' | 'ACTION_KEY_MISMATCH';
@@ -551,9 +558,30 @@ export class Audrey extends EventEmitter {
       });
     }
 
+    await this._runPostEncodeStage('grounding', async () => {
+      const cwd =
+        typeof params.context?.['cwd'] === 'string' ? params.context['cwd'] : process.cwd();
+      recordAnchors(this.db, {
+        memoryId: id,
+        memoryType: 'episodic',
+        agent: this.agent,
+        content: params.content,
+        projectRoot: projectRoot(cwd),
+      });
+    });
+
     await this._runPostEncodeStage('validation', async () => {
       await this._validateEncodedMemory(id, params, embedding);
     });
+  }
+
+  /**
+   * Re-checks stored anchors against the current project and reports what
+   * changed. Exposed on the instance so the CLI, the MCP tool and the
+   * maintenance sweep all go through one path.
+   */
+  ground(options: VerifyAnchorsOptions = {}): GroundingReport {
+    return verifyAnchors(this.db, { agent: this.agent, ...options });
   }
 
   _enqueuePostEncode(id: string, params: EncodeParams, embedding: EncodedEmbedding): Promise<void> {

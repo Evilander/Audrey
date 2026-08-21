@@ -202,6 +202,26 @@ interface MergeMatch {
 // src/interference.ts and src/validate.ts: a plain cosine-distance scan
 // scoped to active/context_dependent memories for the same agent, rather
 // than clusterViaKNN's vec0 MATCH plan (which is scoped to vec_episodes).
+/**
+ * Candidates pulled from the vec0 index before the state filter runs.
+ *
+ * The merge lookup has to use indexed KNN rather than vec_distance_cosine
+ * over the whole partition: it runs once per extracted principle inside the
+ * consolidation write transaction, so a linear scan there holds SQLite's
+ * write lock against every concurrent Guard hook for the duration. Measured
+ * on the scan it replaces: 2.2ms at 500 active rows, 176ms at 30,000.
+ *
+ * State is filtered on the source table, never on the vec0 aux column of the
+ * same name — nothing updates vec_semantics.state / vec_procedures.state
+ * after insert, so those columns go stale as soon as a memory is superseded
+ * or decays. Over-fetching by MERGE_CANDIDATE_K and filtering afterwards
+ * keeps the fast path without trusting them. If every near neighbour turns
+ * out to be inactive the lookup reports no match and the principle is
+ * inserted fresh, which is what happened for all of them before merging
+ * existed.
+ */
+const MERGE_CANDIDATE_K = 20;
+
 function findActiveSemanticMatch(
   db: Database.Database,
   agent: string,
@@ -210,17 +230,18 @@ function findActiveSemanticMatch(
   const row = db
     .prepare(
       `
-    SELECT s.id, (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
+    SELECT s.id, (1.0 - v.distance) AS similarity
     FROM vec_semantics v
     JOIN semantics s ON s.id = v.id
-    WHERE v.agent = ?
+    WHERE v.embedding MATCH ? AND k = ?
+      AND v.agent = ?
       AND s.agent = ?
       AND (s.state = 'active' OR s.state = 'context_dependent')
-    ORDER BY similarity DESC
+    ORDER BY v.distance ASC
     LIMIT 1
   `,
     )
-    .get(embeddingBuffer, agent, agent) as MergeMatch | undefined;
+    .get(embeddingBuffer, MERGE_CANDIDATE_K, agent, agent) as MergeMatch | undefined;
   return row ?? null;
 }
 
@@ -232,17 +253,18 @@ function findActiveProceduralMatch(
   const row = db
     .prepare(
       `
-    SELECT p.id, (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
+    SELECT p.id, (1.0 - v.distance) AS similarity
     FROM vec_procedures v
     JOIN procedures p ON p.id = v.id
-    WHERE v.agent = ?
+    WHERE v.embedding MATCH ? AND k = ?
+      AND v.agent = ?
       AND p.agent = ?
       AND (p.state = 'active' OR p.state = 'context_dependent')
-    ORDER BY similarity DESC
+    ORDER BY v.distance ASC
     LIMIT 1
   `,
     )
-    .get(embeddingBuffer, agent, agent) as MergeMatch | undefined;
+    .get(embeddingBuffer, MERGE_CANDIDATE_K, agent, agent) as MergeMatch | undefined;
   return row ?? null;
 }
 

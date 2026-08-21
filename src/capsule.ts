@@ -36,7 +36,7 @@ export interface CapsuleOptions {
   includeRisks?: boolean;
   includeContradictions?: boolean;
   /** How far back to look for tool-failure risks. Defaults to 168 (7 days). */
-  failureWindowHours?: number;
+  recentFailureWindowHours?: number;
   /** Max tool-failure patterns to surface in the risks section. Defaults to 5. */
   failureLimit?: number;
   recall?: RecallOptions;
@@ -74,6 +74,12 @@ export interface CapsuleEntry {
   recommended_action?: string;
   /** Provenance trust for control-memory escalation — see src/trust.ts. */
   trust: ControlTrust;
+  /**
+   * Set to 'broken' when a checkable claim this memory makes about the
+   * project has stopped holding — see src/grounding.ts. Absent means the
+   * memory carries no checkable claims, which is not a clean bill of health.
+   */
+  grounding?: 'grounded' | 'broken';
   /** Present only on tool_failure entries; the pattern the entry summarizes. */
   failure_pattern?: FailurePattern;
 }
@@ -211,12 +217,16 @@ function buildRecallEntry(
     confidence: result.confidence,
     scope: enrichment.scope,
     evidence: enrichment.evidence.length > 0 ? enrichment.evidence : undefined,
-    reason,
+    // A memory that no longer describes the project is worth reading with
+    // that fact attached, so the note joins the reason the entry is here
+    // rather than sitting in a field a renderer might drop.
+    reason: result.groundingNote ? `${reason} ${result.groundingNote}` : reason,
     source: result.source,
     tags: enrichment.tags.length > 0 ? enrichment.tags : undefined,
     state: result.state,
     created_at: result.createdAt,
     trust,
+    grounding: result.grounding,
   };
 }
 
@@ -343,7 +353,14 @@ function categorize(
   // 'legacy' still escalates (existing must-follow memories predating trust
   // tracking must keep working) but stays advisory via entry.trust; only a
   // forged or unverified claim on a post-cutoff memory is excluded outright.
-  const eligibleForMustFollow = controlTrust !== 'untrusted';
+  //
+  // Broken grounding also blocks escalation. A must-follow rule that names a
+  // file or script which no longer exists is the worst thing to hand Guard:
+  // it is the one section that can turn into a high-severity block, and the
+  // rule cannot be followed. Such a memory is surfaced as uncertain instead
+  // of enforced, and is still readable by anyone who wants to repair it.
+  const groundingBroken = result.grounding === 'broken';
+  const eligibleForMustFollow = controlTrust !== 'untrusted' && !groundingBroken;
 
   if (eligibleForMustFollow && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
     sections.add('must_follow');
@@ -366,6 +383,7 @@ function categorize(
   if (
     entry.state === 'disputed' ||
     entry.state === 'context_dependent' ||
+    groundingBroken ||
     result.confidence < 0.55
   ) {
     sections.add('uncertain_or_disputed');
@@ -524,9 +542,9 @@ export async function buildCapsule(
 
   // 2. Tool-failure risks from memory_events
   if (includeRisks) {
-    const failureWindowHours = options.failureWindowHours ?? 168;
+    const recentFailureWindowHours = options.recentFailureWindowHours ?? 168;
     const failures = recentFailures(db, {
-      since: new Date(Date.now() - failureWindowHours * 60 * 60 * 1000).toISOString(),
+      since: new Date(Date.now() - recentFailureWindowHours * 60 * 60 * 1000).toISOString(),
       limit: options.failureLimit ?? 5,
       ...(options.cwd ? { cwd: options.cwd } : {}),
       ...(memoryScope === 'agent' ? { actorAgent: memoryAgent } : {}),
