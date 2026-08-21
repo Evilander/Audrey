@@ -117,6 +117,27 @@ Repair is symmetric. Restore the file or the script and the next check clears th
 
 Memories with no checkable claims are left unlabeled. Silence is not a clean bill of health, and presenting it as one would be the same mistake pointed the other way.
 
+## Everything it does, and when you'd actually use it
+
+Most of this runs on its own once Autopilot is installed. You do not invoke recall, and you do not invoke Guard. The table is here for the parts you would reach for deliberately, and so the automatic parts are legible rather than magic.
+
+| What | When you want it | Why it helps | How |
+|---|---|---|---|
+| **Autopilot** | Always, after one install | The whole point. Memory arrives before the agent acts instead of after you notice it went wrong. | `audrey install --host auto`, restart the host, approve hooks once |
+| **Guard** | Automatic, before any bash/edit/write | Checks the exact action fingerprint against prior failures. Not "something like this broke once" — this exact command, still broken. | Runs at `PreToolUse`. Manually: `audrey guard --tool Bash --strict` |
+| **Grounding** | After deleting or renaming things a memory might mention | Confidence tells you a memory is well-sourced. Grounding tells you it is still true. A note about a script you deleted is confident and wrong. | `audrey ground`, or let the maintenance sweep do it |
+| **Session briefing** | Automatic at session start | Small, scoped packet instead of pasting context every time. Each memory injects once per session, not every prompt. | `SessionStart` hook. Preview with `audrey greeting` |
+| **Explicit capture** | When you say "remember that…" or "I prefer…" | Deliberate memories are worth more than inferred ones, and phrasing it that way is enough. | Just type it. Autopilot picks up those sentence shapes |
+| **Consolidation** | Automatic when idle; manually before a long break | Repeated episodes become one principle. Otherwise the store is a pile of near-duplicates and recall gets noisy. | `audrey dream` |
+| **Contradictions** | When two memories disagree | Neither one silently wins. Both stay visible and labeled until something resolves them. | Surfaced in packets; `memory_resolve_truth` to settle one |
+| **Decay** | Automatic | Low-value memories fade. Reinforced ones stick around. Runs in the same sweep as consolidation. | Part of `audrey dream` |
+| **Promote** | When a pattern deserves to be a repo rule | Moves a learned habit out of memory and into a file your team can read and review. | `audrey promote --dry-run` first |
+| **Impact** | When you want to know whether any of this is working | Shows which memories were used and whether they helped. Answers "is this earning its keep". | `audrey impact --window 30` |
+| **Snapshot** | Backups, or moving to a new machine | Full store in one JSON file. Import treats it as untrusted: redacted and stripped of trust markers on the way in. | `AUDREY_ENABLE_ADMIN_TOOLS=1`, then `memory_export` / `memory_import` |
+| **Doctor** | Packets stopped arriving | The two real causes are a drifted hook entrypoint and starved consolidation. Doctor names which one. | `audrey doctor` |
+| **Demo** | Before trusting any of this | Runs the whole loop with no API key and no network. Nothing to configure to see it work. | `audrey demo --scenario repeated-failure` |
+| **REST sidecar** | Custom agents that are not Codex or Claude Code | Same memory runtime, same evidence contract, over HTTP. Python and JS clients included. | `audrey serve` with `AUDREY_API_KEY` set |
+
 ## What Audrey deliberately does not do
 
 Audrey does not upload your memory to a hosted service by default. It does not treat every sentence as permanent truth. It does not promote instructions from arbitrary tool output into trusted policy. It does not claim that a small local benchmark proves state-of-the-art memory quality.
