@@ -9,6 +9,7 @@ import {
   buildAudreyConfig,
   buildAudreyMcpEnv,
   buildInstallArgs,
+  buildCodexInstallArgs,
   buildAutopilotRuntimeArgs,
   buildStdioMcpServerConfig,
   DEFAULT_AGENT,
@@ -1019,6 +1020,13 @@ describe('MCP CLI: host-neutral config output', () => {
     // The unnamed generic host has no identity of its own, so it still honors
     // an explicitly exported agent name.
     expect(buildStdioMcpServerConfig(polluted, 'generic').env.AUDREY_AGENT).toBe('claude-code');
+
+    // The registration argv is the path that actually writes each host's
+    // config file, so it has to hold the same rule as the rendered config.
+    const agentOf = args =>
+      args.find(arg => typeof arg === 'string' && arg.startsWith('AUDREY_AGENT='));
+    expect(agentOf(buildCodexInstallArgs(polluted, {}))).toBe('AUDREY_AGENT=codex');
+    expect(agentOf(buildInstallArgs(polluted, {}))).toBe('AUDREY_AGENT=claude-code');
   });
 
   it('formats VS Code MCP JSON using the servers envelope', () => {
