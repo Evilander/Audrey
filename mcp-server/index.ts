@@ -4563,6 +4563,7 @@ Commands:
   hook --host <host>            Run the automatic Codex/Claude lifecycle adapter (host use)
   serve                         Start the REST sidecar (default port 7437; AUDREY_API_KEY recommended)
   dream                         Run consolidation + decay sweep
+  ground                        Re-check stored claims against the current project
   reembed                       Recompute vectors after dimension/provider change
   greeting                      Emit session-start briefing (used by host hooks)
   reflect                       End-of-session memory capture from stdin transcript

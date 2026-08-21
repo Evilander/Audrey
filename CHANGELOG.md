@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.2 - 2026-08-21
+
+- Pins `sharp` past its fix line with an npm override, clearing the two high-severity libvips advisories that `@huggingface/transformers` had no patched release for. Production `npm audit` is clean. Upgrading transformers does not help: every 4.x release still declares `sharp: ^0.34.5`, which the advisory range `<0.35.0` covers in full, so the major bump would have carried real risk to the embedding runtime for no security benefit. Verified across a fixed corpus that vectors are bit-identical before and after, cosine 1.0.
+- `audrey ground` appears in `audrey --help`. The subcommand shipped in 1.2.0 without being listed.
+- The README documents each feature with when to reach for it, why it helps, and the command that runs it.
+
 ## 1.2.1 - 2026-08-21
 
 - The MCP registration argv that actually writes each host's config file now uses the host's own agent name. 1.2.0 corrected the rendered configuration but not the `mcp add` arguments the installer passes, so `audrey install --host codex` run from inside a hooked Claude Code session still wrote `AUDREY_AGENT=claude-code` into Codex's config and pointed both hosts at one memory namespace. Covered by a test over the argv, not just the rendered form.
