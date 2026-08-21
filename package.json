@@ -1,6 +1,6 @@
 {
   "name": "audrey",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "mcpName": "io.github.Evilander/audrey",
   "description": "Automatic, evidence-backed memory and pre-action Guard for Codex, Claude Code, and custom AI agents",
   "type": "module",

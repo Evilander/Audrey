@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AudreyConfig, EmbeddingConfig, LLMConfig } from '../src/types.js';
 
-export const VERSION = '1.2.0';
+export const VERSION = '1.2.1';
 export const SERVER_NAME = 'audrey-memory';
 export const DEFAULT_AGENT = 'local-agent';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
@@ -305,7 +305,7 @@ export function buildInstallArgs(
   env: Record<string, string | undefined> = process.env,
   options: McpEnvOptions = {},
 ): string[] {
-  const envPairs = buildAudreyMcpEnv(env, env['AUDREY_AGENT'] || HOST_AGENT_NAMES['claude-code'], {
+  const envPairs = buildAudreyMcpEnv(env, resolveConfiguredAgent(env, 'claude-code'), {
     includeSecrets: options.includeSecrets ?? false,
   });
   // Claude's --env option is variadic, so the required server name must come
@@ -331,7 +331,7 @@ export function buildCodexInstallArgs(
   env: Record<string, string | undefined> = process.env,
   options: McpEnvOptions = {},
 ): string[] {
-  const envPairs = buildAudreyMcpEnv(env, env['AUDREY_AGENT'] || HOST_AGENT_NAMES.codex, {
+  const envPairs = buildAudreyMcpEnv(env, resolveConfiguredAgent(env, 'codex'), {
     includeSecrets: options.includeSecrets ?? false,
   });
   const args = ['mcp', 'add', SERVER_NAME];

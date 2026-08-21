@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1 - 2026-08-21
+
+- The MCP registration argv that actually writes each host's config file now uses the host's own agent name. 1.2.0 corrected the rendered configuration but not the `mcp add` arguments the installer passes, so `audrey install --host codex` run from inside a hooked Claude Code session still wrote `AUDREY_AGENT=claude-code` into Codex's config and pointed both hosts at one memory namespace. Covered by a test over the argv, not just the rendered form.
+
 ## 1.2.0 - 2026-08-21
 
 ### Grounding — memories are checked against the project, not just aged
