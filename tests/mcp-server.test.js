@@ -1007,6 +1007,20 @@ describe('MCP CLI: host-neutral config output', () => {
     expect(text).toContain('AUDREY_EMBEDDING_PROVIDER = "local"');
   });
 
+  it('does not let one host inherit another host agent from the environment', () => {
+    // Autopilot exports AUDREY_AGENT into every hook process, so running
+    // `audrey install --host codex` from inside a hooked Claude Code session
+    // used to write claude-code into Codex's config and point both hosts at
+    // one memory namespace.
+    const polluted = { AUDREY_AGENT: 'claude-code' };
+    expect(formatMcpHostConfig('codex', polluted)).toContain('AUDREY_AGENT = "codex"');
+    expect(buildStdioMcpServerConfig(polluted, 'codex').env.AUDREY_AGENT).toBe('codex');
+    expect(buildStdioMcpServerConfig(polluted, 'claude-code').env.AUDREY_AGENT).toBe('claude-code');
+    // The unnamed generic host has no identity of its own, so it still honors
+    // an explicitly exported agent name.
+    expect(buildStdioMcpServerConfig(polluted, 'generic').env.AUDREY_AGENT).toBe('claude-code');
+  });
+
   it('formats VS Code MCP JSON using the servers envelope', () => {
     const text = formatMcpHostConfig('vscode', {});
     const parsed = JSON.parse(text);

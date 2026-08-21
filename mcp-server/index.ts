@@ -58,7 +58,7 @@ import {
   resolveDataDir,
   resolveEmbeddingProvider,
   resolveLLMProvider,
-  resolveHostAgent,
+  resolveConfiguredAgent,
 } from './config.js';
 import {
   applyHostHookConfig,
@@ -675,10 +675,7 @@ export function formatInstallGuide(
   for (const target of hosts as Array<'claude-code' | 'codex'>) {
     lines.push('', `${target} MCP config:`, formatMcpHostConfig(target, env));
     if (installHooks) {
-      const runtimeArgs = buildAutopilotRuntimeArgs(
-        env,
-        env['AUDREY_AGENT'] || resolveHostAgent(target),
-      );
+      const runtimeArgs = buildAutopilotRuntimeArgs(env, resolveConfiguredAgent(env, target));
       lines.push('', `${target} Autopilot hooks:`, formatHostHookConfig(target, { runtimeArgs }));
     }
   }
@@ -1065,7 +1062,7 @@ function installHost(host: 'claude-code' | 'codex', options: InstallOptions): vo
   const mcpBackup = replaceMcpRegistration(host, options.scope, addArgs);
   const runtimeArgs = buildAutopilotRuntimeArgs(
     process.env,
-    process.env['AUDREY_AGENT'] || resolveHostAgent(host),
+    resolveConfiguredAgent(process.env, host),
   );
   let hookResult: HostHookApplyResult | null;
   let codexHooksActivation: CodexHooksFeatureActivation | null = null;
@@ -1104,7 +1101,7 @@ function warmAutopilot(host: 'claude-code' | 'codex'): void {
   if (embedding.provider !== 'local') return;
   const runtimeArgs = buildAutopilotRuntimeArgs(
     process.env,
-    process.env['AUDREY_AGENT'] || resolveHostAgent(host),
+    resolveConfiguredAgent(process.env, host),
   );
   const startedAt = Date.now();
   console.log(
@@ -1273,7 +1270,7 @@ function printHookConfig(): void {
       formatHostHookConfig(options.host, {
         runtimeArgs: buildAutopilotRuntimeArgs(
           process.env,
-          process.env['AUDREY_AGENT'] || resolveHostAgent(options.host),
+          resolveConfiguredAgent(process.env, options.host),
         ),
       }),
     );
@@ -1294,7 +1291,7 @@ function printHookConfig(): void {
       dryRun: options.dryRun,
       runtimeArgs: buildAutopilotRuntimeArgs(
         process.env,
-        process.env['AUDREY_AGENT'] || resolveHostAgent(options.host),
+        resolveConfiguredAgent(process.env, options.host),
       ),
     });
     const action = result.dryRun

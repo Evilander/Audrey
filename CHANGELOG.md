@@ -64,6 +64,7 @@ states it with evidence attached, so the agent follows it into a wall.
 ### Autopilot
 
 - Worktree checkouts resolve to their repository's common root, so all worktrees of one repo share a memory namespace instead of fragmenting must-follow rules and failure history per checkout. A drive-qualified pointer (`C:/repo/.git/worktrees/...`) read on a POSIX host is treated as absolute rather than joined onto the worktree directory, so it fails by not existing instead of silently resolving to a path that never did.
+- A named host's generated config uses that host's own agent name instead of inheriting an ambient `AUDREY_AGENT`. Autopilot exports that variable into every hook process, so `audrey install --host codex` run from inside a hooked Claude Code session wrote `claude-code` into Codex's config and pointed both hosts at one memory namespace — in exactly the session where someone is most likely to run the install. The unnamed `generic` host, which has no identity of its own, still honors an explicitly exported name.
 - The Python client accepts an affect without `valence`, matching the TypeScript type and the MCP schemas, which both made it optional. Python was rejecting payloads the server accepts.
 - Only the `global-preference` tag crosses project boundaries. Generic `preference`-class tags no longer leak project-local memories into every other project's packets.
 - Hook processes derive their internal embedding and LLM timeouts from the invoked event's declared host timeout, leaving margin to exit cleanly instead of being killed mid-write by the host.

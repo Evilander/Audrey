@@ -219,11 +219,30 @@ export function buildAutopilotRuntimeArgs(
   });
 }
 
+/**
+ * The agent name to write into a host's generated configuration.
+ *
+ * A named host owns its agent name; only the unnamed 'generic' host falls
+ * back to the ambient AUDREY_AGENT. Autopilot exports AUDREY_AGENT into
+ * every hook process, so `audrey install --host codex` run from inside a
+ * hooked Claude Code session used to inherit 'claude-code' and write that
+ * into Codex's config — pointing a second host at the first host's memory
+ * namespace, silently, in exactly the session where someone is most likely
+ * to run the install.
+ */
+export function resolveConfiguredAgent(
+  env: Record<string, string | undefined>,
+  host: string | undefined,
+): string {
+  if (host && host !== 'generic') return resolveHostAgent(host);
+  return env['AUDREY_AGENT'] || resolveHostAgent(host);
+}
+
 export function buildStdioMcpServerConfig(
   env: Record<string, string | undefined> = process.env,
   host: string | undefined = 'generic',
 ): { command: string; args: string[]; env: Record<string, string> } {
-  const agent = env['AUDREY_AGENT'] || resolveHostAgent(host);
+  const agent = resolveConfiguredAgent(env, host);
   return {
     command: process.execPath,
     args: [MCP_ENTRYPOINT],
