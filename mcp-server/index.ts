@@ -33,6 +33,8 @@ import {
   MEMORY_TRUST_NOTICE,
 } from '../src/autopilot.js';
 import { stripReservedTrustKeys } from '../src/trust.js';
+import { verifyAnchors } from '../src/grounding.js';
+import { projectRoot } from '../src/project.js';
 import type {
   Affect,
   AudreyConfig,
@@ -56,7 +58,7 @@ import {
   resolveDataDir,
   resolveEmbeddingProvider,
   resolveLLMProvider,
-  resolveHostAgent,
+  resolveConfiguredAgent,
 } from './config.js';
 import {
   applyHostHookConfig,
@@ -308,7 +310,57 @@ async function dream(): Promise<void> {
       `[audrey] Final: ${stats.episodic} episodic, ${stats.semantic} semantic, ${stats.procedural} procedural ` +
         `| ${health.healthy ? 'healthy' : 'unhealthy'}`,
     );
+
+    // Whole-store sweep: dream runs across every agent, so grounding is not
+    // scoped to the synthetic 'dream' agent, which owns no memories.
+    const grounding = verifyAnchors(audrey.db, { projectRoot: projectRoot(process.cwd()) });
+    console.log(
+      `[audrey] Grounding: checked ${grounding.checked} anchors, ` +
+        `${grounding.broken} broken, ${grounding.repaired} repaired`,
+    );
+    for (const broken of grounding.newlyBroken.slice(0, 5)) {
+      console.log(
+        `[audrey]   ${broken.memoryId} now references a missing ${broken.kind}: ${broken.value}`,
+      );
+    }
+
     console.log('[audrey] Dream complete.');
+  } finally {
+    await audrey.closeAsync();
+  }
+}
+
+/**
+ * Re-checks the memories that make claims about the current project and
+ * reports what no longer holds. Confidence answers whether a memory is
+ * recent and well-supported; this answers whether it is still true.
+ */
+async function ground(): Promise<void> {
+  const dataDir = resolveDataDir(process.env);
+  const embedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
+  const audrey = new Audrey({ dataDir, agent: 'ground', embedding });
+  try {
+    const root = projectRoot(process.cwd());
+    console.log(`[audrey] Grounding memories against ${root}`);
+    const report = verifyAnchors(audrey.db, { projectRoot: root });
+    if (report.checked === 0) {
+      console.log('[audrey] No checkable claims recorded for this project yet.');
+      console.log(
+        '[audrey] A claim is anchored when a memory names a path or package script that exists as the memory is written.',
+      );
+      return;
+    }
+    console.log(
+      `[audrey] Checked ${report.checked}: ${report.intact} still true, ${report.broken} broken, ${report.repaired} repaired.`,
+    );
+    for (const broken of report.newlyBroken) {
+      console.log(
+        `[audrey]   ${broken.memoryId} references a missing ${broken.kind}: ${broken.value}`,
+      );
+    }
+    if (report.newlyBroken.length > 0) {
+      console.log('[audrey] Broken memories are down-weighted and labelled, never deleted.');
+    }
   } finally {
     await audrey.closeAsync();
   }
@@ -623,10 +675,7 @@ export function formatInstallGuide(
   for (const target of hosts as Array<'claude-code' | 'codex'>) {
     lines.push('', `${target} MCP config:`, formatMcpHostConfig(target, env));
     if (installHooks) {
-      const runtimeArgs = buildAutopilotRuntimeArgs(
-        env,
-        env['AUDREY_AGENT'] || resolveHostAgent(target),
-      );
+      const runtimeArgs = buildAutopilotRuntimeArgs(env, resolveConfiguredAgent(env, target));
       lines.push('', `${target} Autopilot hooks:`, formatHostHookConfig(target, { runtimeArgs }));
     }
   }
@@ -1013,7 +1062,7 @@ function installHost(host: 'claude-code' | 'codex', options: InstallOptions): vo
   const mcpBackup = replaceMcpRegistration(host, options.scope, addArgs);
   const runtimeArgs = buildAutopilotRuntimeArgs(
     process.env,
-    process.env['AUDREY_AGENT'] || resolveHostAgent(host),
+    resolveConfiguredAgent(process.env, host),
   );
   let hookResult: HostHookApplyResult | null;
   let codexHooksActivation: CodexHooksFeatureActivation | null = null;
@@ -1052,7 +1101,7 @@ function warmAutopilot(host: 'claude-code' | 'codex'): void {
   if (embedding.provider !== 'local') return;
   const runtimeArgs = buildAutopilotRuntimeArgs(
     process.env,
-    process.env['AUDREY_AGENT'] || resolveHostAgent(host),
+    resolveConfiguredAgent(process.env, host),
   );
   const startedAt = Date.now();
   console.log(
@@ -1221,7 +1270,7 @@ function printHookConfig(): void {
       formatHostHookConfig(options.host, {
         runtimeArgs: buildAutopilotRuntimeArgs(
           process.env,
-          process.env['AUDREY_AGENT'] || resolveHostAgent(options.host),
+          resolveConfiguredAgent(process.env, options.host),
         ),
       }),
     );
@@ -1242,7 +1291,7 @@ function printHookConfig(): void {
       dryRun: options.dryRun,
       runtimeArgs: buildAutopilotRuntimeArgs(
         process.env,
-        process.env['AUDREY_AGENT'] || resolveHostAgent(options.host),
+        resolveConfiguredAgent(process.env, options.host),
       ),
     });
     const action = result.dryRun
@@ -2754,14 +2803,21 @@ export function registerHostPrompts(server: McpServer): void {
 // passed to server.tool) so tests can invoke the exact function the MCP server registers,
 // instead of only the pure helpers it happens to call.
 
+/**
+ * Echoes back what was actually stored, which is the redacted text, rather
+ * than the caller's original argument. The fallback is redacted too: a
+ * transient read failure here must not turn the response into the one place
+ * a secret the storage boundary just scrubbed reappears in plaintext.
+ */
 function storedEpisodeContent(audrey: Audrey, id: string, fallback: string): string {
   try {
     const row = audrey.db.prepare('SELECT content FROM episodes WHERE id = ?').get(id) as
       { content?: string } | undefined;
-    return typeof row?.content === 'string' ? row.content : fallback;
+    if (typeof row?.content === 'string') return row.content;
   } catch {
-    return fallback;
+    // Fall through to the redacted fallback.
   }
+  return redact(fallback).text;
 }
 
 interface MemoryEncodeArgs {
@@ -2875,7 +2931,13 @@ export function buildMemoryRecallHandler(audrey: Audrey, profileEnabled: boolean
         sources,
         after,
         before,
-        context,
+        // Query-side context feeds context-match scoring and is never
+        // persisted, so a marker here cannot mint trust the way one on the
+        // encode side could. Stripped anyway to keep every MCP boundary
+        // identical to its REST counterpart, so the rule stays "the marker
+        // does not cross an external boundary in either direction" rather
+        // than a per-handler judgement about which directions are harmless.
+        context: context ? stripReservedTrustKeys(context) : context,
         mood,
         retrieval,
         scope,
@@ -3229,6 +3291,32 @@ async function main(): Promise<void> {
   });
 
   server.tool(
+    'memory_ground',
+    {
+      cwd: z
+        .string()
+        .optional()
+        .describe(
+          'Directory identifying the project to check against. Defaults to the server cwd.',
+        ),
+    },
+    async ({ cwd }) => {
+      try {
+        // Re-checks the claims stored memories make about this project —
+        // paths and package scripts that existed when the memory was
+        // written — and reports the ones that stopped being true. Broken
+        // memories are down-weighted and labelled on recall, never deleted.
+        const report = verifyAnchors(audrey.db, {
+          projectRoot: projectRoot(cwd ?? process.cwd()),
+        });
+        return toolResult(report, undefined, { escapeMarkup: true });
+      } catch (err) {
+        return toolError(err);
+      }
+    },
+  );
+
+  server.tool(
     'memory_resolve_truth',
     {
       contradiction_id: z.string().describe('ID of the contradiction to resolve'),
@@ -3245,7 +3333,13 @@ async function main(): Promise<void> {
   server.tool('memory_export', {}, async () => {
     try {
       requireAdminTools();
-      return toolResult(audrey.export());
+      // Escaping only, no trust-framing wrapper: this payload is consumed by
+      // memory_import and has to keep its exact snapshot shape. escapeMarkup
+      // is shape-preserving — it rewrites markup characters as \uXXXX inside
+      // the serialized text, which JSON.parse decodes back to the identical
+      // value — so a stored memory still cannot forge a tag boundary in the
+      // raw text an LLM reads before parsing.
+      return toolResult(audrey.export(), undefined, { escapeMarkup: true });
     } catch (err) {
       return toolError(err);
     }
@@ -4439,6 +4533,7 @@ const KNOWN_SUBCOMMANDS = [
   'demo',
   'reembed',
   'dream',
+  'ground',
   'greeting',
   'reflect',
   'serve',
@@ -4548,6 +4643,11 @@ if (isDirectRun) {
   } else if (subcommand === 'dream') {
     dream().catch(err => {
       console.error('[audrey] dream failed:', err);
+      process.exit(1);
+    });
+  } else if (subcommand === 'ground') {
+    ground().catch(err => {
+      console.error('[audrey] ground failed:', err);
       process.exit(1);
     });
   } else if (subcommand === 'greeting') {

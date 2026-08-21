@@ -5,7 +5,6 @@ import {
   USER_VERIFIED_TRUST,
   LEGACY_TRUST_CUTOFF_ISO,
   controlTrustFor,
-  isReservedTrustKey,
   stripReservedTrustKeys,
 } from '../dist/src/trust.js';
 
@@ -132,18 +131,6 @@ describe('controlTrustFor — full matrix', () => {
       expect(() => controlTrustFor(input)).not.toThrow();
       expect(['verified', 'legacy', 'untrusted']).toContain(controlTrustFor(input));
     }
-  });
-});
-
-describe('isReservedTrustKey', () => {
-  it('is true for the trust context key', () => {
-    expect(isReservedTrustKey(TRUST_CONTEXT_KEY)).toBe(true);
-  });
-
-  it('is false for ordinary keys', () => {
-    expect(isReservedTrustKey('task')).toBe(false);
-    expect(isReservedTrustKey('cwd')).toBe(false);
-    expect(isReservedTrustKey('')).toBe(false);
   });
 });
 

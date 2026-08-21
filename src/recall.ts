@@ -19,6 +19,7 @@ import {
 } from './confidence.js';
 import { interferenceModifier } from './interference.js';
 import { contextMatchRatio, contextModifier } from './context.js';
+import { groundingForMemories, describeBrokenGrounding, groundingModifier } from './grounding.js';
 import { moodCongruenceModifier, affectSimilarity } from './affect.js';
 import { daysBetween, requireAgent, resolveMemoryScope, safeJsonParse } from './utils.js';
 import { ftsIdsByType, fuseResults } from './hybrid-recall.js';
@@ -1088,5 +1089,47 @@ export async function recall(
     results.partialFailure = true;
     results.errors = errors;
   }
+  annotateGrounding(db, results);
   return results;
+}
+
+/**
+ * Labels results whose checkable claims have stopped holding, and demotes
+ * them. A memory that still asserts a deleted path outranking one that does
+ * not is the failure this exists to prevent, so the penalty has to reach
+ * score and not just the displayed confidence — otherwise the stale memory
+ * keeps its position and only gains a caption nobody acts on.
+ *
+ * Runs as one batched lookup after collection rather than per candidate
+ * during scoring: recall is a hot path and most memories carry no anchors
+ * at all, so the common case must cost a single query returning nothing.
+ * Failure here is swallowed deliberately — grounding is an annotation, and
+ * losing it must never take a recall down with it.
+ */
+function annotateGrounding(db: Database.Database, results: RecallResults): void {
+  if (results.length === 0) return;
+  try {
+    const grounding = groundingForMemories(
+      db,
+      results.map(entry => entry.id),
+    );
+    if (grounding.size === 0) return;
+    let demoted = false;
+    for (const entry of results) {
+      const state = grounding.get(entry.id);
+      if (!state) continue;
+      entry.grounding = state.state;
+      if (state.state !== 'broken') continue;
+      entry.groundingNote = describeBrokenGrounding(state);
+      const modifier = groundingModifier(state.state);
+      entry.confidence *= modifier;
+      entry.score *= modifier;
+      demoted = true;
+    }
+    if (demoted) {
+      results.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    }
+  } catch {
+    // Annotation only. An unreadable anchors table leaves recall intact.
+  }
 }

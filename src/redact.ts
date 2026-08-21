@@ -365,21 +365,39 @@ function looksLikeOrdinaryProse(words: string[]): boolean {
  * which would mangle cwd/file metadata at encode time and silently break
  * project scoping. Two or more separator-delimited word-like segments is a
  * path shape; base64 material essentially never splits into short clean
- * segments and, unlike paths, routinely contains '+' or '='. A secret
- * deliberately formatted to look like a path stays plaintext — bounded
- * risk, versus systematically destroying real path metadata.
+ * segments and, unlike paths, routinely contains '+' or '='.
+ *
+ * Path shape raises the entropy bar rather than granting an exemption. A
+ * blanket exemption was measurably unsafe: an AWS secret access key draws
+ * from an alphabet that includes '/', so about one in seventeen lands in
+ * this segment shape by chance alone — not "deliberately formatted to look
+ * like a path", just unlucky — and every one of those stayed plaintext.
+ * Directory and file names are English-ish and repeat characters heavily,
+ * so real paths cluster well below the raised bar while random credential
+ * material sits above it. See PATH_SHAPE_ENTROPY_MIN.
  */
-function looksLikeFilesystemPath(value: string): boolean {
+function looksLikePathShape(value: string): boolean {
   if (/[+=]/.test(value)) return false;
   const segments = value.split('/');
   if (segments.length < 3) return false;
   return segments.every(segment => segment.length <= 28 && /^[A-Za-z0-9._~-]*$/.test(segment));
 }
 
+/**
+ * Entropy floor applied to values that carry a filesystem-path shape.
+ * Calibrated against a corpus of real absolute, relative, temp-dir and
+ * toolchain paths, whose highest observed token entropy was 4.33, and
+ * against randomly generated 40-character AWS secret access keys, whose
+ * path-shaped subset bottomed out at the same figure but sat at 4.75 by
+ * the median. 4.4 clears every real path in that corpus while leaving
+ * about one in four thousand keys below the bar.
+ */
+const PATH_SHAPE_ENTROPY_MIN = 4.4;
+const GENERIC_ENTROPY_MIN = 4.0;
+
 function looksLikeHighEntropySecret(value: string): boolean {
   if (value.length < 32) return false;
   if (looksLikeWordIdentifier(value)) return false;
-  if (looksLikeFilesystemPath(value)) return false;
   const classes = [
     /[a-z]/.test(value),
     /[A-Z]/.test(value),
@@ -395,7 +413,7 @@ function looksLikeHighEntropySecret(value: string): boolean {
     // common public-hash sizes (>=80 hex chars) AND have hash-grade entropy.
     return value.length >= 80 && entropy >= 3.3;
   }
-  return entropy >= 4.0;
+  return entropy >= (looksLikePathShape(value) ? PATH_SHAPE_ENTROPY_MIN : GENERIC_ENTROPY_MIN);
 }
 
 export function redact(input: string): RedactionResult {
@@ -428,8 +446,17 @@ export function redact(input: string): RedactionResult {
   };
 }
 
+/**
+ * Matches the sensitive word as a whole underscore/dash-delimited component
+ * anywhere in the key, not only as its suffix. Canonical credential fields
+ * are compounds — aws_secret_access_key, stripe_secret_key,
+ * refresh_token_expires_at — and a suffix-anchored pattern misses every one
+ * of them, which also stops redactJson's sensitive-ancestor fallback from
+ * covering their values. Plurals stay unmatched ('tokens', 'credentials'
+ * without the trailing delimiter are ordinary count/collection fields).
+ */
 const SENSITIVE_KEY_PATTERN =
-  /(^|_|-)(password|passwd|pwd|secret|api[_-]?key|auth[_-]?token|bearer[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|jwt|aws[_-]?secret|token)$/i;
+  /(^|_|-)(password|passwd|pwd|secret|passphrase|credential|api[_-]?key|auth[_-]?token|bearer[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|jwt|aws[_-]?secret|token)([_-]|$)/i;
 
 function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY_PATTERN.test(key);

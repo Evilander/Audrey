@@ -131,39 +131,34 @@ function targetChangelogHeader(targetVersion) {
   return `## ${targetVersion} - `;
 }
 
+const UNRELEASED_HEADING = /^## Unreleased[ \t]*$/m;
+
+/**
+ * The section a cut opens when there is nothing pending to promote: a dated
+ * heading and nothing else.
+ *
+ * This used to emit a fixed block of 1.0-era release notes describing Guard,
+ * GuardBench and the paper artifacts, stamped verbatim under whatever
+ * version was being cut. Those notes were already recorded under 1.0.0, so
+ * every later cut wrote false history — 1.2.0 was published claiming to add
+ * the Memory Controller. A release cut has no way to know what changed;
+ * only the accumulated Unreleased notes do.
+ */
 export function releaseChangelogSection(targetVersion, date) {
-  return `## ${targetVersion} - ${date}
-
-### Audrey Guard
-
-- Adds the Memory Controller layer and \`audrey guard\` CLI for memory-before-action decisions that return allow, warn, or block with evidence.
-- Adds Claude Code hook generation and hook-stdin support so pre-tool checks and post-tool traces can run inside real agent sessions.
-- Binds validation feedback to preflight event ids, evidence ids, and Guard action fingerprints so remembered guidance can be audited after use.
-
-### GuardBench And Paper Artifacts
-
-- Ships GuardBench, a local comparative benchmark for pre-action memory control with Audrey Guard, no-memory, recent-window, vector-only, and FTS-only baselines.
-- Adds portable GuardBench submission bundles, conformance cards, JSON schemas, adapter self-tests, leaderboard generation, and external adapter evidence reports.
-- Adds Mem0 Platform and Zep Cloud adapter runners that use runtime-only API keys and keep dry-run evidence separate from live external scores.
-- Ships the Audrey Guard paper source, claim register, launch-copy verifier, browser launch plan/results ledger, deterministic arXiv source package, and paper submission bundle.
-
-### Release Controls
-
-- Adds the pending-aware \`release:readiness\` verifier and strict \`release:readiness:strict\` gate for the final 1.0 cut.
-- Adds \`release:cut:plan\` and \`release:cut:apply\` so npm, lockfile, MCP, Python, and changelog version surfaces are cut consistently.
-- Adds production dependency audit coverage to the release gates and keeps the current production audit clean.
-
-### Runtime And Client Hardening
-
-- Improves recall degradation reporting across capsules, strict preflights, status surfaces, and Guard decisions.
-- Batches embedding provider calls in \`encodeBatch\` and tightens exact-failure matching, redaction, action fingerprinting, and control-memory recall.
-- Hardens Docker/API configuration, Python client behavior, MCP surfaces, and test execution on locked-down Windows hosts.
-
-`;
+  return `## ${targetVersion} - ${date}\n\n`;
 }
 
+/**
+ * Promotes the accumulated `## Unreleased` notes to the target version,
+ * which is what a cut is: the pending section stops being pending. Falls
+ * back to opening an empty dated section when nothing is pending, so a cut
+ * never invents content it cannot know.
+ */
 export function insertChangelogSection(changelog, targetVersion, date) {
   if (changelog.includes(targetChangelogHeader(targetVersion))) return changelog;
+  if (UNRELEASED_HEADING.test(changelog)) {
+    return changelog.replace(UNRELEASED_HEADING, `## ${targetVersion} - ${date}`);
+  }
   return replaceOnce(
     changelog,
     /(# Changelog\r?\n\r?\n)/,

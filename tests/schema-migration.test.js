@@ -233,7 +233,7 @@ describe('schema migration framework', () => {
 
     const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get();
     expect(row).toBeDefined();
-    expect(Number(row.value)).toBe(14);
+    expect(Number(row.value)).toBe(15);
   });
 
   it('is idempotent — running migrations twice causes no errors', () => {
@@ -573,7 +573,7 @@ describe('schema migration framework', () => {
     });
     expect(
       db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get().value,
-    ).toBe('14');
+    ).toBe('15');
     const indexes = db.prepare("PRAGMA index_list('memory_events')").all();
     expect(indexes.map(index => index.name)).toEqual(
       expect.arrayContaining([
@@ -587,7 +587,7 @@ describe('schema migration framework', () => {
     ({ db } = createDatabase(LEGACY_DIR));
     expect(
       db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get().value,
-    ).toBe('14');
+    ).toBe('15');
   });
 });
 
@@ -640,12 +640,12 @@ describe('v14 vec0 sync high-water mark', () => {
 
     ({ db } = createDatabase(VEC_SYNC_DIR, { dimensions: 8 }));
     expect(db.prepare('SELECT id FROM vec_episodes WHERE id = ?').get('ep-1')).toBeDefined();
-    const markAfterFirstSync = readConfigValue(db, 'vec_sync_rowid_episodes');
+    const markAfterFirstSync = readConfigValue(db, 'vec_sync_id_episodes');
     expect(markAfterFirstSync).toBeDefined();
     closeDatabase(db);
 
     ({ db } = createDatabase(VEC_SYNC_DIR, { dimensions: 8 }));
-    expect(readConfigValue(db, 'vec_sync_rowid_episodes')).toBe(markAfterFirstSync);
+    expect(readConfigValue(db, 'vec_sync_id_episodes')).toBe(markAfterFirstSync);
     expect(db.prepare('SELECT COUNT(*) AS c FROM vec_episodes').get().c).toBe(1);
   });
 
@@ -656,7 +656,7 @@ describe('v14 vec0 sync high-water mark', () => {
     closeDatabase(db);
 
     ({ db } = createDatabase(VEC_SYNC_DIR, { dimensions: 8 }));
-    const markAfterFirstSync = readConfigValue(db, 'vec_sync_rowid_episodes');
+    const markAfterFirstSync = readConfigValue(db, 'vec_sync_id_episodes');
     closeDatabase(db);
 
     const otherConnection = new Database(join(VEC_SYNC_DIR, 'audrey.db'));
@@ -666,9 +666,31 @@ describe('v14 vec0 sync high-water mark', () => {
     ({ db } = createDatabase(VEC_SYNC_DIR, { dimensions: 8 }));
     expect(db.prepare('SELECT id FROM vec_episodes WHERE id = ?').get('ep-b')).toBeDefined();
     expect(db.prepare('SELECT COUNT(*) AS c FROM vec_episodes').get().c).toBe(2);
-    expect(Number(readConfigValue(db, 'vec_sync_rowid_episodes'))).toBeGreaterThan(
-      Number(markAfterFirstSync),
-    );
+    // Marks are memory ids, compared as text: ids are ULIDs, so lexical
+    // order is insertion order and a delete never recycles one.
+    expect(readConfigValue(db, 'vec_sync_id_episodes') > markAfterFirstSync).toBe(true);
+  });
+
+  it('syncs a row whose rowid was recycled by an earlier delete', () => {
+    // SQLite hands out max(rowid)+1, so deleting the row holding the current
+    // maximum makes the next insert reuse that rowid. A rowid-keyed mark read
+    // the reused row as already-synced and dropped it from vec0 permanently.
+    mkdirSync(VEC_SYNC_DIR, { recursive: true });
+    ({ db } = createDatabase(VEC_SYNC_DIR, { dimensions: 8 }));
+    for (const id of ['ep-aaa', 'ep-bbb', 'ep-ccc']) insertRawEpisode(db, id, mockEmbedding(0.5));
+    closeDatabase(db);
+
+    ({ db } = createDatabase(VEC_SYNC_DIR, { dimensions: 8 }));
+    expect(db.prepare('SELECT COUNT(*) AS c FROM vec_episodes').get().c).toBe(3);
+    const recycled = db.prepare('SELECT MAX(rowid) AS r FROM episodes').get().r;
+    db.prepare('DELETE FROM episodes WHERE rowid = ?').run(recycled);
+    db.prepare('DELETE FROM vec_episodes WHERE id = ?').run('ep-ccc');
+    insertRawEpisode(db, 'ep-ddd', mockEmbedding(0.5));
+    expect(db.prepare("SELECT rowid FROM episodes WHERE id = 'ep-ddd'").get().rowid).toBe(recycled);
+    closeDatabase(db);
+
+    ({ db } = createDatabase(VEC_SYNC_DIR, { dimensions: 8 }));
+    expect(db.prepare('SELECT id FROM vec_episodes WHERE id = ?').get('ep-ddd')).toBeDefined();
   });
 
   it('a dimension change clears the high-water marks so the new vector space resyncs from scratch', () => {
@@ -678,13 +700,13 @@ describe('v14 vec0 sync high-water mark', () => {
     closeDatabase(db);
 
     ({ db } = createDatabase(VEC_SYNC_DIR, { dimensions: 8 }));
-    expect(readConfigValue(db, 'vec_sync_rowid_episodes')).toBeDefined();
+    expect(readConfigValue(db, 'vec_sync_id_episodes')).toBeDefined();
     closeDatabase(db);
 
     const result = createDatabase(VEC_SYNC_DIR, { dimensions: 16 });
     db = result.db;
     expect(result.migrated).toBe(true);
-    expect(readConfigValue(db, 'vec_sync_rowid_episodes')).toBeUndefined();
+    expect(readConfigValue(db, 'vec_sync_id_episodes')).toBeUndefined();
     expect(readConfigValue(db, 'dimensions')).toBe('16');
     expect(db.prepare('SELECT COUNT(*) AS c FROM vec_episodes').get().c).toBe(0);
   });
@@ -694,7 +716,7 @@ describe('v14 vec0 sync high-water mark', () => {
     ({ db } = createDatabase(VEC_SYNC_DIR, { dimensions: 8 }));
     insertRawEpisode(db, 'ep-legacy', mockEmbedding(0.4));
     db.prepare(`UPDATE audrey_config SET value = '13' WHERE key = 'schema_version'`).run();
-    db.prepare('DELETE FROM audrey_config WHERE key LIKE ?').run('vec_sync_rowid_%');
+    db.prepare('DELETE FROM audrey_config WHERE key LIKE ?').run('vec_sync_%');
     db.prepare('DELETE FROM vec_episodes WHERE id = ?').run('ep-legacy');
     closeDatabase(db);
 
@@ -702,9 +724,9 @@ describe('v14 vec0 sync high-water mark', () => {
 
     expect(
       db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get().value,
-    ).toBe('14');
+    ).toBe('15');
     expect(db.prepare('SELECT id FROM vec_episodes WHERE id = ?').get('ep-legacy')).toBeDefined();
-    expect(readConfigValue(db, 'vec_sync_rowid_episodes')).toBeDefined();
+    expect(readConfigValue(db, 'vec_sync_id_episodes')).toBeDefined();
 
     const indexes = db.pragma("index_list('episodes')").map(index => index.name);
     expect(indexes).toContain('idx_episodes_embedding_present');

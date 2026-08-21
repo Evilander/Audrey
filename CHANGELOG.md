@@ -1,13 +1,32 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 - 2026-08-21
+
+### Grounding — memories are checked against the project, not just aged
+
+Confidence has always answered whether a memory is recent, well-sourced, and
+uncontradicted. Nothing answered whether it is still true. A procedure that
+says to deploy with `npm run deploy:prod` kept full confidence after that
+script was deleted, and every recall raised it further, because retrieval
+counts as reinforcement. Stale memory is worse than absent memory: Guard
+states it with evidence attached, so the agent follows it into a wall.
+
+- When a memory is written, Audrey records the checkable claims in it — repository-relative paths and package script names — but only the ones that resolve at that moment. A claim that never resolved is a guess about someone's typo; a claim that resolved once and no longer does is the world having changed underneath a memory that still asserts it. Only the second kind is stored, which is what makes a later break worth reporting.
+- Anchors are re-checked during the maintenance sweep, on `audrey dream`, on demand via `audrey ground`, and through the `memory_ground` MCP tool. A path or script that comes back clears the broken state, so a reverted delete or a branch switch does not permanently discredit a memory.
+- A broken memory keeps its content and its place in the store. Recall labels it, states plainly what it still refers to, and applies a 0.5 confidence multiplier so it stops leading by default while staying readable and repairable.
+- A broken memory can no longer escalate into the capsule's `must_follow` section. That section is the one that can force a strict-mode Guard block, and a rule naming a file that no longer exists is a rule nobody can follow; such memories surface under `uncertain_or_disputed` instead.
+- Unanchored memories are left unlabelled. Absence of anchors is not a clean bill of health, and presenting it as one would be the same mistake in the other direction.
+- A project that cannot be read — a moved checkout, a missing drive — reports unknown rather than broken. Memories are never discredited because the machine changed.
 
 ### Memory privacy
 
 - `memory_encode`, `POST /v1/encode`, and `Audrey.encode` now redact content, context values, and affect labels before anything reaches the episodes table, the full-text index, or the embedding model. Previously only tool-trace capture was redacted; a secret pasted into an explicit "remember this" call was stored in plaintext. The MCP tool result now echoes the stored (redacted) content plus a redaction summary instead of reflecting the caller's raw input, and batch encodes embed the redacted text rather than the original.
 - A dedicated redaction rule catches multi-word passphrases and BIP39-style mnemonics (eight or more space- or hyphen-joined lowercase words). The previous identifier exemption treated exactly that shape as a machine identifier and let it through.
 - `redactJson` handles a literal `__proto__` key as ordinary data: the nested value is redacted and preserved instead of silently vanishing through the prototype setter.
-- The high-entropy secret rule exempts filesystem-path shapes. Long mixed-case POSIX paths could cross the entropy gate, which mangled stored `cwd` metadata and silently broke Guard project scoping on affected machines.
+- A filesystem-path shape raises the entropy bar for the high-entropy secret rule instead of exempting the value outright. Long mixed-case paths can cross the plain entropy gate, which mangled stored `cwd` metadata and silently broke Guard project scoping; a blanket exemption fixed that but opened a wider hole, because AWS secret access keys draw from an alphabet containing `/` and roughly one in seventeen lands in a path-like shape by chance. Measured against 20,000 generated keys: 5.78% stored verbatim before, 0.02% after, with every path in a corpus of absolute, relative, temp-directory and toolchain paths still preserved intact.
+- Sensitive key detection matches the sensitive word anywhere in a compound key rather than only as its suffix. `aws_secret_access_key` and `stripe_secret_key` matched nothing before, which also stopped `redactJson`'s sensitive-ancestor fallback from covering their values — so both redaction layers missed the field name credentials actually ship under. Plural collection fields such as `tokens` stay unmatched.
+- `memory_import` and `POST /v1/import` redact content, context, and affect before anything is stored or embedded, and strip the reserved trust marker the same way every other ingestion boundary does. Import previously did neither, so a snapshot could carry secrets into storage verbatim and grant itself verified control-memory trust — the one path that bypassed both of this release's security additions. Imported timestamps must now parse as real dates.
+- `memory_export` escapes markup in its response. It was the one tool returning stored memory content without the anti-injection escaping its siblings apply.
 - Memories marked `private` are excluded from the episode content sent to a configured cloud LLM during consolidation. They still consolidate through the local heuristic path.
 - The first cloud LLM completion in a process prints a one-time stderr notice naming the provider and endpoint before any memory content leaves the machine.
 
@@ -17,11 +36,16 @@
 - `Audrey.afterAction` accepts `overrideReason` for recording a succeeded outcome against a receipt that was blocked for a policy reason rather than an exact repeated failure. The reason is written into the event metadata as durable evidence. Exact-repeat-failure blocks still cannot be recorded as succeeded this way; they require a fresh acknowledged `beforeAction`. Exact-repeat detection now applies uniformly across the library API, MCP tools, HTTP routes, and CLI, which previously enforced different subsets of these checks.
 - Generated hooks now guard `MultiEdit` and every `mcp__*` tool from connected MCP servers, excluding Audrey's own memory tools so Guard preflight does not recursively fire on `memory_recall` and its siblings.
 - Preflight reuses the failure analysis its capsule already computed instead of scanning `memory_events` a second time, and its tagged must-follow sweep only runs when a must-follow tag exists anywhere in the store.
+- A failure in that tagged must-follow sweep now surfaces as a high-severity memory-health warning. It was swallowed, so the sweep that exists precisely to catch a control directive the capsule ranked too low could drop it and say nothing.
+- `memory_recall` strips the reserved trust marker from caller-supplied context, matching `POST /v1/recall`. Query-side context feeds match scoring and is never persisted, so this closes no exploit on its own; it keeps the rule "the marker does not cross an external boundary in either direction" true of every boundary rather than resting on a per-handler judgement.
+- The `memory_encode` response falls back to redacted content when re-reading the stored row fails, instead of echoing the caller's raw input. The fallback was the one path that could return a secret the storage boundary had just scrubbed.
 
 ### Performance
 
 - `recentFailures()` replaced three correlated per-row subqueries with a single materialized window-function pass backed by a new composite index on `(tool_name, outcome, created_at, actor_agent)`. Measured before the fix: about 199 ms per call at 10,000 `memory_events` rows and about 24 s at 100,000 rows — inside a Guard check whose hook timeout is 30 s. Measured after (`npm run bench:scale`, 50,000 events): 22 ms p95. This query runs on every prompt and every guarded tool call.
-- Database open no longer re-scans episodes, semantics, and procedures for unsynced embeddings on every hook process. A persisted per-table high-water mark plus partial indexes reduce a steady-state open to one `MAX(rowid)` comparison per table. Schema migrates to v14; each migration now commits atomically with its version bump.
+- Database open no longer re-scans episodes, semantics, and procedures for unsynced embeddings on every hook process. A persisted per-table high-water mark plus partial indexes reduce a steady-state open to one `MAX(id)` comparison per table. The mark is keyed on memory id rather than rowid: SQLite hands out `max(rowid)+1`, so deleting the row holding the current maximum makes the next insert reuse that rowid, and a rowid mark then reads the new row as already synced and drops it from its vector table permanently. Memory ids are ULIDs, which a delete never recycles. Schema migrates to v15; each migration commits atomically with its version bump.
+- Consolidation's near-duplicate merge lookup uses the vec0 index instead of computing a cosine distance against every active memory for the agent. That scan ran once per extracted principle inside the consolidation write transaction, holding SQLite's write lock against concurrent Guard hooks. Measured: 2.2 ms at 500 active semantics and 176 ms at 30,000 before, 0.08 ms and 6.1 ms after. `benchmarks/scale.bench.js` now gates this path, which it seeded but never measured.
+- Guard's must-follow existence probe is backed by a partial index. The leading-wildcard `LIKE` scanned the whole episodes table on the hottest path in the system; measured at 50,000 episodes with no match, 3.54 ms before and 0.003 ms after.
 - `memory_events` has retention: Autopilot maintenance prunes events older than 90 days by default (`deleteEventsBefore` batches deletes and reports the count). The table previously grew without bound for the life of an install.
 - `benchmarks/scale.bench.js` seeds tens of thousands of rows and asserts p95 budgets for the hook hot path (`recentFailures`, capsule build, preflight, cold reopen), which the 20-row benchmark that previously gated releases could not catch.
 
@@ -32,9 +56,16 @@
 - Consolidation checks new principles against existing active memories and merges near-duplicates (evidence union, reinforcement bookkeeping) instead of minting a redundant semantic or procedure on every dream cycle; recall's duplicate suppression also breaks equal-reliability ties deterministically for near-identical content instead of letting both duplicates through.
 - Capsules accept `excludeIds`, and Autopilot passes the session's already-injected set, so exclusion happens before the character budget is spent and later capsules surface next-ranked unseen memories instead of going quiet while re-fetching content the session has already seen.
 
+### Dependencies
+
+- Took the available production dependency fixes: `hono` 4.12 to 4.13 (cross-user data disclosure through retained SSR output, CORS ReDoS, `Connection` header handling), `@hono/node-server` 1.19.14 to 1.19.17 (path traversal via encoded backslash on Windows), plus `body-parser`, `fast-uri`, and `tar`. All are within the declared ranges; no major versions moved.
+- Two high-severity `sharp` advisories remain, reached through `@huggingface/transformers`, which declares a range with no patched release. Audrey never imports `sharp`, so a text-only embedding pipeline does not execute it, but it is installed and the advisory is real. Recorded in the README production checklist rather than suppressed.
+
 ### Autopilot
 
-- Worktree checkouts resolve to their repository's common root, so all worktrees of one repo share a memory namespace instead of fragmenting must-follow rules and failure history per checkout.
+- Worktree checkouts resolve to their repository's common root, so all worktrees of one repo share a memory namespace instead of fragmenting must-follow rules and failure history per checkout. A drive-qualified pointer (`C:/repo/.git/worktrees/...`) read on a POSIX host is treated as absolute rather than joined onto the worktree directory, so it fails by not existing instead of silently resolving to a path that never did.
+- A named host's generated config uses that host's own agent name instead of inheriting an ambient `AUDREY_AGENT`. Autopilot exports that variable into every hook process, so `audrey install --host codex` run from inside a hooked Claude Code session wrote `claude-code` into Codex's config and pointed both hosts at one memory namespace — in exactly the session where someone is most likely to run the install. The unnamed `generic` host, which has no identity of its own, still honors an explicitly exported name.
+- The Python client accepts an affect without `valence`, matching the TypeScript type and the MCP schemas, which both made it optional. Python was rejecting payloads the server accepts.
 - Only the `global-preference` tag crosses project boundaries. Generic `preference`-class tags no longer leak project-local memories into every other project's packets.
 - Hook processes derive their internal embedding and LLM timeouts from the invoked event's declared host timeout, leaving margin to exit cleanly instead of being killed mid-write by the host.
 
