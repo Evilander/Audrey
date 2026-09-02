@@ -88,6 +88,12 @@ export interface AgentAction {
   files?: string[];
   sessionId?: string;
   /**
+   * Verb signatures of a shell command (see shell-command.ts). When present,
+   * remembered Bash failures only count as relevant if they ran one of the
+   * same signatures; without them, tool-name equality is the only gate.
+   */
+  signatures?: string[];
+  /**
    * If true, an exact-repeated-failure block degrades to `warn` rather than `block`.
    * Evidence and risk score remain attached. Use when the caller has explicitly
    * acknowledged the prior failure (e.g. the human said "retry exactly this") so a
@@ -359,6 +365,7 @@ export class MemoryController {
       cwd: action.cwd,
       files: action.files,
       sessionId: action.sessionId,
+      actionSignatures: action.signatures,
       strict: true,
       includeCapsule: true,
       includeStatus: true,
