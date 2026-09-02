@@ -54,7 +54,7 @@ const ESCAPABLE = new Set([...' \t\n"\'$`\\|&;()<>#*?[]~!{}']);
 
 function tokenize(command: string): Token[] {
   const tokens: Token[] = [];
-  const pendingHeredocs: Array<{ delimiter: string; stripTabs: boolean }> = [];
+  const pendingHeredocs: Array<{ delimiter: string; stripTabs: boolean; expands: boolean }> = [];
   let buffer = '';
   let quoted = false;
   let hasWord = false;
@@ -80,6 +80,7 @@ function tokenize(command: string): Token[] {
   }
 
   // Reads one word (a redirect target or heredoc delimiter) honouring quotes.
+  // A substitution inside it still runs a command, so it is flagged here too.
   function readWord(): Word | undefined {
     while (i < command.length && (command[i] === ' ' || command[i] === '\t')) i++;
     let text = '';
@@ -97,12 +98,15 @@ function tokenize(command: string): Token[] {
       if (ch === '"') {
         i++;
         while (i < command.length && command[i] !== '"') {
-          if (command[i] === '\\' && i + 1 < command.length) {
+          const c = command.charAt(i);
+          if (c === '\\' && i + 1 < command.length) {
             text += command.charAt(i + 1);
             i += 2;
-          } else {
-            text += command.charAt(i++);
+            continue;
           }
+          if (c === '`' || (c === '$' && command[i + 1] === '(')) tokens.push({ kind: 'subst' });
+          text += c;
+          i++;
         }
         i++;
         wasQuoted = found = true;
@@ -115,6 +119,7 @@ function tokenize(command: string): Token[] {
         continue;
       }
       if (/[\s;&|<>()]/.test(ch)) break;
+      if (ch === '`' || (ch === '$' && command[i + 1] === '(')) tokens.push({ kind: 'subst' });
       text += ch;
       found = true;
       i++;
@@ -123,7 +128,9 @@ function tokenize(command: string): Token[] {
   }
 
   // A heredoc body starts on the line after its operator and ends at a line
-  // that is exactly the delimiter. Everything between is data, not commands.
+  // that is exactly the delimiter. Everything between is data, not commands,
+  // except that an unquoted delimiter leaves the body subject to expansion,
+  // so a `$(...)` or backtick in it runs.
   function skipHeredocBodies(): void {
     for (const heredoc of pendingHeredocs) {
       while (i < command.length) {
@@ -133,6 +140,7 @@ function tokenize(command: string): Token[] {
         if (heredoc.stripTabs) line = line.replace(/^\t+/, '');
         i = Math.min(end + 1, command.length);
         if (line === heredoc.delimiter) break;
+        if (heredoc.expands && /\$\(|`/.test(line)) tokens.push({ kind: 'subst' });
       }
     }
     pendingHeredocs.length = 0;
@@ -231,9 +239,11 @@ function tokenize(command: string): Token[] {
       const heredoc = rest.match(/^<<(-?)(?!<)/);
       if (heredoc) {
         i += heredoc[0].length;
+        const delimiter = readWord();
         pendingHeredocs.push({
-          delimiter: readWord()?.text ?? '',
+          delimiter: delimiter?.text ?? '',
           stripTabs: heredoc[1] === '-',
+          expands: !delimiter?.quoted,
         });
         continue;
       }
@@ -373,7 +383,6 @@ const TRIVIAL_VERBS = new Set([
   'typeset',
   'readonly',
   'let',
-  'read',
   'sleep',
   'exit',
   'return',
@@ -464,7 +473,6 @@ const SIMPLE_READ_ONLY = new Set([
   'dirs',
   'jobs',
   'history',
-  'alias',
   'help',
 ]);
 
@@ -505,7 +513,6 @@ const GIT_READ_ONLY = new Set([
   'var',
   'version',
   '--version',
-  'help',
   'grep',
   'diff-tree',
   'diff-index',
@@ -521,7 +528,6 @@ const GIT_READ_ONLY = new Set([
   'fsck',
 ]);
 
-const GIT_OPTIONS_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree']);
 const GIT_BARE_OPTIONS = new Set([
   '--no-pager',
   '-P',
@@ -589,7 +595,6 @@ const NPM_READ_ONLY = new Set([
   'prefix',
   'root',
   'bin',
-  'help',
   'search',
   's',
   'se',
@@ -597,7 +602,6 @@ const NPM_READ_ONLY = new Set([
   '--version',
   '-v',
   'whoami',
-  'fund',
   'query',
   'sbom',
   'diff',
@@ -817,6 +821,20 @@ const HIDDEN_SIDE_EFFECT_VERBS = new Set([
   'eval',
   'exec',
   'source',
+  'alias',
+  'hash',
+  'enable',
+  'trap',
+  'export',
+  'declare',
+  'typeset',
+  'let',
+  'readonly',
+  'read',
+  'mapfile',
+  'readarray',
+  'printf',
+  'env',
 ]);
 
 export interface ShellProfileOptions {
@@ -852,20 +870,30 @@ function stripPackageVersion(arg: string): string {
   return at > 0 ? arg.slice(0, at) : arg;
 }
 
-function gitArgs(args: string[]): string[] {
+// Only a directory change and pager/lock suppression are accepted before
+// the subcommand. `-c diff.external=./x` or `--exec-path=/x` would make a
+// read-only subcommand run a program, so any other leading option fails
+// closed.
+function gitArgs(args: string[]): string[] | undefined {
   const rest = [...args];
   for (;;) {
     const arg = rest[0];
     if (arg === undefined) break;
-    if (GIT_OPTIONS_WITH_VALUE.has(arg)) rest.splice(0, 2);
-    else if (/^(?:--git-dir|--work-tree|-c)=/.test(arg) || /^-C.+/.test(arg)) rest.shift();
+    if (arg === '-C') rest.splice(0, 2);
+    else if (/^-C.+/.test(arg)) rest.shift();
     else if (GIT_BARE_OPTIONS.has(arg)) rest.shift();
+    else if (arg.startsWith('-')) return undefined;
     else break;
   }
   return rest;
 }
 
+// Flags that make an otherwise read-only git subcommand write a file or
+// start a program: `git log --output=<path>`, `git grep -O`.
+const GIT_OUTPUT_FLAGS = /^(?:--output(?:=|$)|-O|--open-files-in-pager(?:=|$))/;
+
 function gitIsReadOnly(sub: string, rest: string[]): boolean {
+  if (rest.some(arg => GIT_OUTPUT_FLAGS.test(arg))) return false;
   if (GIT_READ_ONLY.has(sub)) return true;
   switch (sub) {
     case 'reflog':
@@ -949,6 +977,9 @@ function npxProfile(args: string[]): VerbProfile {
   };
 }
 
+// An interpreter is read-only only when asked for its version or help. A
+// syntax-check flag is not enough: `node --check -r ./x.js file` still loads
+// x.js, and bun ignores `--check` altogether and runs the file.
 function interpreterProfile(verb: string, args: string[]): VerbProfile {
   if (args.length === 0) return { readOnly: false, signature: verb };
   if (args.length === 1 && VERSION_FLAGS.has(args[0] ?? '')) {
@@ -956,7 +987,7 @@ function interpreterProfile(verb: string, args: string[]): VerbProfile {
   }
   const isNode = verb === 'node' || verb === 'nodejs';
   if (args.includes('--check') || (isNode && args.includes('-c'))) {
-    return { readOnly: true, signature: `${verb} --check` };
+    return { readOnly: false, signature: `${verb} --check` };
   }
   if (args.some(arg => INTERPRETER_EVAL_FLAGS.has(arg) && !(isNode && arg === '-c'))) {
     return { readOnly: false, signature: `${verb} -e` };
@@ -996,16 +1027,176 @@ function ghProfile(args: string[]): VerbProfile {
   const sub = args[0];
   if (!sub) return { readOnly: false, signature: 'gh' };
   if (sub === '--version' || sub === 'status') return { readOnly: true, signature: `gh ${sub}` };
+  // `--web` opens a browser; `--hostname` sends the token somewhere else.
+  const opensBrowser = args.some(arg => arg === '--web' || arg === '-w');
   if (sub === 'api') {
     const methodIndex = args.findIndex(arg => arg === '-X' || arg === '--method');
     const method = methodIndex === -1 ? 'GET' : (args[methodIndex + 1] ?? '').toUpperCase();
     const readOnly =
       method === 'GET' &&
-      !args.some(arg => GH_API_WRITE_FLAGS.has(arg) || arg.startsWith('--method='));
+      !args.some(
+        arg =>
+          GH_API_WRITE_FLAGS.has(arg) ||
+          arg.startsWith('--method=') ||
+          arg === '--hostname' ||
+          arg.startsWith('--hostname='),
+      );
     return { readOnly, signature: 'gh api' };
   }
   const pair = `${sub} ${args[1] ?? ''}`.trim();
-  return { readOnly: GH_READ_ONLY.has(pair), signature: `gh ${pair}` };
+  return { readOnly: !opensBrowser && GH_READ_ONLY.has(pair), signature: `gh ${pair}` };
+}
+
+// Variables whose assignment cannot change what a later command does. The
+// list is short on purpose: PATH, HOME, GIT_EXTERNAL_DIFF, GIT_CONFIG_*,
+// NODE_OPTIONS, LD_PRELOAD, LESSOPEN and their kind all make a read-only
+// verb run something else, and enumerating them is a losing game.
+const HARMLESS_VARIABLES = new Set([
+  'LANG',
+  'LANGUAGE',
+  'LC_ALL',
+  'LC_CTYPE',
+  'LC_COLLATE',
+  'LC_MESSAGES',
+  'LC_NUMERIC',
+  'LC_TIME',
+  'TZ',
+  'TERM',
+  'COLUMNS',
+  'LINES',
+  'NO_COLOR',
+  'FORCE_COLOR',
+  'CLICOLOR',
+  'CLICOLOR_FORCE',
+  'CI',
+  'MSYS_NO_PATHCONV',
+  'MSYS2_ARG_CONV_EXCL',
+  'GIT_TERMINAL_PROMPT',
+  'GIT_OPTIONAL_LOCKS',
+  'NODE_NO_WARNINGS',
+  'PYTHONIOENCODING',
+  'PYTHONUTF8',
+  'PYTHONDONTWRITEBYTECODE',
+]);
+
+function assignmentIsHarmless(text: string): boolean {
+  const name = text.match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
+  return name !== undefined && HARMLESS_VARIABLES.has(name);
+}
+
+// A verb given by path is only trusted where the operating system keeps its
+// own binaries. Anything under a home, temp, or project directory could be a
+// file named `grep` that does something else.
+const TRUSTED_BIN_DIRS = [
+  '/usr/bin/',
+  '/bin/',
+  '/usr/local/bin/',
+  '/usr/sbin/',
+  '/sbin/',
+  '/opt/homebrew/bin/',
+  '/mingw64/bin/',
+  '/usr/lib/git-core/',
+  'c:/program files/',
+  'c:/program files (x86)/',
+  'c:/windows/system32/',
+  '/c/program files/',
+  '/c/program files (x86)/',
+  '/c/windows/system32/',
+];
+
+function inTrustedBinDir(text: string): boolean {
+  const normalized = text.replace(/\\/g, '/').toLowerCase();
+  return TRUSTED_BIN_DIRS.some(dir => normalized.startsWith(dir));
+}
+
+// sed is read-only only for scripts built from addresses and printing,
+// deleting, holding, substituting and transliterating commands. `w`
+// writes a file, `e` runs a command, `r` and `-f` read files the check
+// cannot see, and `-i` edits in place; none of those pass.
+const SED_FLAGS = new Set([
+  '-n',
+  '--quiet',
+  '--silent',
+  '-E',
+  '-r',
+  '--regexp-extended',
+  '-z',
+  '--null-data',
+  '-u',
+  '--unbuffered',
+  '-s',
+  '--separate',
+  '--posix',
+  '--debug',
+  '--sandbox',
+  '--version',
+  '--help',
+]);
+const SED_ADDRESS = String.raw`(?:\d+|\$|\/(?:\\.|[^/\\])*\/)`;
+const SED_RANGE = `${SED_ADDRESS}(?:,(?:${SED_ADDRESS}|\\+\\d+|~\\d+))?`;
+// Braces group commands (`/x/{p;q}`); a `{` may follow the address and a
+// `}` may end a command. Inside a regex address they are ordinary text.
+const SED_SIMPLE = new RegExp(
+  `^(?:${SED_RANGE})?!?\\s*\\{?\\s*(?:[pPl=DdnNhHgGx]|[qQ]\\d*|l\\s*\\d+)?\\s*\\}?$`,
+);
+const SED_TRANSFORM = new RegExp(`^(?:${SED_RANGE})?!?\\s*\\{?\\s*([sy])(.)`);
+
+function sedScriptIsReadOnly(script: string): boolean {
+  return script.split(/[;\n]/).every(command => {
+    const text = command.trim();
+    if (SED_SIMPLE.test(text)) return true;
+    const transform = text.match(SED_TRANSFORM);
+    if (!transform) return false;
+    const [prefix, kind, delimiter] = [transform[0], transform[1], transform[2] ?? ''];
+    let body = text.slice(prefix.length);
+    // Consume the pattern and the replacement, each closed by the delimiter.
+    for (let closed = 0; closed < 2;) {
+      if (body.length === 0) return false;
+      if (body.startsWith('\\')) body = body.slice(2);
+      else if (body.startsWith(delimiter)) {
+        body = body.slice(1);
+        closed++;
+      } else body = body.slice(1);
+    }
+    return kind === 'y' ? /^\s*\}?$/.test(body) : /^[gpImM0-9]*\s*\}?$/.test(body);
+  });
+}
+
+function sedIsReadOnly(args: string[]): boolean {
+  const scripts: string[] = [];
+  const files: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] ?? '';
+    if (arg === '--') {
+      files.push(...args.slice(i + 1));
+      break;
+    }
+    if (arg === '-e' || arg === '--expression' || /^-[nErzus]*e$/.test(arg)) {
+      const script = args[++i];
+      if (script === undefined) return false;
+      scripts.push(script);
+      continue;
+    }
+    if (arg.startsWith('--expression=')) {
+      scripts.push(arg.slice('--expression='.length));
+      continue;
+    }
+    if (arg.startsWith('-') && arg !== '-') {
+      if (SED_FLAGS.has(arg) || /^-[nErzus]+$/.test(arg)) continue;
+      if (arg === '-l' || arg.startsWith('--line-length')) {
+        if (arg === '-l') i++;
+        continue;
+      }
+      return false;
+    }
+    files.push(arg);
+  }
+  if (scripts.length === 0) {
+    const first = files.shift();
+    if (first === undefined) return args.length > 0;
+    scripts.push(first);
+  }
+  return scripts.every(sedScriptIsReadOnly);
 }
 
 function subcommandProfile(verb: string, args: string[], readOnlySet: Set<string>): VerbProfile {
@@ -1018,27 +1209,73 @@ function subcommandProfile(verb: string, args: string[], readOnlySet: Set<string
 
 function profileVerb(verb: string, args: string[]): VerbProfile {
   switch (verb) {
-    case 'sed': {
-      const inPlace = args.some(arg => /^--in-place/.test(arg) || /^-[a-zA-Z]*i/.test(arg));
-      const writesFile = args.some(arg => /(?:^|[;{\s/])[wW]\s+\S/.test(arg));
-      return { readOnly: !inPlace && !writesFile, signature: 'sed' };
-    }
+    case 'sed':
+      return { readOnly: sedIsReadOnly(args), signature: 'sed' };
     case 'awk':
     case 'gawk':
     case 'mawk':
     case 'nawk':
+      // A program file cannot be inspected; inline programs must not
+      // redirect, pipe, or call system().
       return {
         readOnly: !args.some(
-          arg => arg.includes('>') || arg.includes('|') || arg.includes('system'),
+          arg =>
+            arg === '-f' ||
+            arg === '-E' ||
+            arg.startsWith('--file') ||
+            arg.startsWith('--exec') ||
+            arg.includes('>') ||
+            arg.includes('|') ||
+            arg.includes('system'),
         ),
         signature: 'awk',
       };
+    case 'rg':
+      // `--pre <command>` runs a preprocessor over every file.
+      return { readOnly: !args.some(arg => arg.startsWith('--pre')), signature: 'rg' };
     case 'find':
       return { readOnly: !args.some(arg => FIND_WRITE_FLAGS.has(arg)), signature: 'find' };
     case 'sort':
       return {
-        readOnly: !args.some(arg => arg === '-o' || arg.startsWith('--output')),
+        readOnly: !args.some(
+          arg => arg === '-o' || arg.startsWith('--output') || arg.startsWith('--compress-program'),
+        ),
         signature: 'sort',
+      };
+    case 'file':
+      return {
+        readOnly: !args.some(arg => arg === '-C' || arg === '--compile'),
+        signature: 'file',
+      };
+    case 'tree':
+      return { readOnly: !args.includes('-o'), signature: 'tree' };
+    case 'xxd':
+      // A second positional is an output file.
+      return { readOnly: positional(args).length <= 1, signature: 'xxd' };
+    case 'less':
+    case 'more':
+      // `-o` logs the input to a file; a `+` command can run anything.
+      return {
+        readOnly: !args.some(
+          arg => /^-[oO]/.test(arg) || /^--log-file/i.test(arg) || arg.startsWith('+'),
+        ),
+        signature: verb,
+      };
+    case 'printf':
+      // `printf -v PATH ...` assigns a variable later commands resolve through.
+      return { readOnly: !args.includes('-v'), signature: undefined };
+    case 'alias':
+      // Defining an alias rewrites what a later line's verb means.
+      return { readOnly: args.every(arg => arg === '-p'), signature: undefined };
+    case 'export':
+    case 'declare':
+    case 'typeset':
+    case 'readonly':
+    case 'local':
+    case 'let':
+      return {
+        readOnly: args.every(arg => !ASSIGNMENT.test(arg) || assignmentIsHarmless(arg)),
+        signature: undefined,
       };
     case 'uniq':
       return { readOnly: positional(args).length <= 1, signature: 'uniq' };
@@ -1055,8 +1292,8 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
       return { readOnly: args.every(isFlag), signature: 'env' };
     case 'git': {
       const rest = gitArgs(args);
-      const sub = rest[0];
-      if (!sub) return { readOnly: false, signature: 'git' };
+      const sub = rest?.[0];
+      if (!rest || !sub) return { readOnly: false, signature: 'git' };
       return { readOnly: gitIsReadOnly(sub, rest.slice(1)), signature: `git ${sub.toLowerCase()}` };
     }
     case 'npm':
@@ -1067,15 +1304,10 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
       return npxProfile(args);
     case 'tsc':
       return {
-        readOnly: args.some(arg => arg === '--noEmit' || VERSION_FLAGS.has(arg)),
+        readOnly:
+          args.some(arg => arg === '--noEmit' || VERSION_FLAGS.has(arg)) &&
+          !args.some(arg => arg === '-b' || arg === '--build'),
         signature: 'tsc',
-      };
-    case 'eslint':
-      return { readOnly: !args.includes('--fix'), signature: 'eslint' };
-    case 'prettier':
-      return {
-        readOnly: !args.some(arg => arg === '--write' || arg === '-w'),
-        signature: 'prettier',
       };
     case 'docker':
       return dockerProfile(args);
@@ -1086,6 +1318,10 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
     case 'cargo':
       return subcommandProfile(verb, args, CARGO_READ_ONLY);
     case 'go':
+      // `go env -w` writes the user's Go configuration.
+      if (args[0] === 'env' && args.some(arg => arg === '-w' || arg === '-u')) {
+        return { readOnly: false, signature: 'go env' };
+      }
       return subcommandProfile(verb, args, GO_READ_ONLY);
     case 'pip':
     case 'pip3':
@@ -1115,13 +1351,26 @@ function profileSegment(segment: Segment, options: ShellProfileOptions): VerbPro
   let readOnly = !segment.writes;
   if (
     options.flattened &&
-    words.slice(1).some(word => !word.quoted && HIDDEN_SIDE_EFFECT_VERBS.has(normalizeVerb(word)))
+    words
+      .slice(1)
+      .some(
+        word =>
+          !word.quoted &&
+          (HIDDEN_SIDE_EFFECT_VERBS.has(normalizeVerb(word)) ||
+            (ASSIGNMENT.test(word.text) && !assignmentIsHarmless(word.text))),
+      )
   ) {
     readOnly = false;
   }
 
   // Peel shell keywords, leading assignments, and transparent wrappers until
-  // the verb that actually runs is at the front.
+  // the verb that actually runs is at the front. An assignment is peeled
+  // for signature purposes but keeps its verdict: `PATH=/x grep` and
+  // `GIT_EXTERNAL_DIFF=./x git diff` both run something other than the verb.
+  const peelAssignment = (word: Word): void => {
+    if (!assignmentIsHarmless(word.text)) readOnly = false;
+    words.shift();
+  };
   for (;;) {
     const first = words[0];
     if (!first) return { readOnly };
@@ -1134,9 +1383,13 @@ function profileSegment(segment: Segment, options: ShellProfileOptions): VerbPro
       return { readOnly };
     }
     if (!first.quoted && ASSIGNMENT.test(first.text)) {
-      words.shift();
+      peelAssignment(first);
       continue;
     }
+    // A word given by path runs whatever sits at that path, whether it is
+    // the verb or a wrapper in front of it. Only the system's own binary
+    // directories are trusted to hold what the name says.
+    if (/[\\/]/.test(first.text) && !inTrustedBinDir(first.text)) readOnly = false;
     const verb = normalizeVerb(first);
     if (OPAQUE_PREFIXES.has(verb)) return { readOnly: false, signature: verb };
     if (verb === 'command' && (words[1]?.text === '-v' || words[1]?.text === '-V')) {
@@ -1148,7 +1401,9 @@ function profileSegment(segment: Segment, options: ShellProfileOptions): VerbPro
     }
     if (TRANSPARENT_PREFIXES.has(verb) && words.length > 1) {
       words.shift();
-      while (words[0] && !words[0].quoted && ASSIGNMENT.test(words[0].text)) words.shift();
+      while (words[0] && !words[0].quoted && ASSIGNMENT.test(words[0].text)) {
+        peelAssignment(words[0]);
+      }
       continue;
     }
     break;
