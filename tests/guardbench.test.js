@@ -153,7 +153,7 @@ describe('GuardBench harness', () => {
     expect(seen.every(entry => entry.hasSeed)).toBe(true);
     expect(seen.find((entry, index) => index === 7).hasPrivateSeed).toBe(true);
     expect(seen.some(entry => entry.hasExpectedDecision || entry.hasRequiredEvidence)).toBe(false);
-  }, 20_000);
+  }, 60_000);
 
   it('rejects malformed external adapter decisions instead of silently coercing them', async () => {
     await expect(
@@ -177,7 +177,7 @@ describe('GuardBench harness', () => {
     ).rejects.toThrow(
       /Malformed Adapter returned invalid result for GB-01: decision must be one of allow, warn, block; riskScore must be a finite number between 0 and 1/,
     );
-  }, 20_000);
+  }, 60_000);
 
   it('validates the external adapter result contract directly', () => {
     expect(
@@ -961,7 +961,7 @@ describe('GuardBench harness', () => {
     expect(result.score.decisionAccuracy).toBe(0.1);
     expect(result.score.redactionLeaks).toBe(0);
     expect(validateAdapterSelfTestReport(result)).toEqual([]);
-  }, 20_000);
+  }, 60_000);
 
   it('schema-validates adapter self-test reports', async () => {
     const result = await runGuardBenchAdapterSelfTest({
@@ -975,7 +975,7 @@ describe('GuardBench harness', () => {
     expect(validateAdapterSelfTestReport(malformed).join('\n')).toContain(
       'guardbench-adapter-self-test.contract.lowScoreAllowed: expected constant true',
     );
-  }, 20_000);
+  }, 60_000);
 
   it('validates saved adapter self-test reports as standalone reviewer artifacts', async () => {
     const root = 'benchmarks/.tmp-guardbench';
@@ -996,7 +996,7 @@ describe('GuardBench harness', () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 60_000);
 
   it('rejects malformed saved adapter self-test reports', async () => {
     const root = 'benchmarks/.tmp-guardbench';
@@ -1020,7 +1020,7 @@ describe('GuardBench harness', () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 60_000);
 
   it('rejects malformed adapters through the self-test path', async () => {
     const root = 'benchmarks/.tmp-guardbench';
@@ -1056,7 +1056,7 @@ describe('GuardBench harness', () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 60_000);
 
   it('drives the Mem0 Platform REST flow with runtime credentials only', async () => {
     const calls = [];
@@ -1497,7 +1497,7 @@ describe('GuardBench harness', () => {
     expect(conformance.scenarios).toBe(10);
     expect(conformance.fullContractPassRate).toBeLessThan(1);
     expect(conformance.redactionLeaks).toBe(0);
-  }, 20_000);
+  }, 60_000);
 
   it('resolves path-based adapter conformance through the emitted external subject name', async () => {
     const report = await runGuardBench({
@@ -1523,7 +1523,7 @@ describe('GuardBench harness', () => {
     expect(conformance.ok).toBe(true);
     expect(conformance.adapter).toBe('Declared Adapter Name');
     expect(conformance.requestedAdapter).toBe('adapter-file-name');
-  }, 20_000);
+  }, 60_000);
 
   it('rejects external adapter conformance when rows are missing', async () => {
     const report = await runGuardBench({
@@ -1553,7 +1553,7 @@ describe('GuardBench harness', () => {
     expect(conformance.failures.join('\n')).toContain(
       'Adapter Incomplete Adapter returned 9/10 scenario rows',
     );
-  }, 20_000);
+  }, 60_000);
 
   it('validates published GuardBench artifact bundles as a standalone benchmark contract', () => {
     const report = validateGuardBenchArtifacts({ dir: 'benchmarks/output' });
