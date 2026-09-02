@@ -287,9 +287,10 @@ function tokenize(command: string): Token[] {
     }
 
     // `$?`, `$$`, `$#`, `$!` and `$1`..`$9` expand to exactly one word;
-    // anything else the shell may split into several.
+    // anything else the shell may split into several, and a brace inside a
+    // word (`f{1,2}.txt`) expands without any glob character at all.
     if (ch === '$' && !/[?$#!0-9]/.test(next ?? '')) expands = true;
-    if (ch === '*' || ch === '?' || ch === '[') expands = true;
+    if (ch === '*' || ch === '?' || ch === '[' || ch === '{') expands = true;
     buffer += ch;
     hasWord = true;
     i++;
