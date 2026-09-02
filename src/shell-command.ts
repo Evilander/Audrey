@@ -792,6 +792,8 @@ const INTERPRETER_EVAL_FLAGS = new Set([
 ]);
 
 const VERSION_FLAGS = new Set(['--version', '-v', '-V', '-version', '--help', '-h']);
+const SHELLS = new Set(['bash', 'sh', 'zsh', 'pwsh', 'powershell']);
+const SHELL_VERSION_FLAGS = new Set(['--version', '-Version', '--help']);
 
 // Verbs that a collapsed newline could hide inside another command's
 // argument list. Used only when the caller says the text was flattened.
@@ -1019,7 +1021,9 @@ function npxProfile(args: string[]): VerbProfile {
 // x.js, and bun ignores `--check` altogether and runs the file.
 function interpreterProfile(verb: string, args: string[]): VerbProfile {
   if (args.length === 0) return { readOnly: false, signature: verb };
-  if (args.length === 1 && VERSION_FLAGS.has(args[0] ?? '')) {
+  // For a shell, `-v` and `-h` are runtime options, not version queries.
+  const versionFlags = SHELLS.has(verb) ? SHELL_VERSION_FLAGS : VERSION_FLAGS;
+  if (args.length === 1 && versionFlags.has(args[0] ?? '')) {
     return { readOnly: true, signature: verb };
   }
   const isNode = verb === 'node' || verb === 'nodejs';
@@ -1163,6 +1167,12 @@ const TRUSTED_BIN_DIRS = [
 
 function inTrustedBinDir(text: string): boolean {
   const normalized = text.replace(/\\/g, '/').toLowerCase();
+  // `/usr/bin/../../tmp/evil/grep` starts with a trusted prefix and lands
+  // anywhere at all: a parent segment or a doubled slash disqualifies it.
+  const segments = normalized.split('/');
+  if (segments.some((segment, index) => segment === '..' || (segment === '' && index > 0))) {
+    return false;
+  }
   return TRUSTED_BIN_DIRS.some(dir => normalized.startsWith(dir));
 }
 
@@ -1339,6 +1349,9 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
     case 'history':
       // `-w` and `-a` write the history list to a file.
       return { readOnly: !usesShortFlag(args, 'wa'), signature: undefined };
+    case 'jobs':
+      // `jobs -x command` runs the command with job ids substituted.
+      return { readOnly: !usesShortFlag(args, 'x'), signature: undefined };
     case 'alias':
       // Defining an alias rewrites what a later line's verb means.
       return { readOnly: args.every(arg => arg === '-p'), signature: undefined };
