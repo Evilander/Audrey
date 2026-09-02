@@ -101,7 +101,7 @@ That is the output of `audrey demo --scenario repeated-failure`, which runs the 
 
 When Guard does speak, it names the memory it is speaking from, and a remembered failure is matched to the proposed command by what it runs (`npm run deploy` against `npm run deploy`), not by how similar two strings look to an embedding.
 
-The line between looking and doing is drawn fail-closed and was tested adversarially before release: three independent review passes ran the classifier's "read-only" verdicts against real tools and found eleven ways to hide a write inside a command that looked harmless (`node --check -r ./x.js`, `GIT_EXTERNAL_DIFF=./x git diff`, `sort -ofile`, a backslash-newline hiding `$(`). Every one is closed and is a test case. Two limits remain by design: a git configuration that already names an external program runs on any read, and a file whose name is a flag can change what a pure reader does with a glob. Both require a prior write that Guard did see.
+The line between looking and doing is drawn fail-closed and was tested adversarially before release: five independent review passes ran the classifier's "read-only" verdicts against real tools and found thirteen ways to hide a write inside a command that looked harmless (`node --check -r ./x.js`, `GIT_EXTERNAL_DIFF=./x git diff`, `sort -ofile`, a backslash-newline hiding `$(`, `jobs -x`). Every one is closed and is a test case, and the fifth pass found none left. Two limits remain by design: a git configuration that already names an external program runs on any read, and a file whose name is a flag can change what a pure reader does with a glob. Both require a prior write that Guard did see.
 
 ## What Audrey remembers
 

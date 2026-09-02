@@ -361,6 +361,8 @@ const KEYWORDS = new Set([
 
 // Wrappers that run another command without side effects of their own.
 const TRANSPARENT_PREFIXES = new Set(['time', 'nice', 'nohup', 'builtin', 'command', 'env']);
+const WRAPPER_VALUE_OPTIONS = new Set(['-C', '--chdir', '-u', '--unset', '-n', '--adjustment']);
+const WRAPPER_BARE_OPTIONS = new Set(['-i', '--ignore-environment', '-0', '--null', '-']);
 
 // Wrappers that run arbitrary or privileged commands: never read-only.
 const OPAQUE_PREFIXES = new Set([
@@ -860,6 +862,44 @@ const HIDDEN_SIDE_EFFECT_VERBS = new Set([
   'readarray',
   'printf',
   'env',
+  // Windows-native tools with the same standing as the POSIX ones above.
+  'del',
+  'erase',
+  'rd',
+  'md',
+  'move',
+  'xcopy',
+  'robocopy',
+  'attrib',
+  'icacls',
+  'cacls',
+  'takeown',
+  'cipher',
+  'reg',
+  'regsvr32',
+  'rundll32',
+  'mshta',
+  'wmic',
+  'sc',
+  'net',
+  'schtasks',
+  'vssadmin',
+  'wevtutil',
+  'diskpart',
+  'bcdedit',
+  'certutil',
+  'bitsadmin',
+  'powercfg',
+  'format',
+  'wbadmin',
+  'netsh',
+  'at',
+  'taskkill',
+  'cmd',
+  'powershell',
+  'pwsh',
+  'msiexec',
+  'forfiles',
 ]);
 
 export interface ShellProfileOptions {
@@ -1144,36 +1184,14 @@ function assignmentIsHarmless(text: string): boolean {
   return name !== undefined && HARMLESS_VARIABLES.has(name);
 }
 
-// A verb given by path is only trusted where the operating system keeps its
-// own binaries. Anything under a home, temp, or project directory could be a
-// file named `grep` that does something else.
-const TRUSTED_BIN_DIRS = [
-  '/usr/bin/',
-  '/bin/',
-  '/usr/local/bin/',
-  '/usr/sbin/',
-  '/sbin/',
-  '/opt/homebrew/bin/',
-  '/mingw64/bin/',
-  '/usr/lib/git-core/',
-  // System32 is deliberately absent: its sort.exe, find.exe and tree.exe
-  // share names with the GNU tools but take slash-style switches the rules
-  // here do not model (`sort.exe in /O out` writes a file).
-  'c:/program files/',
-  'c:/program files (x86)/',
-  '/c/program files/',
-  '/c/program files (x86)/',
-];
-
-function inTrustedBinDir(text: string): boolean {
-  const normalized = text.replace(/\\/g, '/').toLowerCase();
-  // `/usr/bin/../../tmp/evil/grep` starts with a trusted prefix and lands
-  // anywhere at all: a parent segment or a doubled slash disqualifies it.
-  const segments = normalized.split('/');
-  if (segments.some((segment, index) => segment === '..' || (segment === '' && index > 0))) {
-    return false;
-  }
-  return TRUSTED_BIN_DIRS.some(dir => normalized.startsWith(dir));
+// A verb given by path runs whatever sits at that path. An allow-list of
+// system directories was tried and dropped: `..` segments, case folding, and
+// a Windows install whose Program Files is writable to the running user each
+// turned it into a hole, and agents almost never invoke a read-only tool by
+// path. A bare name resolves through PATH, which the assignment rule keeps
+// out of the command's own hands.
+function isPathQualified(text: string): boolean {
+  return /[\\/]/.test(text);
 }
 
 // sed is read-only only for scripts built from addresses and printing,
@@ -1434,7 +1452,10 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
       if (SIMPLE_READ_ONLY.has(verb)) {
         return { readOnly: true, signature: TRIVIAL_VERBS.has(verb) ? undefined : verb };
       }
-      return { readOnly: false, signature: verb };
+      // A flag left in verb position (a wrapper option the peeling does not
+      // model) is not a verb and must not become a signature that unrelated
+      // commands would share.
+      return { readOnly: false, signature: verb.startsWith('-') ? undefined : verb };
   }
 }
 
@@ -1479,9 +1500,8 @@ function profileSegment(segment: Segment, options: ShellProfileOptions): VerbPro
       continue;
     }
     // A word given by path runs whatever sits at that path, whether it is
-    // the verb or a wrapper in front of it. Only the system's own binary
-    // directories are trusted to hold what the name says.
-    if (/[\\/]/.test(first.text) && !inTrustedBinDir(first.text)) readOnly = false;
+    // the verb or a wrapper in front of it.
+    if (isPathQualified(first.text)) readOnly = false;
     const verb = normalizeVerb(first);
     if (OPAQUE_PREFIXES.has(verb)) return { readOnly: false, signature: verb };
     if (verb === 'command' && (words[1]?.text === '-v' || words[1]?.text === '-V')) {
@@ -1493,6 +1513,23 @@ function profileSegment(segment: Segment, options: ShellProfileOptions): VerbPro
     }
     if (TRANSPARENT_PREFIXES.has(verb) && words.length > 1) {
       words.shift();
+      // `env -C dir`, `env -u VAR`, `env -i`, `nice -n 5`: options that
+      // only reshape the environment the real verb runs in. Anything else
+      // (`env -S 'cmd'`) is left in verb position and fails closed.
+      if (verb === 'env' || verb === 'nice') {
+        for (;;) {
+          const option = words[0];
+          if (!option || option.quoted || !option.text.startsWith('-')) break;
+          if (WRAPPER_VALUE_OPTIONS.has(option.text)) words.splice(0, 2);
+          else if (
+            WRAPPER_BARE_OPTIONS.has(option.text) ||
+            /^--(?:chdir|unset|adjustment)=/.test(option.text) ||
+            /^-\d+$/.test(option.text)
+          )
+            words.shift();
+          else break;
+        }
+      }
       while (words[0] && !words[0].quoted && ASSIGNMENT.test(words[0].text)) {
         peelAssignment(words[0]);
       }
