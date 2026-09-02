@@ -1416,7 +1416,13 @@ describe('MCP validation hardening', () => {
   });
 
   it('exports memory_forget schema fields', () => {
-    expect(Object.keys(memoryForgetToolSchema)).toEqual(['id', 'query', 'min_similarity', 'purge']);
+    expect(Object.keys(memoryForgetToolSchema)).toEqual([
+      'id',
+      'query',
+      'min_similarity',
+      'purge',
+      'all_agents',
+    ]);
   });
 
   it('memory_validate accepts the closed-loop outcome enum', () => {
@@ -2574,7 +2580,7 @@ describe('MCP tool: memory_status', () => {
     expect(status.procedures).toBe(0);
     expect(status.vec_procedures).toBe(0);
     expect(status.dimensions).toBe(8);
-    expect(status.schema_version).toBe(15);
+    expect(status.schema_version).toBe(16);
     expect(status.healthy).toBe(true);
     expect(status.pending_consolidation_count).toBeGreaterThanOrEqual(0);
     expect(status.embedding_warm).toBe(false);

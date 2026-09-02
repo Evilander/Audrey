@@ -67,6 +67,9 @@ describe('runConsolidation excludes private episodes from cloud LLM consolidatio
     expect(sem.length).toBe(1);
     expect(sem[0].content).toContain('Recurring pattern:');
     expect(sem[0].consolidation_model).toBeNull();
+    // Taint: the derived row restates private episode content, so it must
+    // inherit the private flag.
+    expect(sem[0].private).toBe(1);
 
     const unconsolidated = db
       .prepare('SELECT COUNT(*) as count FROM episodes WHERE consolidated = 0')
@@ -121,6 +124,13 @@ describe('runConsolidation excludes private episodes from cloud LLM consolidatio
       sems.some(s => s.content.includes('Recurring pattern:') && s.consolidation_model === null),
     ).toBe(true);
     expect(result.principlesExtracted).toBe(2);
+
+    // Taint splits with the clusters: the shared-derived row is public, the
+    // private-derived row inherits private = 1.
+    const cloudDerived = sems.find(s => s.content === 'Cloud-derived principle');
+    const localDerived = sems.find(s => s.content.includes('Recurring pattern:'));
+    expect(cloudDerived.private).toBe(0);
+    expect(localDerived.private).toBe(1);
   });
 
   it('processes private episodes through the normal local path when no LLM provider is configured', async () => {
@@ -147,5 +157,51 @@ describe('runConsolidation excludes private episodes from cloud LLM consolidatio
     expect(result.principlesExtracted).toBe(1);
     const sem = db.prepare("SELECT * FROM semantics WHERE state = 'active'").get();
     expect(sem.content).toContain('Recurring pattern:');
+    expect(sem.private).toBe(1);
+  });
+
+  it('taints the derived row when a mixed local cluster contains any private episode', async () => {
+    // No llmProvider: private and non-private episodes cluster together, so
+    // one private episode in the cluster must taint the derived row.
+    await encodeEpisode(db, embedding, {
+      content: 'mixed cluster observation',
+      source: 'direct-observation',
+    });
+    await encodeEpisode(db, embedding, {
+      content: 'mixed cluster observation',
+      source: 'tool-result',
+    });
+    await encodeEpisode(db, embedding, {
+      content: 'mixed cluster observation',
+      source: 'told-by-user',
+      private: true,
+    });
+
+    const result = await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+    });
+    expect(result.principlesExtracted).toBe(1);
+    const sem = db.prepare("SELECT * FROM semantics WHERE state = 'active'").get();
+    expect(sem.private).toBe(1);
+  });
+
+  it('leaves derived rows public when no evidence episode is private', async () => {
+    await encodeEpisode(db, embedding, {
+      content: 'entirely public observation',
+      source: 'direct-observation',
+    });
+    await encodeEpisode(db, embedding, {
+      content: 'entirely public observation',
+      source: 'tool-result',
+    });
+    await encodeEpisode(db, embedding, {
+      content: 'entirely public observation',
+      source: 'told-by-user',
+    });
+
+    await runConsolidation(db, embedding, { minClusterSize: 3, similarityThreshold: 0.99 });
+    const sem = db.prepare("SELECT * FROM semantics WHERE state = 'active'").get();
+    expect(sem.private).toBe(0);
   });
 });

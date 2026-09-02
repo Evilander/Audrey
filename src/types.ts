@@ -490,6 +490,7 @@ export interface SemanticRow {
   challenge_count: number;
   interference_count: number;
   salience: number;
+  private: number;
 }
 
 export interface ProceduralRow {
@@ -509,6 +510,7 @@ export interface ProceduralRow {
   retrieval_count: number;
   interference_count: number;
   salience: number;
+  private: number;
 }
 
 export interface CausalLinkRow {
@@ -592,6 +594,9 @@ export interface ForgetResult {
   id: string;
   type: MemoryType;
   purged: boolean;
+  /** Derived rows purged because the episode was part of their evidence (purge only). */
+  cascadedSemantics?: number;
+  cascadedProcedures?: number;
 }
 
 export interface PurgeResult {

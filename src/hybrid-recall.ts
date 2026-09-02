@@ -60,6 +60,7 @@ interface SemanticFTSRow {
   supporting_count: number;
   contradicting_count: number;
   created_at: string;
+  private: number;
   agent: string;
 }
 
@@ -70,6 +71,7 @@ interface ProceduralFTSRow {
   success_count: number;
   failure_count: number;
   created_at: string;
+  private: number;
   agent: string;
 }
 
@@ -142,6 +144,7 @@ function loadFtsOnlyEpisode(
 function loadFtsOnlySemantic(
   db: Database.Database,
   id: string,
+  includePrivate: boolean,
   includeDormant: boolean,
   filters: FuseFilters | undefined,
   agentFilter?: string,
@@ -149,13 +152,14 @@ function loadFtsOnlySemantic(
   const row = db
     .prepare(
       `
-    SELECT id, content, agent, state, evidence_count, supporting_count, contradicting_count, created_at
+    SELECT id, content, agent, state, evidence_count, supporting_count, contradicting_count, created_at, "private"
     FROM semantics WHERE id = ?
   `,
     )
     .get(id) as SemanticFTSRow | undefined;
   if (!row) return null;
   if (agentFilter && row.agent !== agentFilter) return null;
+  if (!includePrivate && row.private) return null;
   const allowed = includeDormant
     ? ['active', 'context_dependent', 'dormant']
     : ['active', 'context_dependent'];
@@ -179,6 +183,7 @@ function loadFtsOnlySemantic(
 function loadFtsOnlyProcedural(
   db: Database.Database,
   id: string,
+  includePrivate: boolean,
   includeDormant: boolean,
   filters: FuseFilters | undefined,
   agentFilter?: string,
@@ -186,13 +191,14 @@ function loadFtsOnlyProcedural(
   const row = db
     .prepare(
       `
-    SELECT id, content, agent, state, success_count, failure_count, created_at
+    SELECT id, content, agent, state, success_count, failure_count, created_at, "private"
     FROM procedures WHERE id = ?
   `,
     )
     .get(id) as ProceduralFTSRow | undefined;
   if (!row) return null;
   if (agentFilter && row.agent !== agentFilter) return null;
+  if (!includePrivate && row.private) return null;
   const allowed = includeDormant
     ? ['active', 'context_dependent', 'dormant']
     : ['active', 'context_dependent'];
@@ -299,9 +305,23 @@ export function fuseResults(db: Database.Database, input: FuseInput): RecallResu
       if (ranks.type === 'episodic')
         result = loadFtsOnlyEpisode(db, id, includePrivate, input.filters, input.agentFilter);
       else if (ranks.type === 'semantic')
-        result = loadFtsOnlySemantic(db, id, includeDormant, input.filters, input.agentFilter);
+        result = loadFtsOnlySemantic(
+          db,
+          id,
+          includePrivate,
+          includeDormant,
+          input.filters,
+          input.agentFilter,
+        );
       else if (ranks.type === 'procedural')
-        result = loadFtsOnlyProcedural(db, id, includeDormant, input.filters, input.agentFilter);
+        result = loadFtsOnlyProcedural(
+          db,
+          id,
+          includePrivate,
+          includeDormant,
+          input.filters,
+          input.agentFilter,
+        );
       if (!result) continue;
       if (result.confidence < minConfidence) continue;
     }

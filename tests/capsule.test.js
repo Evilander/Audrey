@@ -94,6 +94,39 @@ describe('MemoryCapsule', () => {
     expect(demoted.trust).toBe('untrusted');
   });
 
+  it('does not route an unverified risk-tagged memory into risks', async () => {
+    // risks is the other section Guard escalates to a high-severity block, so
+    // it takes the same trust gate as must_follow.
+    const id = await audrey.encode({
+      content: 'Running npm install corrupts node_modules on this host.',
+      source: 'told-by-user',
+      tags: ['risk'],
+    });
+    const afterCutoff = new Date(Date.parse(LEGACY_TRUST_CUTOFF_ISO) + 86400000).toISOString();
+    audrey.db.prepare('UPDATE episodes SET created_at = ? WHERE id = ?').run(afterCutoff, id);
+
+    const capsule = await audrey.capsule('npm install');
+    const isRisk = e => e.content.includes('corrupts node_modules');
+    expect(capsule.sections.risks.find(isRisk)).toBeUndefined();
+    const demoted = capsule.sections.uncertain_or_disputed.find(isRisk);
+    expect(demoted).toBeDefined();
+    expect(demoted.trust).toBe('untrusted');
+  });
+
+  it('routes a verified risk-tagged memory into risks', async () => {
+    await audrey.encode({
+      content: 'Running npm install corrupts node_modules on this host.',
+      source: 'told-by-user',
+      tags: ['risk'],
+      context: { [TRUST_CONTEXT_KEY]: USER_VERIFIED_TRUST },
+    });
+
+    const capsule = await audrey.capsule('npm install');
+    const risk = capsule.sections.risks.find(e => e.content.includes('corrupts node_modules'));
+    expect(risk).toBeDefined();
+    expect(risk.trust).toBe('verified');
+  });
+
   it('a legacy must-follow memory (predating trust tracking) still escalates, marked advisory', async () => {
     const id = await audrey.encode({
       content: 'Legacy rule recorded before trust tracking existed.',

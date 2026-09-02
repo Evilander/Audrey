@@ -106,6 +106,147 @@ describe('validateMemory', () => {
     const sem = db.prepare('SELECT source_type_diversity FROM semantics WHERE id = ?').get('sem-2');
     expect(sem.source_type_diversity).toBe(2); // inference + direct-observation
   });
+
+  describe('private content never reaches the contradiction LLM', () => {
+    // threshold: 1.01 forces even identical content past reinforcement into
+    // the contradiction branch; contradictionThreshold: 0.5 guarantees the
+    // branch is reached — only the privacy gate can stop the LLM call.
+    const thresholds = { threshold: 1.01, contradictionThreshold: 0.5 };
+
+    function spyLLM() {
+      const calls = [];
+      return {
+        calls,
+        provider: {
+          modelName: 'spy-llm',
+          modelVersion: '1.0.0',
+          async complete() {
+            return { content: '{}' };
+          },
+          async json(messages) {
+            calls.push(messages);
+            return { contradicts: false };
+          },
+        },
+      };
+    }
+
+    async function insertSemanticRow(id, content, isPrivate) {
+      const buf = embedding.vectorToBuffer(await embedding.embed(content));
+      db.prepare(
+        `INSERT INTO semantics (id, content, embedding, state, evidence_count,
+         supporting_count, created_at, evidence_episode_ids, "private")
+         VALUES (?, ?, ?, 'active', 1, 1, ?, '[]', ?)`,
+      ).run(id, content, buf, new Date().toISOString(), isPrivate ? 1 : 0);
+      db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
+        id,
+        'default',
+        buf,
+        'active',
+      );
+    }
+
+    function insertEpisodeRow(id, content, isPrivate) {
+      db.prepare(
+        `INSERT INTO episodes (id, content, source, source_reliability, created_at, "private")
+         VALUES (?, ?, 'direct-observation', 0.9, ?, ?)`,
+      ).run(id, content, new Date().toISOString(), isPrivate ? 1 : 0);
+    }
+
+    it('skips the LLM when the matched semantic is private', async () => {
+      await insertSemanticRow('sem-private', 'private principle content', true);
+      insertEpisodeRow('ep-1', 'private principle content', false);
+      const { calls, provider } = spyLLM();
+
+      const result = await validateMemory(
+        db,
+        embedding,
+        { id: 'ep-1', content: 'private principle content', source: 'direct-observation' },
+        { ...thresholds, llmProvider: provider },
+      );
+
+      expect(calls.length).toBe(0);
+      expect(result.action).toBe('none');
+    });
+
+    it('fails closed when the episode row cannot be read', async () => {
+      await insertSemanticRow('sem-orphan', 'orphan principle content', false);
+      const { calls, provider } = spyLLM();
+
+      const result = await validateMemory(
+        db,
+        embedding,
+        { id: 'ep-missing', content: 'orphan principle content', source: 'direct-observation' },
+        { ...thresholds, llmProvider: provider },
+      );
+
+      expect(calls.length).toBe(0);
+      expect(result.action).toBe('none');
+    });
+
+    it('skips the LLM when the episode being validated is private', async () => {
+      await insertSemanticRow('sem-public', 'shared principle content', false);
+      insertEpisodeRow('ep-priv', 'shared principle content', true);
+      const { calls, provider } = spyLLM();
+
+      const result = await validateMemory(
+        db,
+        embedding,
+        { id: 'ep-priv', content: 'shared principle content', source: 'direct-observation' },
+        { ...thresholds, llmProvider: provider },
+      );
+
+      expect(calls.length).toBe(0);
+      expect(result.action).toBe('none');
+    });
+
+    it('still consults the LLM when neither side is private', async () => {
+      await insertSemanticRow('sem-open', 'open principle content', false);
+      insertEpisodeRow('ep-2', 'open principle content', false);
+      const { calls, provider } = spyLLM();
+
+      await validateMemory(
+        db,
+        embedding,
+        { id: 'ep-2', content: 'open principle content', source: 'direct-observation' },
+        { ...thresholds, llmProvider: provider },
+      );
+
+      expect(calls.length).toBe(1);
+    });
+
+    it('reinforcing a public semantic with private evidence taints it', async () => {
+      await insertSemanticRow('sem-taintable', 'reinforced principle content', false);
+      insertEpisodeRow('ep-taint', 'reinforced principle content', true);
+
+      const result = await validateMemory(db, embedding, {
+        id: 'ep-taint',
+        content: 'reinforced principle content',
+        source: 'direct-observation',
+      });
+
+      expect(result.action).toBe('reinforced');
+      expect(
+        db.prepare('SELECT "private" FROM semantics WHERE id = ?').get('sem-taintable').private,
+      ).toBe(1);
+    });
+
+    it('reinforcing with public evidence never clears an existing private flag', async () => {
+      await insertSemanticRow('sem-stays-private', 'sticky principle content', true);
+      insertEpisodeRow('ep-clean', 'sticky principle content', false);
+
+      const result = await validateMemory(db, embedding, {
+        id: 'ep-clean',
+        content: 'sticky principle content',
+        source: 'direct-observation',
+      });
+
+      expect(result.action).toBe('reinforced');
+      expect(
+        db.prepare('SELECT "private" FROM semantics WHERE id = ?').get('sem-stays-private').private,
+      ).toBe(1);
+    });
+  });
 });
 
 describe('createContradiction', () => {
@@ -257,6 +398,13 @@ describe('validateMemory with LLM contradiction detection', () => {
       },
     });
 
+    // The privacy gate fails closed on an unreadable episode row, so the
+    // episode under validation must exist as a public row.
+    db.prepare(
+      `INSERT INTO episodes (id, content, source, source_reliability, created_at)
+      VALUES (?, ?, 'direct-observation', 0.9, ?)`,
+    ).run('ep-contra', 'unique semantic memory for contradiction test', new Date().toISOString());
+
     const result = await validateMemory(
       db,
       embedding,
@@ -299,6 +447,11 @@ describe('validateMemory with LLM contradiction detection', () => {
         },
       },
     });
+
+    db.prepare(
+      `INSERT INTO episodes (id, content, source, source_reliability, created_at)
+      VALUES (?, ?, 'direct-observation', 0.9, ?)`,
+    ).run('ep-nc', 'some test memory', new Date().toISOString());
 
     const result = await validateMemory(
       db,

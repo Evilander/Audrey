@@ -14,11 +14,24 @@ import type { ProfileRecorder } from './profile.js';
 import { requireAgent } from './utils.js';
 import { redact, type RedactionHit } from './redact.js';
 
+export interface SanitizedEncodeFields {
+  content: string;
+  context: Record<string, string>;
+  affect: Partial<Affect>;
+}
+
 export interface EncodeEpisodeOptions {
   profile?: ProfileRecorder;
   vector?: number[];
   onVector?: (vector: number[], buffer: Buffer) => void;
   onRedaction?: (summary: RedactionSummary) => void;
+  /**
+   * Hands back the post-redaction field values — what actually landed in the
+   * row. Anything that continues past encode (grounding, background
+   * validation, the contradiction prompt sent to a cloud LLM) must be built
+   * from these, never from the caller's raw params.
+   */
+  onSanitized?: (sanitized: SanitizedEncodeFields) => void;
 }
 
 function mergeRedactionHits(...sets: RedactionHit[][]): RedactionHit[] {
@@ -97,6 +110,11 @@ export async function encodeEpisode(
     count: mergedHits.reduce((sum, hit) => sum + hit.count, 0),
   };
   options.onRedaction?.(redactionSummary);
+  options.onSanitized?.({
+    content: redactedContent,
+    context: redactedContext,
+    affect: redactedAffect,
+  });
 
   const reliability = sourceReliability(source);
   const profile = options.profile;

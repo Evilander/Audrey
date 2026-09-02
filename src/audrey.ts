@@ -32,7 +32,7 @@ import type {
 import { createDatabase, closeDatabase } from './db.js';
 import { createEmbeddingProvider } from './embedding.js';
 import { createLLMProvider } from './llm.js';
-import { encodeEpisode } from './encode.js';
+import { encodeEpisode, type SanitizedEncodeFields } from './encode.js';
 import { redact } from './redact.js';
 import { recall as recallFn, recallStream as recallStreamFn } from './recall.js';
 import { validateMemory } from './validate.js';
@@ -78,15 +78,9 @@ import {
 } from './promote.js';
 import { renderAllRules, type RuleDoc } from './rules-compiler.js';
 import { insertEvent } from './events.js';
-import { requireAgent, resolveMemoryScope } from './utils.js';
+import { requireAgent, resolveMemoryScope, isContainedIn } from './utils.js';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import {
-  dirname,
-  join,
-  resolve as pathResolve,
-  relative,
-  isAbsolute as pathIsAbsolute,
-} from 'node:path';
+import { dirname, join, resolve as pathResolve, delimiter as pathDelimiter } from 'node:path';
 import { ProfileRecorder, type ProfileDiagnostics } from './profile.js';
 import { performance } from 'node:perf_hooks';
 import {
@@ -694,9 +688,13 @@ export class Audrey extends EventEmitter {
     let encodedVector: number[] | undefined;
     let encodedBuffer: Buffer | undefined;
     let redactionSummary: RedactionSummary | undefined;
+    let sanitizedFields: SanitizedEncodeFields | undefined;
     const captureRedaction = (summary: RedactionSummary) => {
       redactionSummary = summary;
       onRedaction?.(summary);
+    };
+    const captureSanitized = (sanitized: SanitizedEncodeFields) => {
+      sanitizedFields = sanitized;
     };
     const id = profile
       ? await profile.measure('encode.episode', () =>
@@ -707,6 +705,7 @@ export class Audrey extends EventEmitter {
               encodedBuffer = buffer;
             },
             onRedaction: captureRedaction,
+            onSanitized: captureSanitized,
           }),
         )
       : await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
@@ -715,15 +714,22 @@ export class Audrey extends EventEmitter {
             encodedBuffer = buffer;
           },
           onRedaction: captureRedaction,
+          onSanitized: captureSanitized,
         });
     const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
     if (redactionSummary?.redacted) this.emit('redaction', { id, ...redactionSummary });
     this.emit('encode', { id, ...params });
+    // The background pipeline (grounding, validation, the contradiction
+    // prompt sent to the cloud LLM) must only ever see what the row stores.
+    // Handing it the raw params would leak a secret redaction just scrubbed.
+    const postEncodeParams = sanitizedFields
+      ? { ...encodeParams, ...sanitizedFields }
+      : encodeParams;
     const postEncodeTask = profile
       ? profile.measureSync('encode.enqueue_background', () =>
-          this._enqueuePostEncode(id, encodeParams, encodedEmbedding),
+          this._enqueuePostEncode(id, postEncodeParams, encodedEmbedding),
         )
-      : this._enqueuePostEncode(id, encodeParams, encodedEmbedding);
+      : this._enqueuePostEncode(id, postEncodeParams, encodedEmbedding);
     if (params.waitForConsolidation) {
       if (profile) await profile.measure('encode.wait_for_consolidation', () => postEncodeTask);
       else await postEncodeTask;
@@ -812,6 +818,7 @@ export class Audrey extends EventEmitter {
       let encodedVector: number[] | undefined;
       let encodedBuffer: Buffer | undefined;
       let redactionSummary: RedactionSummary | undefined;
+      let sanitizedFields: SanitizedEncodeFields | undefined;
       const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
         vector: vectors[i]!,
         onVector: (vector, buffer) => {
@@ -821,12 +828,19 @@ export class Audrey extends EventEmitter {
         onRedaction: summary => {
           redactionSummary = summary;
         },
+        onSanitized: sanitized => {
+          sanitizedFields = sanitized;
+        },
       });
       ids.push(id);
       if (redactionSummary?.redacted) this.emit('redaction', { id, ...redactionSummary });
       this.emit('encode', { id, ...paramsList[i] });
       const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
-      tasks.push(this._enqueuePostEncode(id, encodeParams, encodedEmbedding));
+      // Same boundary as _encodeInternal: background stages see stored values only.
+      const postEncodeParams = sanitizedFields
+        ? { ...encodeParams, ...sanitizedFields }
+        : encodeParams;
+      tasks.push(this._enqueuePostEncode(id, postEncodeParams, encodedEmbedding));
     }
 
     if (paramsList.some(p => p.waitForConsolidation)) {
@@ -943,8 +957,8 @@ export class Audrey extends EventEmitter {
     if (!contradiction) throw new Error(`Contradiction not found: ${contradictionId}`);
 
     const agent = requireAgent(options.agent, this.agent);
-    let claimA: string;
-    let claimB: string;
+    let claimA: { content: string; isPrivate: boolean };
+    let claimB: { content: string; isPrivate: boolean };
     try {
       claimA = this._loadClaimContent(contradiction.claim_a_id, contradiction.claim_a_type, agent);
       claimB = this._loadClaimContent(contradiction.claim_b_id, contradiction.claim_b_type, agent);
@@ -952,7 +966,15 @@ export class Audrey extends EventEmitter {
       throw new Error(`Contradiction not found: ${contradictionId}`);
     }
 
-    const messages = buildContextResolutionPrompt(claimA, claimB);
+    // Same rule as consolidation and the post-encode contradiction check:
+    // private memory content never goes into a cloud LLM prompt.
+    if (claimA.isPrivate || claimB.isPrivate) {
+      throw new Error(
+        'resolveTruth: a claim in this contradiction is private and cannot be sent to the LLM provider',
+      );
+    }
+
+    const messages = buildContextResolutionPrompt(claimA.content, claimB.content);
     const result = validateTruthResolution(await this.llmProvider.json(messages));
 
     const now = new Date().toISOString();
@@ -1014,21 +1036,25 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  _loadClaimContent(claimId: string, claimType: string, agent?: string): string {
+  _loadClaimContent(
+    claimId: string,
+    claimType: string,
+    agent?: string,
+  ): { content: string; isPrivate: boolean } {
     const agentClause = agent ? ' AND agent = ?' : '';
     const params = agent ? [claimId, agent] : [claimId];
     if (claimType === 'semantic') {
       const row = this.db
-        .prepare(`SELECT content FROM semantics WHERE id = ?${agentClause}`)
-        .get(...params) as ContentRow | undefined;
+        .prepare(`SELECT content, "private" FROM semantics WHERE id = ?${agentClause}`)
+        .get(...params) as (ContentRow & { private: number }) | undefined;
       if (!row) throw new Error(`Semantic memory not found: ${claimId}`);
-      return row.content;
+      return { content: row.content, isPrivate: row.private === 1 };
     } else if (claimType === 'episodic') {
       const row = this.db
-        .prepare(`SELECT content FROM episodes WHERE id = ?${agentClause}`)
-        .get(...params) as ContentRow | undefined;
+        .prepare(`SELECT content, "private" FROM episodes WHERE id = ?${agentClause}`)
+        .get(...params) as (ContentRow & { private: number }) | undefined;
       if (!row) throw new Error(`Episode not found: ${claimId}`);
-      return row.content;
+      return { content: row.content, isPrivate: row.private === 1 };
     }
     throw new Error(`Unknown claim type: ${claimType}`);
   }
@@ -1391,10 +1417,17 @@ export class Audrey extends EventEmitter {
 
   async forgetByQuery(
     query: string,
-    options: { minSimilarity?: number; purge?: boolean } = {},
+    options: { minSimilarity?: number; purge?: boolean; agent?: string | null } = {},
   ): Promise<ForgetResult | null> {
     await this._ensureMigrated();
-    const result = await forgetByQueryFn(this.db, this.embeddingProvider, query, options);
+    // A fuzzy match that deletes must not reach across agent namespaces by
+    // default. agent: null explicitly widens to all agents (admin cleanup).
+    const agent = options.agent === null ? undefined : requireAgent(options.agent, this.agent);
+    const result = await forgetByQueryFn(this.db, this.embeddingProvider, query, {
+      minSimilarity: options.minSimilarity,
+      purge: options.purge,
+      agent,
+    });
     if (result) this.emit('forget', result);
     return result;
   }
@@ -1534,21 +1567,22 @@ export class Audrey extends EventEmitter {
       const allowedRoots = [pathResolve(process.cwd())];
       const extra = process.env.AUDREY_PROMOTE_ROOTS;
       if (extra) {
+        // path.delimiter, not a raw [:;] split: "B:\projects" would
+        // otherwise shatter on its own drive-letter colon on Windows.
         for (const root of extra
-          .split(/[:;]/)
+          .split(pathDelimiter)
           .map(s => s.trim())
           .filter(Boolean)) {
           allowedRoots.push(pathResolve(root));
         }
       }
-      const isUnderAllowedRoot = allowedRoots.some(root => {
-        const rel = relative(root, projectDir);
-        return rel === '' || (!rel.startsWith('..') && !pathIsAbsolute(rel));
-      });
+      // isContainedIn canonicalizes both sides, so a junction or symlink
+      // inside an allowed root cannot smuggle the write elsewhere.
+      const isUnderAllowedRoot = allowedRoots.some(root => isContainedIn(root, projectDir));
       if (!isUnderAllowedRoot) {
         throw new Error(
           `promote: refusing to write to ${projectDir} — path is outside cwd and AUDREY_PROMOTE_ROOTS. ` +
-            `Set AUDREY_PROMOTE_ROOTS=<path1>:<path2> to allow additional locations.`,
+            `Set AUDREY_PROMOTE_ROOTS=<path1>${pathDelimiter}<path2> to allow additional locations.`,
         );
       }
     }

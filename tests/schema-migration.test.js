@@ -200,6 +200,58 @@ function getColumnNames(db, table) {
   return db.pragma(`table_info(${table})`).map(col => col.name);
 }
 
+describe('v16 privacy backfill on derived rows', () => {
+  let db;
+
+  afterEach(() => {
+    if (db && db.open) db.close();
+    if (existsSync(LEGACY_DIR)) rmSync(LEGACY_DIR, { recursive: true });
+  });
+
+  it('marks existing semantics/procedures private when any evidence episode is private', () => {
+    mkdirSync(LEGACY_DIR, { recursive: true });
+    let handle;
+    ({ db: handle } = createDatabase(LEGACY_DIR));
+    const now = new Date().toISOString();
+    handle
+      .prepare(
+        `INSERT INTO episodes (id, content, source, source_reliability, created_at, "private")
+         VALUES ('ep-priv', 'private evidence', 'direct-observation', 0.9, ?, 1),
+                ('ep-pub', 'public evidence', 'direct-observation', 0.9, ?, 0)`,
+      )
+      .run(now, now);
+    handle
+      .prepare(
+        `INSERT INTO semantics (id, content, state, created_at, evidence_episode_ids, "private")
+         VALUES ('sem-tainted', 'derived from private', 'active', ?, '["ep-priv","ep-pub"]', 0),
+                ('sem-clean', 'derived from public', 'active', ?, '["ep-pub"]', 0)`,
+      )
+      .run(now, now);
+    handle
+      .prepare(
+        `INSERT INTO procedures (id, content, state, created_at, evidence_episode_ids, "private")
+         VALUES ('proc-tainted', 'derived from private', 'active', ?, '["ep-priv"]', 0)`,
+      )
+      .run(now);
+    // Rewind the logical version so reopening replays exactly the v16
+    // migration against rows that predate the taint rule.
+    handle.prepare("UPDATE audrey_config SET value = '15' WHERE key = 'schema_version'").run();
+    handle.close();
+
+    ({ db } = createDatabase(LEGACY_DIR));
+
+    expect(
+      db.prepare('SELECT "private" FROM semantics WHERE id = ?').get('sem-tainted').private,
+    ).toBe(1);
+    expect(
+      db.prepare('SELECT "private" FROM semantics WHERE id = ?').get('sem-clean').private,
+    ).toBe(0);
+    expect(
+      db.prepare('SELECT "private" FROM procedures WHERE id = ?').get('proc-tainted').private,
+    ).toBe(1);
+  });
+});
+
 describe('schema migration framework', () => {
   let db;
 
@@ -233,7 +285,7 @@ describe('schema migration framework', () => {
 
     const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get();
     expect(row).toBeDefined();
-    expect(Number(row.value)).toBe(15);
+    expect(Number(row.value)).toBe(16);
   });
 
   it('is idempotent — running migrations twice causes no errors', () => {
@@ -573,7 +625,7 @@ describe('schema migration framework', () => {
     });
     expect(
       db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get().value,
-    ).toBe('15');
+    ).toBe('16');
     const indexes = db.prepare("PRAGMA index_list('memory_events')").all();
     expect(indexes.map(index => index.name)).toEqual(
       expect.arrayContaining([
@@ -587,7 +639,7 @@ describe('schema migration framework', () => {
     ({ db } = createDatabase(LEGACY_DIR));
     expect(
       db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get().value,
-    ).toBe('15');
+    ).toBe('16');
   });
 });
 
@@ -724,7 +776,7 @@ describe('v14 vec0 sync high-water mark', () => {
 
     expect(
       db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get().value,
-    ).toBe('15');
+    ).toBe('16');
     expect(db.prepare('SELECT id FROM vec_episodes WHERE id = ?').get('ep-legacy')).toBeDefined();
     expect(readConfigValue(db, 'vec_sync_id_episodes')).toBeDefined();
 

@@ -3358,7 +3358,7 @@ async function main(): Promise<void> {
   server.tool(
     'memory_forget',
     memoryForgetToolSchema,
-    async ({ id, query, min_similarity, purge }) => {
+    async ({ id, query, min_similarity, purge, all_agents }) => {
       try {
         requireAdminTools();
         validateForgetSelection(id, query);
@@ -3369,6 +3369,9 @@ async function main(): Promise<void> {
           result = await audrey.forgetByQuery(query!, {
             minSimilarity: min_similarity ?? 0.9,
             purge: purge ?? false,
+            // Default stays agent-scoped: a fuzzy match must not delete
+            // another agent's closest memory unless explicitly widened.
+            ...(all_agents ? { agent: null } : {}),
           });
           if (!result) {
             return toolResult({
@@ -3649,6 +3652,7 @@ async function main(): Promise<void> {
     },
     async ({ target, min_confidence, min_evidence, limit, dry_run, yes, project_dir }) => {
       try {
+        requireAdminTools();
         const result = await audrey.promote({
           target,
           minConfidence: min_confidence,

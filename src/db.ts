@@ -51,7 +51,8 @@ const SCHEMA = `
     retrieval_count INTEGER DEFAULT 0,
     challenge_count INTEGER DEFAULT 0,
     interference_count INTEGER DEFAULT 0,
-    salience REAL DEFAULT 0.5
+    salience REAL DEFAULT 0.5,
+    private INTEGER DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS procedures (
@@ -70,7 +71,8 @@ const SCHEMA = `
     last_reinforced_at TEXT,
     retrieval_count INTEGER DEFAULT 0,
     interference_count INTEGER DEFAULT 0,
-    salience REAL DEFAULT 0.5
+    salience REAL DEFAULT 0.5,
+    private INTEGER DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS causal_links (
@@ -510,7 +512,7 @@ function addColumnIfMissing(
   }
 }
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
   {
@@ -717,6 +719,37 @@ const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
 
         CREATE INDEX IF NOT EXISTS idx_episodes_must_follow_tag
           ON episodes(id) WHERE tags LIKE '%"must-follow"%';
+      `);
+    },
+  },
+  {
+    version: 16,
+    up(db) {
+      // Privacy taint: derived knowledge inherits the private flag from its
+      // evidence episodes. Backfill marks any existing semantic/procedural row
+      // private when at least one episode it was derived from is private.
+      addColumnIfMissing(db, 'semantics', 'private', 'INTEGER DEFAULT 0');
+      addColumnIfMissing(db, 'procedures', 'private', 'INTEGER DEFAULT 0');
+      db.exec(`
+        UPDATE semantics
+        SET private = 1
+        WHERE private = 0
+          AND json_valid(evidence_episode_ids)
+          AND EXISTS (
+            SELECT 1 FROM json_each(semantics.evidence_episode_ids) je
+            JOIN episodes e ON e.id = je.value
+            WHERE e.private = 1
+          );
+
+        UPDATE procedures
+        SET private = 1
+        WHERE private = 0
+          AND json_valid(evidence_episode_ids)
+          AND EXISTS (
+            SELECT 1 FROM json_each(procedures.evidence_episode_ids) je
+            JOIN episodes e ON e.id = je.value
+            WHERE e.private = 1
+          );
       `);
     },
   },

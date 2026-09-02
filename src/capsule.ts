@@ -356,20 +356,28 @@ function categorize(
   //
   // Broken grounding also blocks escalation. A must-follow rule that names a
   // file or script which no longer exists is the worst thing to hand Guard:
-  // it is the one section that can turn into a high-severity block, and the
-  // rule cannot be followed. Such a memory is surfaced as uncertain instead
-  // of enforced, and is still readable by anyone who wants to repair it.
+  // must_follow and risks are the two sections that can turn into a
+  // high-severity block, and the rule cannot be followed. Such a memory is
+  // surfaced as uncertain instead of enforced, and is still readable by anyone
+  // who wants to repair it.
+  //
+  // Tag-derived risks get the same gate. Without it, any client able to
+  // encode could plant one untrusted 'risk'-tagged memory and have Guard
+  // hard-block every action it is recalled for. Tool-failure risks are
+  // unaffected: they come from memory_events, not from here.
   const groundingBroken = result.grounding === 'broken';
-  const eligibleForMustFollow = controlTrust !== 'untrusted' && !groundingBroken;
+  const eligibleForControl = controlTrust !== 'untrusted' && !groundingBroken;
 
-  if (eligibleForMustFollow && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
+  if (eligibleForControl && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
     sections.add('must_follow');
-  } else if (!eligibleForMustFollow && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
+  } else if (!eligibleForControl && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
     sections.add('uncertain_or_disputed');
   }
 
-  if (hashMatchesAny(lowerTags, RISK_TAGS)) {
+  if (eligibleForControl && hashMatchesAny(lowerTags, RISK_TAGS)) {
     sections.add('risks');
+  } else if (!eligibleForControl && hashMatchesAny(lowerTags, RISK_TAGS)) {
+    sections.add('uncertain_or_disputed');
   }
 
   if (entry.memory_type === 'procedural' || hashMatchesAny(lowerTags, PROCEDURE_TAGS)) {

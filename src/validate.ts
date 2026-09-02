@@ -53,14 +53,13 @@ export async function validateMemory(
       embeddingVector ?? (await embeddingProvider.embed(episode.content)),
     );
 
-  const episodeAgent = requireAgent(
-    episode.agent ??
-      (
-        db.prepare('SELECT agent FROM episodes WHERE id = ?').get(episode.id) as
-          AgentRow | undefined
-      )?.agent,
-    'default',
-  );
+  const episodeRow = db
+    .prepare('SELECT agent, "private" FROM episodes WHERE id = ?')
+    .get(episode.id) as (AgentRow & { private: number }) | undefined;
+  const episodeAgent = requireAgent(episode.agent ?? episodeRow?.agent, 'default');
+  // Fail closed: an episode whose row cannot be read is treated as private,
+  // so a missing/late row can never open the cloud contradiction path.
+  const episodeIsPrivate = episodeRow ? episodeRow.private === 1 : true;
   const nearestSemantic = db
     .prepare(
       `
@@ -100,6 +99,8 @@ export async function validateMemory(
       const now = new Date().toISOString();
       // supporting_count only increments when this is a new piece of evidence;
       // re-validating the same episode shouldn't keep inflating the count.
+      // MAX taints the semantic once private evidence lands in it — same
+      // invariant the v16 backfill and consolidation merges enforce.
       db.prepare(
         `
         UPDATE semantics SET
@@ -107,10 +108,19 @@ export async function validateMemory(
           evidence_episode_ids = ?,
           evidence_count = ?,
           source_type_diversity = ?,
-          last_reinforced_at = ?
+          last_reinforced_at = ?,
+          "private" = MAX("private", ?)
         WHERE id = ?
       `,
-      ).run(wasAdded ? 1 : 0, JSON.stringify(existing), existing.length, diversity, now, matchId);
+      ).run(
+        wasAdded ? 1 : 0,
+        JSON.stringify(existing),
+        existing.length,
+        diversity,
+        now,
+        episodeIsPrivate ? 1 : 0,
+        matchId,
+      );
     });
     reinforce();
 
@@ -121,7 +131,17 @@ export async function validateMemory(
     };
   }
 
-  if (bestMatch && bestSimilarity >= contradictionThreshold && llmProvider) {
+  // Private content must never be embedded into a prompt sent to a cloud
+  // LLM — neither the episode being validated nor the matched semantic.
+  // Reinforcement above stays available to private memories because it is
+  // entirely local; only the contradiction check egresses content.
+  if (
+    bestMatch &&
+    bestSimilarity >= contradictionThreshold &&
+    llmProvider &&
+    !episodeIsPrivate &&
+    bestMatch.private !== 1
+  ) {
     const messages = buildContradictionDetectionPrompt(episode.content, bestMatch.content);
     const raw = await llmProvider.json(messages);
     if (!raw || typeof raw !== 'object') {
