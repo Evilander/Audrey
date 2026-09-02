@@ -6,6 +6,7 @@ import type { EventOutcome } from './events.js';
 import type { PromotionTarget } from './promote.js';
 import type { PreflightOptions } from './preflight.js';
 import { stripReservedTrustKeys } from './trust.js';
+import { redact } from './redact.js';
 import type {
   Affect,
   ConsolidationOptions,
@@ -371,7 +372,10 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       });
       return c.json({
         id,
-        content: body.content,
+        // Echo what was stored, not what the caller sent: the MCP tool already
+        // returns the redacted text, and echoing the raw body hands a secret
+        // right back through a response that may be logged.
+        content: redact(body.content as string).text,
         source: body.source,
         private: body.private ?? false,
       });

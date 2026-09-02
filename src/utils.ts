@@ -1,4 +1,41 @@
+import { existsSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { EmbeddingProvider } from './types.js';
+
+/**
+ * Resolves a path to its canonical on-disk form so containment checks see
+ * through junctions, symlinks, and substituted drives — a lexical
+ * relative() check alone passes a path whose components link outside the
+ * root. Components that do not exist yet are re-attached after
+ * canonicalizing the deepest existing ancestor, so a not-yet-created
+ * target can still be judged.
+ */
+export function canonicalizeForContainment(p: string): string {
+  let base = resolve(p);
+  const tail: string[] = [];
+  while (!existsSync(base)) {
+    const parent = dirname(base);
+    if (parent === base) break;
+    tail.unshift(basename(base));
+    base = parent;
+  }
+  let canonical = base;
+  try {
+    canonical = realpathSync.native(base);
+  } catch {
+    // Canonicalization needs read access to every component; keep the
+    // resolved path if the OS refuses and let containment run on it.
+  }
+  return tail.length > 0 ? join(canonical, ...tail) : canonical;
+}
+
+/** Canonical containment: true when target resolves to root or below it. */
+export function isContainedIn(root: string, target: string): boolean {
+  const canonicalRoot = canonicalizeForContainment(root);
+  const canonicalTarget = canonicalizeForContainment(target);
+  const rel = relative(canonicalRoot, canonicalTarget);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
 
 export function cosineSimilarity(bufA: Buffer, bufB: Buffer, provider: EmbeddingProvider): number {
   const a = provider.bufferToVector(bufA);

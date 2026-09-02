@@ -2,9 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Audrey } from './audrey.js';
 import type { MemoryCapsule, CapsuleEntry } from './capsule.js';
 import { MemoryController, type ControllerGuardResult } from './controller.js';
+import { reconcileVectorIndex } from './db.js';
 import { deleteEventsBefore } from './events.js';
 import { projectNamespace, projectRoot } from './project.js';
 import { redact } from './redact.js';
+import { profileShellCommand } from './shell-command.js';
 import { TRUST_CONTEXT_KEY, USER_VERIFIED_TRUST } from './trust.js';
 import type { AudreyConfig } from './types.js';
 import { AUDREY_MCP_TOOL_PREFIX, internalCallTimeoutMs } from '../mcp-server/hooks.js';
@@ -205,6 +207,15 @@ interface ActionSummary {
   command?: string;
   files: string[];
   rawActionHash: string;
+  /**
+   * A shell command every segment of which is positively recognised as
+   * read-only. Such an action has nothing for Guard to protect and nothing
+   * for failure capture to learn from: a non-zero exit is the probe's
+   * answer, not a mistake.
+   */
+  readOnly: boolean;
+  /** Verb signatures of a shell command; empty for every other tool. */
+  signatures: string[];
 }
 
 function summarizeAction(payload: JsonRecord): ActionSummary {
@@ -220,7 +231,15 @@ function summarizeAction(payload: JsonRecord): ActionSummary {
       `${identity} command=${safeMemoryText(command, 800)}`,
       MAX_ACTION_QUERY_CHARS,
     );
-    return { action: commandSummary, command: commandSummary, files, rawActionHash };
+    const profile = profileShellCommand(command);
+    return {
+      action: commandSummary,
+      command: commandSummary,
+      files,
+      rawActionHash,
+      readOnly: profile.readOnly,
+      signatures: profile.signatures,
+    };
   }
   const description = text(input.description);
   const contentFields = ['content', 'new_string', 'old_string', 'patch', 'source'].flatMap(key => {
@@ -276,6 +295,8 @@ function summarizeAction(payload: JsonRecord): ActionSummary {
     action,
     files,
     rawActionHash,
+    readOnly: false,
+    signatures: [],
   };
 }
 
@@ -957,6 +978,10 @@ async function contextForHook(
 
 function guardExplanation(result: ControllerGuardResult): string {
   const lines = [result.summary];
+  // A count and a list of ids cannot be acted on; what the signal says can.
+  for (const warning of result.warnings.slice(0, 3)) {
+    lines.push(`- ${warning.type} (${warning.severity}): ${compact(warning.message, 220)}`);
+  }
   if (result.recommendedActions.length > 0) {
     lines.push(`Recommended: ${result.recommendedActions.slice(0, 3).join(' ')}`);
   }
@@ -1115,6 +1140,12 @@ async function guardBeforeHook(
   const tool = toolName(payload);
   if (!isSideEffectTool(tool)) return { event: 'PreToolUse', output: {} };
   const action = summarizeAction(payload);
+  // A read-only shell command is in the same class as the Read and Grep
+  // tools the host never routes here: there is no side effect to guard, so
+  // re-running one can never be the mistake Guard exists to prevent. Skipping
+  // it also spares every such call the embedding load and recall a preflight
+  // costs, which on a hook process is most of its wall-clock time.
+  if (action.readOnly) return { event: 'PreToolUse', output: {} };
   const controller = new MemoryController(audrey);
   const retryAcknowledged = hasRetryIntent(audrey, payload, options);
   const unscopedResult = await controller.beforeAction({
@@ -1125,6 +1156,7 @@ async function guardBeforeHook(
     cwd: text(payload.cwd) ?? process.cwd(),
     files: action.files,
     sessionId: sessionId(payload),
+    signatures: action.signatures,
     acknowledgePriorFailure: retryAcknowledged,
   });
   const result =
@@ -1306,6 +1338,10 @@ async function learnFailure(
   const summary = errorSummary(payload);
   if (!summary) return undefined;
   const action = summarizeAction(payload);
+  // A read-only probe's non-zero exit is its answer ("no match", "no such
+  // file"), not a lesson. Stored as a failure it would only teach Guard to
+  // warn on every later command that looked like it.
+  if (action.readOnly) return undefined;
   const safeAction = safeMemoryText(action.action, 1000);
   const content = `Tool failure: ${toolName(payload)} failed while attempting: ${safeAction}. Error: ${summary}`;
   const namespace = payloadProjectNamespace(payload);
@@ -1328,6 +1364,11 @@ async function learnFailure(
       projectNamespace: namespace,
       autopilotReceiptId: receiptId,
       ...(text(payload.tool_use_id) ? { toolUseId: text(payload.tool_use_id)! } : {}),
+      // Lets the capsule match this failure to a later action by what it
+      // ran, rather than by how similar the two command strings read.
+      ...(action.signatures.length > 0
+        ? { commandSignatures: JSON.stringify(action.signatures) }
+        : {}),
     },
   });
 }
@@ -1357,6 +1398,16 @@ async function guardAfterHook(
   try {
     const receiptId = correlatedReceipt(audrey, payload, options.host);
     const action = summarizeAction(payload);
+    // The event row stays honest about the exit status; the flag tells
+    // recentFailures and the exact-action history that this "failure" was a
+    // probe answering a question, so neither counts it as a lesson.
+    const metadata = {
+      autopilot: true,
+      autopilot_host: options.host,
+      autopilot_tool_use_id: text(payload.tool_use_id),
+      autopilot_raw_action_hash: action.rawActionHash,
+      ...(action.readOnly ? { read_only: true } : {}),
+    };
     if (receiptId) {
       audrey.afterAction({
         receiptId,
@@ -1368,12 +1419,7 @@ async function guardAfterHook(
         errorSummary: outcome === 'failed' ? errorSummary(payload) : undefined,
         cwd: text(payload.cwd),
         files: action.files,
-        metadata: {
-          autopilot: true,
-          autopilot_host: options.host,
-          autopilot_tool_use_id: text(payload.tool_use_id),
-          autopilot_raw_action_hash: action.rawActionHash,
-        },
+        metadata,
       });
     } else {
       const controller = new MemoryController(audrey);
@@ -1390,12 +1436,7 @@ async function guardAfterHook(
         outcome,
         output: toolOutput(payload),
         errorSummary: outcome === 'failed' ? errorSummary(payload) : undefined,
-        metadata: {
-          autopilot: true,
-          autopilot_host: options.host,
-          autopilot_tool_use_id: text(payload.tool_use_id),
-          autopilot_raw_action_hash: action.rawActionHash,
-        },
+        metadata,
       });
     }
     const learnedFailureId =
@@ -1517,12 +1558,32 @@ function runGroundingSweep(
   }
 }
 
+/**
+ * Drops vectors left behind for superseded rows. Not interval-gated: the
+ * surplus check is three count comparisons memoryStatus() already makes,
+ * and while a surplus stands every Guard preflight carries a re-embed
+ * recommendation, so it should not wait a day.
+ */
+function runVectorReconcile(audrey: Audrey): void {
+  try {
+    const status = audrey.memoryStatus();
+    const surplus =
+      status.vec_episodes > status.searchable_episodes ||
+      status.vec_semantics > status.searchable_semantics ||
+      status.vec_procedures > status.searchable_procedures;
+    if (surplus) reconcileVectorIndex(audrey.db);
+  } catch (error) {
+    reportMaintenanceError(audrey, 'vector-reconcile', error);
+  }
+}
+
 async function runMaintenance(
   audrey: Audrey,
   options: AutopilotHookOptions,
   cwd?: string,
 ): Promise<boolean> {
   runEventRetention(audrey, options);
+  runVectorReconcile(audrey);
   runGroundingSweep(audrey, options, cwd);
 
   const intervalMs = (options.maintenanceIntervalHours ?? 24) * 60 * 60 * 1000;

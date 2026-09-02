@@ -172,6 +172,8 @@ interface PreparedCluster {
   maxSalience: number;
   /** null when this cluster never left the machine (local heuristic / private path). */
   consolidationModel: string | null;
+  /** True when any evidence episode is private — the derived row inherits the flag. */
+  isPrivate: boolean;
 }
 
 async function buildPreparedCluster(
@@ -190,6 +192,7 @@ async function buildPreparedCluster(
     createdAt: new Date().toISOString(),
     maxSalience: Math.max(...cluster.map(ep => ep.salience ?? 0.5)),
     consolidationModel,
+    isPrivate: cluster.some(ep => ep.private === 1),
   };
 }
 
@@ -302,6 +305,7 @@ function mergeIntoSemantic(
   semanticId: string,
   newEpisodeIds: string[],
   agent: string,
+  taintPrivate: boolean,
 ): void {
   const current = db
     .prepare('SELECT evidence_episode_ids FROM semantics WHERE id = ?')
@@ -312,6 +316,9 @@ function mergeIntoSemantic(
   );
   const diversity = sourceDiversityFor(db, ids, agent);
   const now = new Date().toISOString();
+  // MAX keeps the same invariant the v16 backfill enforces: once any evidence
+  // episode is private, the derived row is private, and merging can only ever
+  // raise the flag, never clear it.
   db.prepare(
     `
     UPDATE semantics SET
@@ -319,16 +326,26 @@ function mergeIntoSemantic(
       evidence_episode_ids = ?,
       evidence_count = ?,
       source_type_diversity = ?,
-      last_reinforced_at = ?
+      last_reinforced_at = ?,
+      "private" = MAX("private", ?)
     WHERE id = ?
   `,
-  ).run(addedCount, JSON.stringify(ids), ids.length, diversity, now, semanticId);
+  ).run(
+    addedCount,
+    JSON.stringify(ids),
+    ids.length,
+    diversity,
+    now,
+    taintPrivate ? 1 : 0,
+    semanticId,
+  );
 }
 
 function mergeIntoProcedural(
   db: Database.Database,
   proceduralId: string,
   newEpisodeIds: string[],
+  taintPrivate: boolean,
 ): void {
   const current = db
     .prepare('SELECT evidence_episode_ids FROM procedures WHERE id = ?')
@@ -343,10 +360,11 @@ function mergeIntoProcedural(
     UPDATE procedures SET
       success_count = success_count + ?,
       evidence_episode_ids = ?,
-      last_reinforced_at = ?
+      last_reinforced_at = ?,
+      "private" = MAX("private", ?)
     WHERE id = ?
   `,
-  ).run(addedCount, JSON.stringify(ids), now, proceduralId);
+  ).run(addedCount, JSON.stringify(ids), now, taintPrivate ? 1 : 0, proceduralId);
 }
 
 export async function runConsolidation(
@@ -426,8 +444,8 @@ export async function runConsolidation(
       INSERT INTO procedures (
         id, content, agent, embedding, state, trigger_conditions,
         evidence_episode_ids, success_count, failure_count,
-        embedding_model, embedding_version, created_at, salience
-      ) VALUES (?, ?, ?, ?, 'active', ?, ?, 0, 0, ?, ?, ?, ?)
+        embedding_model, embedding_version, created_at, salience, "private"
+      ) VALUES (?, ?, ?, ?, 'active', ?, ?, 0, 0, ?, ?, ?, ?, ?)
     `);
     const insertVecProcedure = db.prepare(
       'INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
@@ -437,8 +455,8 @@ export async function runConsolidation(
         id, content, agent, embedding, state, evidence_episode_ids,
         evidence_count, supporting_count, source_type_diversity,
         consolidation_checkpoint, embedding_model, embedding_version,
-        consolidation_model, created_at, salience
-      ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        consolidation_model, created_at, salience, "private"
+      ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertVecSemantic = db.prepare(
       'INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
@@ -519,10 +537,10 @@ export async function runConsolidation(
         if (shouldMerge && mergeMatch) {
           outputId = mergeMatch.id;
           if (isProcedural) {
-            mergeIntoProcedural(db, mergeMatch.id, prepared.clusterIds);
+            mergeIntoProcedural(db, mergeMatch.id, prepared.clusterIds, prepared.isPrivate);
             proceduresMergedCount++;
           } else {
-            mergeIntoSemantic(db, mergeMatch.id, prepared.clusterIds, agent);
+            mergeIntoSemantic(db, mergeMatch.id, prepared.clusterIds, agent, prepared.isPrivate);
             semanticsMergedCount++;
           }
         } else {
@@ -539,6 +557,7 @@ export async function runConsolidation(
               embeddingProvider.modelVersion,
               prepared.createdAt,
               prepared.maxSalience,
+              prepared.isPrivate ? 1 : 0,
             );
             insertVecProcedure.run(prepared.memoryId, agent, prepared.embeddingBuffer, 'active');
             insertFTSProcedure(db, prepared.memoryId, prepared.principle.content);
@@ -559,6 +578,7 @@ export async function runConsolidation(
               prepared.consolidationModel,
               prepared.createdAt,
               prepared.maxSalience,
+              prepared.isPrivate ? 1 : 0,
             );
             insertVecSemantic.run(prepared.memoryId, agent, prepared.embeddingBuffer, 'active');
             insertFTSSemantic(db, prepared.memoryId, prepared.principle.content);

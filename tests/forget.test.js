@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { Audrey } from '../dist/src/index.js';
 import { forgetMemory, forgetByQuery, purgeMemories } from '../dist/src/forget.js';
 import { encodeEpisode } from '../dist/src/encode.js';
 import { recall } from '../dist/src/recall.js';
+import { runConsolidation } from '../dist/src/consolidate.js';
 import { createDatabase, closeDatabase } from '../dist/src/db.js';
 import { MockEmbeddingProvider } from '../dist/src/embedding.js';
 import { generateId } from '../dist/src/ulid.js';
@@ -133,7 +135,13 @@ describe('forgetMemory', () => {
 
     const result = forgetMemory(db, id, { purge: true });
 
-    expect(result).toEqual({ id, type: 'episodic', purged: true });
+    expect(result).toEqual({
+      id,
+      type: 'episodic',
+      purged: true,
+      cascadedSemantics: 0,
+      cascadedProcedures: 0,
+    });
     const row = db.prepare('SELECT id FROM episodes WHERE id = ?').get(id);
     expect(row).toBeUndefined();
     const vecRow = db.prepare('SELECT id FROM vec_episodes WHERE id = ?').get(id);
@@ -288,5 +296,187 @@ describe('forgetByQuery', () => {
     expect(result.purged).toBe(true);
     const row = db.prepare('SELECT id FROM episodes WHERE id = ?').get(id);
     expect(row).toBeUndefined();
+  });
+
+  it('scopes the destructive lookup to the given agent', async () => {
+    const otherAgentId = await encodeEpisode(db, embedding, {
+      content: 'agent-b private working note',
+      source: 'direct-observation',
+      agent: 'agent-b',
+    });
+
+    const crossAgent = await forgetByQuery(db, embedding, 'agent-b private working note', {
+      minSimilarity: 0.5,
+      agent: 'agent-a',
+    });
+    expect(crossAgent).toBeNull();
+    expect(db.prepare('SELECT id FROM episodes WHERE id = ?').get(otherAgentId)).toBeDefined();
+
+    const sameAgent = await forgetByQuery(db, embedding, 'agent-b private working note', {
+      minSimilarity: 0.5,
+      agent: 'agent-b',
+    });
+    expect(sameAgent).not.toBeNull();
+    expect(sameAgent.id).toBe(otherAgentId);
+  });
+});
+
+describe('purge cascade to derived memories', () => {
+  let db, embedding;
+
+  beforeEach(async () => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+    ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
+    embedding = new MockEmbeddingProvider({ dimensions: 8 });
+  });
+
+  afterEach(() => {
+    closeDatabase(db);
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  });
+
+  async function consolidateSentinel() {
+    const ids = [];
+    for (const source of ['direct-observation', 'tool-result', 'told-by-user']) {
+      ids.push(
+        await encodeEpisode(db, embedding, {
+          content: 'sentinel fact the semantic will restate',
+          source,
+        }),
+      );
+    }
+    await runConsolidation(db, embedding, { minClusterSize: 3, similarityThreshold: 0.99 });
+    const semantic = db.prepare("SELECT * FROM semantics WHERE state = 'active'").get();
+    expect(semantic).toBeDefined();
+    expect(semantic.content).toContain('sentinel fact');
+    return { ids, semantic };
+  }
+
+  it('purging an evidence episode purges the derived semantic and requeues survivors', async () => {
+    const { ids, semantic } = await consolidateSentinel();
+
+    const result = forgetMemory(db, ids[0], { purge: true });
+
+    expect(result.purged).toBe(true);
+    expect(result.cascadedSemantics).toBe(1);
+    expect(result.cascadedProcedures).toBe(0);
+
+    // The derived row that restated the purged content is gone everywhere.
+    expect(db.prepare('SELECT id FROM semantics WHERE id = ?').get(semantic.id)).toBeUndefined();
+    expect(
+      db.prepare('SELECT id FROM vec_semantics WHERE id = ?').get(semantic.id),
+    ).toBeUndefined();
+    const recalled = await recall(db, embedding, 'sentinel fact the semantic will restate');
+    expect(recalled.find(r => r.id === semantic.id)).toBeUndefined();
+
+    // Survivors are eligible to re-consolidate without the purged episode.
+    for (const survivorId of ids.slice(1)) {
+      const row = db.prepare('SELECT consolidated FROM episodes WHERE id = ?').get(survivorId);
+      expect(row.consolidated).toBe(0);
+      const vecRow = db
+        .prepare('SELECT consolidated FROM vec_episodes WHERE id = ?')
+        .get(survivorId);
+      expect(Number(vecRow.consolidated)).toBe(0);
+    }
+
+    const rerun = await runConsolidation(db, embedding, {
+      minClusterSize: 2,
+      similarityThreshold: 0.99,
+    });
+    expect(rerun.principlesExtracted).toBe(1);
+  });
+
+  it('soft forget does not cascade to derived memories', async () => {
+    const { ids, semantic } = await consolidateSentinel();
+
+    const result = forgetMemory(db, ids[0]);
+
+    expect(result.purged).toBe(false);
+    expect(result.cascadedSemantics).toBeUndefined();
+    expect(db.prepare('SELECT id FROM semantics WHERE id = ?').get(semantic.id)).toBeDefined();
+  });
+
+  it('bulk purgeMemories cascades from soft-forgotten episodes to their derived rows', async () => {
+    // The standard erasure flow: soft forget now, empty the trash later.
+    // The bulk purge must erase the derived text exactly like a direct
+    // purge would, or the semantic keeps restating the forgotten content.
+    const { ids, semantic } = await consolidateSentinel();
+
+    forgetMemory(db, ids[0]);
+    const result = purgeMemories(db);
+
+    expect(result.episodes).toBe(1);
+    expect(result.semantics).toBe(1);
+    expect(db.prepare('SELECT id FROM semantics WHERE id = ?').get(semantic.id)).toBeUndefined();
+    expect(
+      db.prepare('SELECT id FROM vec_semantics WHERE id = ?').get(semantic.id),
+    ).toBeUndefined();
+    for (const survivorId of ids.slice(1)) {
+      expect(
+        db.prepare('SELECT consolidated FROM episodes WHERE id = ?').get(survivorId).consolidated,
+      ).toBe(0);
+    }
+  });
+
+  it('purge removes memory anchors for the purged and cascaded rows', async () => {
+    const { ids, semantic } = await consolidateSentinel();
+    const now = new Date().toISOString();
+    const insertAnchor = db.prepare(`
+      INSERT INTO memory_anchors
+        (id, memory_id, memory_type, agent, project_root, kind, value, state, created_at, last_verified_at)
+      VALUES (?, ?, ?, 'default', ?, 'path', ?, 'intact', ?, ?)
+    `);
+    insertAnchor.run(generateId(), ids[0], 'episodic', TEST_DIR, 'src/app.ts', now, now);
+    insertAnchor.run(generateId(), semantic.id, 'semantic', TEST_DIR, 'src/app.ts', now, now);
+
+    forgetMemory(db, ids[0], { purge: true });
+
+    const remaining = db
+      .prepare('SELECT COUNT(*) AS c FROM memory_anchors WHERE memory_id IN (?, ?)')
+      .get(ids[0], semantic.id);
+    expect(remaining.c).toBe(0);
+  });
+});
+
+describe('Audrey.forgetByQuery agent scoping', () => {
+  const CLASS_DIR = './test-forget-class-data';
+  let audrey;
+
+  beforeEach(() => {
+    if (existsSync(CLASS_DIR)) rmSync(CLASS_DIR, { recursive: true });
+    audrey = new Audrey({
+      dataDir: CLASS_DIR,
+      agent: 'agent-a',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    audrey.close();
+    if (existsSync(CLASS_DIR)) rmSync(CLASS_DIR, { recursive: true });
+  });
+
+  it('defaults the destructive lookup to the instance agent; agent: null widens explicitly', async () => {
+    const foreignId = await audrey.encode({
+      content: 'foreign namespace deletion target',
+      source: 'direct-observation',
+      agent: 'agent-b',
+    });
+
+    // Default: scoped to agent-a, so agent-b's memory is untouchable. This
+    // is the exact wiring MCP memory_forget and POST /v1/forget rely on.
+    const scoped = await audrey.forgetByQuery('foreign namespace deletion target', {
+      minSimilarity: 0.5,
+    });
+    expect(scoped).toBeNull();
+    expect(audrey.db.prepare('SELECT id FROM episodes WHERE id = ?').get(foreignId)).toBeDefined();
+
+    // Explicit widening reaches it.
+    const widened = await audrey.forgetByQuery('foreign namespace deletion target', {
+      minSimilarity: 0.5,
+      agent: null,
+    });
+    expect(widened).not.toBeNull();
+    expect(widened.id).toBe(foreignId);
   });
 });

@@ -1088,6 +1088,72 @@ describe('recall', () => {
       const contents = results.map(r => r.content);
       expect(contents).toContain('secret memory');
     });
+
+    async function insertDerivedRows() {
+      const now = new Date().toISOString();
+      const semId = generateId();
+      const semContent = 'private derived semantic principle qq17';
+      const semBuf = embedding.vectorToBuffer(await embedding.embed(semContent));
+      db.prepare(
+        `INSERT INTO semantics (id, content, embedding, state, evidence_count, supporting_count,
+           created_at, "private") VALUES (?, ?, ?, 'active', 3, 3, ?, 1)`,
+      ).run(semId, semContent, semBuf, now);
+      db.prepare('INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
+        semId,
+        'default',
+        semBuf,
+        'active',
+      );
+
+      const procId = generateId();
+      const procContent = 'private derived procedure steps qq18';
+      const procBuf = embedding.vectorToBuffer(await embedding.embed(procContent));
+      db.prepare(
+        `INSERT INTO procedures (id, content, embedding, state, success_count, failure_count,
+           created_at, "private") VALUES (?, ?, ?, 'active', 3, 0, ?, 1)`,
+      ).run(procId, procContent, procBuf, now);
+      db.prepare('INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)').run(
+        procId,
+        'default',
+        procBuf,
+        'active',
+      );
+      return { semId, semContent, procId, procContent };
+    }
+
+    it('excludes private semantic and procedural memories from recall by default', async () => {
+      const { semId, semContent, procId, procContent } = await insertDerivedRows();
+
+      const semResults = await recall(db, embedding, semContent, {
+        types: ['semantic'],
+        limit: 20,
+      });
+      expect(semResults.find(r => r.id === semId)).toBeUndefined();
+
+      const procResults = await recall(db, embedding, procContent, {
+        types: ['procedural'],
+        limit: 20,
+      });
+      expect(procResults.find(r => r.id === procId)).toBeUndefined();
+    });
+
+    it('includes private semantic and procedural memories with includePrivate: true', async () => {
+      const { semId, semContent, procId, procContent } = await insertDerivedRows();
+
+      const semResults = await recall(db, embedding, semContent, {
+        types: ['semantic'],
+        limit: 20,
+        includePrivate: true,
+      });
+      expect(semResults.find(r => r.id === semId)).toBeDefined();
+
+      const procResults = await recall(db, embedding, procContent, {
+        types: ['procedural'],
+        limit: 20,
+        includePrivate: true,
+      });
+      expect(procResults.find(r => r.id === procId)).toBeDefined();
+    });
   });
 
   describe('retrieval guards', () => {

@@ -114,6 +114,44 @@ describe('hybrid-recall — RRF fusion', () => {
     expect(fused.findIndex(r => r.id === vectorOnly.id)).toBeGreaterThan(0);
   });
 
+  it('FTS-only enrichment respects the private flag on derived rows', async () => {
+    const now = new Date().toISOString();
+    audrey.db
+      .prepare(
+        `INSERT INTO semantics (id, content, agent, state, evidence_count, supporting_count,
+           created_at, "private") VALUES (?, ?, 'hybrid-test', 'active', 3, 3, ?, 1)`,
+      )
+      .run('sem-private-fts', 'confidential rollout principle zz41', now);
+    audrey.db
+      .prepare(
+        `INSERT INTO procedures (id, content, agent, state, success_count, failure_count,
+           created_at, "private") VALUES (?, ?, 'hybrid-test', 'active', 2, 0, ?, 1)`,
+      )
+      .run('proc-private-fts', 'confidential deploy procedure zz42', now);
+
+    const ftsIds = new Map([
+      ['semantic', ['sem-private-fts']],
+      ['procedural', ['proc-private-fts']],
+    ]);
+
+    const hidden = fuseResults(audrey.db, {
+      vectorResults: [],
+      ftsIds,
+      mode: 'hybrid',
+    });
+    expect(hidden.some(r => r.id === 'sem-private-fts')).toBe(false);
+    expect(hidden.some(r => r.id === 'proc-private-fts')).toBe(false);
+
+    const shown = fuseResults(audrey.db, {
+      vectorResults: [],
+      ftsIds,
+      mode: 'hybrid',
+      includePrivate: true,
+    });
+    expect(shown.some(r => r.id === 'sem-private-fts')).toBe(true);
+    expect(shown.some(r => r.id === 'proc-private-fts')).toBe(true);
+  });
+
   it('keyword mode uses FTS rank order and drops non-FTS hits', async () => {
     await audrey.encode({ content: 'VACUUM ANALYZE optimization', source: 'tool-result' });
     await audrey.encode({

@@ -737,9 +737,11 @@ function knnSemantic(
   includeDormant: boolean,
   confidenceConfig: Partial<ConfidenceConfig>,
   filters: RecallFilters = {},
+  includePrivate: boolean = false,
 ): RecallResult[] {
   const safeK = safeKForCount(tableCount, candidateK);
   if (safeK === 0) return [];
+  const privateClause = includePrivate ? '' : 'AND s."private" = 0';
   const agentClause = filters.agent ? 'AND v.agent = ? AND s.agent = ?' : '';
   const params = filters.agent
     ? [queryBuffer, safeK, filters.agent, filters.agent]
@@ -753,6 +755,7 @@ function knnSemantic(
     WHERE v.embedding MATCH ?
       AND k = ?
       ${stateClause('s', includeDormant)}
+      ${privateClause}
       ${agentClause}
   `,
     )
@@ -780,9 +783,11 @@ function knnProcedural(
   includeDormant: boolean,
   confidenceConfig: Partial<ConfidenceConfig>,
   filters: RecallFilters = {},
+  includePrivate: boolean = false,
 ): RecallResult[] {
   const safeK = safeKForCount(tableCount, candidateK);
   if (safeK === 0) return [];
+  const privateClause = includePrivate ? '' : 'AND p."private" = 0';
   const agentClause = filters.agent ? 'AND v.agent = ? AND p.agent = ?' : '';
   const params = filters.agent
     ? [queryBuffer, safeK, filters.agent, filters.agent]
@@ -796,6 +801,7 @@ function knnProcedural(
     WHERE v.embedding MATCH ?
       AND k = ?
       ${stateClause('p', includeDormant)}
+      ${privateClause}
       ${agentClause}
   `,
     )
@@ -903,6 +909,7 @@ export async function* recallStream(
                 includeDormant,
                 confidenceConfig || {},
                 filters,
+                includePrivate,
               ),
             )
           : knnSemantic(
@@ -916,6 +923,7 @@ export async function* recallStream(
               includeDormant,
               confidenceConfig || {},
               filters,
+              includePrivate,
             );
         passResults.push(...semantic);
       } catch (err) {
@@ -938,6 +946,7 @@ export async function* recallStream(
                 includeDormant,
                 confidenceConfig || {},
                 filters,
+                includePrivate,
               ),
             )
           : knnProcedural(
@@ -951,6 +960,7 @@ export async function* recallStream(
               includeDormant,
               confidenceConfig || {},
               filters,
+              includePrivate,
             );
         passResults.push(...procedural);
       } catch (err) {

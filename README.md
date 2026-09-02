@@ -81,6 +81,28 @@ Try the complete loop without an API key or network call:
 audrey demo --scenario repeated-failure
 ```
 
+## Looking is not doing
+
+Between the failed deploy and the retry, an agent runs a lot of commands that cannot change anything: `grep` for the error, `git status`, `cat` on a config file, `ls` on a directory that turns out not to exist. A memory system that treats every one of those as a risk, or remembers `grep` finding nothing as a "failure", becomes a smoke alarm that goes off when you make toast. People stop listening, and then it is worth nothing on the day the toaster is on fire.
+
+Audrey reads the command the way an engineer would. A command whose every part is positively recognised as read-only (`grep`, `git log`, `npm view`, `docker ps`, `sed -n '1,40p'`, and their kind, with no command substitution, no redirect except to `/dev/null`, no `sudo` or `xargs`, no environment assignment that could change what the verb resolves to) never reaches the Guard at all. Its exit code is recorded but never counted as a lesson. Everything else is guarded exactly as before, and anything Audrey cannot positively recognise is treated as doing.
+
+```text
+$ grep -rn "prisma" src/          Guard: silent
+$ git status --short              Guard: silent
+$ cat prisma/schema.prisma        Guard: silent
+$ npm run deploy
+Audrey Guard: BLOCKED
+- recent_failure (high): This exact Bash action failed before: Prisma client was not generated. Run npm run db:generate before deploy.
+- must_follow (high): Before running npm run deploy, run npm run db:generate because Prisma client must be generated first.
+```
+
+That is the output of `audrey demo --scenario repeated-failure`, which runs the whole sequence with no API key and no network.
+
+When Guard does speak, it names the memory it is speaking from, and a remembered failure is matched to the proposed command by what it runs (`npm run deploy` against `npm run deploy`), not by how similar two strings look to an embedding.
+
+The line between looking and doing is drawn fail-closed and was tested adversarially before release: five independent review passes ran the classifier's "read-only" verdicts against real tools and found thirteen ways to hide a write inside a command that looked harmless (`node --check -r ./x.js`, `GIT_EXTERNAL_DIFF=./x git diff`, `sort -ofile`, a backslash-newline hiding `$(`, `jobs -x`). Every one is closed and is a test case, and the fifth pass found none left. Two limits remain by design: a git configuration that already names an external program runs on any read, and a file whose name is a flag can change what a pure reader does with a glob. Both require a prior write that Guard did see.
+
 ## What Audrey remembers
 
 Audrey treats memory as more than a pile of text chunks.
@@ -124,7 +146,7 @@ Most of this runs on its own once Autopilot is installed. You do not invoke reca
 | What | When you want it | Why it helps | How |
 |---|---|---|---|
 | **Autopilot** | Always, after one install | The whole point. Memory arrives before the agent acts instead of after you notice it went wrong. | `audrey install --host auto`, restart the host, approve hooks once |
-| **Guard** | Automatic, before any bash/edit/write | Checks the exact action fingerprint against prior failures. Not "something like this broke once" — this exact command, still broken. | Runs at `PreToolUse`. Manually: `audrey guard --tool Bash --strict` |
+| **Guard** | Automatic, before any edit, write, or shell command that can have side effects | Checks the exact action fingerprint against prior failures. Not "something like this broke once" — this exact command, still broken. Read-only commands (`grep`, `ls`, `git status`) are not guarded, and their non-zero exits are not remembered as failures. | Runs at `PreToolUse`. Manually: `audrey guard --tool Bash --strict` |
 | **Grounding** | After deleting or renaming things a memory might mention | Confidence tells you a memory is well-sourced. Grounding tells you it is still true. A note about a script you deleted is confident and wrong. | `audrey ground`, or let the maintenance sweep do it |
 | **Session briefing** | Automatic at session start | Small, scoped packet instead of pasting context every time. Each memory injects once per session, not every prompt. | `SessionStart` hook. Preview with `audrey greeting` |
 | **Explicit capture** | When you say "remember that…" or "I prefer…" | Deliberate memories are worth more than inferred ones, and phrasing it that way is enough. | Just type it. Autopilot picks up those sentence shapes |
@@ -268,6 +290,8 @@ The shared hook adapter normalizes current Codex and Claude Code payloads.
 - Context injection is bounded by `AUDREY_CONTEXT_BUDGET_CHARS` (default 4000; Autopilot uses a conservative 3200-character packet unless overridden).
 - Prompt and tool retrieval queries are bounded before embedding. Large edits carry hashes and lengths instead of file bodies; exact Guard identity uses a full redacted digest rather than a truncated prefix.
 - The generated default hooks guard and observe `Bash`, `Edit`, `MultiEdit`, `Write`, `NotebookEdit`, `apply_patch`, and every `mcp__*` tool from connected MCP servers, excluding Audrey's own memory tools so the Guard never guards itself.
+- A Bash command is only guarded when it can have side effects. A command whose every part is positively recognised as read-only (`grep`, `ls`, `sed -n`, `git status`, `npm ls`, and similar; no command substitution, no redirect except to `/dev/null`, no `sudo`, `xargs`, or `eval`) skips the preflight, and a non-zero exit from it is recorded but never treated as a failure to avoid. Anything the classifier does not recognise is guarded.
+- A remembered Bash failure is matched to a proposed command by the verbs it runs (`npm run deploy`, `git push`), not by how similar the two command strings read.
 - Pre/post correlation uses `session_id + tool_use_id`, so parallel tool calls do not attach to the wrong receipt.
 - Claude `PostToolUseFailure` and Codex responses that explicitly expose a non-zero exit normalize to the same failure path. Current Codex hooks can omit Bash exit status; Audrey records an opaque result as `unknown`, never as invented success.
 - On an internal error, every hook logs to stderr and emits `{}` (no opinion, so the tool proceeds). Only `PreToolUse` changes behavior under `AUDREY_HOOK_FAIL_CLOSED=1`, emitting a deny decision instead; context-injection and post-tool hooks have no deny path and always emit `{}`.

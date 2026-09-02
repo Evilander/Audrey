@@ -1,6 +1,11 @@
 import type { Audrey } from './audrey.js';
 import { guardActionKey } from './action-key.js';
-import type { CapsuleEntry, CapsuleMode, MemoryCapsule } from './capsule.js';
+import {
+  isAutopilotFailureEpisode,
+  type CapsuleEntry,
+  type CapsuleMode,
+  type MemoryCapsule,
+} from './capsule.js';
 import type { FailurePattern } from './events.js';
 import { redact } from './redact.js';
 import { controlTrustFor, type ControlTrust } from './trust.js';
@@ -35,6 +40,8 @@ export interface PreflightOptions {
   recordEvent?: boolean;
   scope?: RecallOptions['scope'];
   agent?: string;
+  /** Verb signatures of the proposed shell command; see AgentAction.signatures. */
+  actionSignatures?: string[];
 }
 
 export interface PreflightWarning {
@@ -136,10 +143,7 @@ function isToolFailureEntry(entry: CapsuleEntry): boolean {
   // Only Autopilot-learned failure episodes (tool-result source) get the
   // tool-matched medium-severity treatment. A user-authored memory that
   // happens to carry the tag stays a full high-severity risk.
-  return (
-    entry.source === 'tool-result' &&
-    Boolean(entry.tags?.some(tag => tag.toLowerCase() === 'tool-failure'))
-  );
+  return isAutopilotFailureEpisode(entry.source, entry.tags ?? []);
 }
 
 function addWarning(
@@ -270,6 +274,7 @@ export async function buildPreflight(
     scope,
     agent,
     ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.actionSignatures ? { actionSignatures: options.actionSignatures } : {}),
     recall: { scope, agent },
   });
 
@@ -309,51 +314,52 @@ export async function buildPreflight(
   }
 
   // The capsule's own recall can rank a must-follow memory below its top-K
-  // cutoff even when one exists, so an empty must_follow section alone does
-  // not prove there is nothing to find — hence the fallback sweep below.
-  // But it is a full embed + KNN + confidence-scoring pass, so it must not
-  // run on every routine action just because must_follow happens to be
-  // empty (the common case). hasMustFollowTagCandidate() gates it on a
+  // cutoff even when one exists, so the must_follow section alone does not
+  // prove the set is complete — finding one rule says nothing about a
+  // second ranked below the cutoff, hence the fallback sweep below runs
+  // whenever tagged rules exist at all, deduped against what the capsule
+  // already surfaced. It is a full embed + KNN + confidence-scoring pass,
+  // so it must not run on every routine action (the common case is no
+  // tagged rules anywhere). hasMustFollowTagCandidate() gates it on a
   // cheap existence check first.
   const existingMustFollowIds = new Set(capsule.sections.must_follow.map(entry => entry.memory_id));
-  if (existingMustFollowIds.size === 0) {
-    try {
-      if (hasMustFollowTagCandidate(audrey)) {
-        const taggedMustFollow = await audrey.recall(query, {
-          limit: 50,
-          minConfidence: 0.01,
-          tags: ['must-follow'],
-          scope,
-          agent,
-        });
-        const trustedResults = taggedMustFollow
-          .map(result => ({ result, trust: controlTrustForResult(audrey, result) }))
-          .filter(candidate => candidate.trust !== 'untrusted');
-        for (const { result, trust } of trustedResults.slice(0, 5)) {
-          addWarning(
-            warnings,
-            seen,
-            warningFromTaggedRecall(result, trust, 'Apply this must-follow rule before acting.'),
-          );
-        }
-      }
-    } catch (err: unknown) {
-      // This sweep exists precisely because the capsule can rank a
-      // must-follow memory below its cutoff, so losing it silently means
-      // Guard misses the one control directive it was asked to enforce and
-      // says nothing. The capsule's own recall_errors do not cover this
-      // path: it has its own recall call and its own per-result context
-      // read, either of which can fail on their own.
-      addWarning(warnings, seen, {
-        type: 'memory_health',
-        severity: 'high',
-        message: 'Audrey could not complete the must-follow control sweep; rules may be missing.',
-        reason: shorten(err instanceof Error ? err.message : String(err), 220),
-        evidence_id: 'recall:must-follow-sweep',
-        recommended_action:
-          'Run audrey status and repair the degraded recall path before relying on Guard.',
+  try {
+    if (hasMustFollowTagCandidate(audrey)) {
+      const taggedMustFollow = await audrey.recall(query, {
+        limit: 50,
+        minConfidence: 0.01,
+        tags: ['must-follow'],
+        scope,
+        agent,
       });
+      const trustedResults = taggedMustFollow
+        .filter(result => !existingMustFollowIds.has(result.id))
+        .map(result => ({ result, trust: controlTrustForResult(audrey, result) }))
+        .filter(candidate => candidate.trust !== 'untrusted');
+      for (const { result, trust } of trustedResults.slice(0, 5)) {
+        addWarning(
+          warnings,
+          seen,
+          warningFromTaggedRecall(result, trust, 'Apply this must-follow rule before acting.'),
+        );
+      }
     }
+  } catch (err: unknown) {
+    // This sweep exists precisely because the capsule can rank a
+    // must-follow memory below its cutoff, so losing it silently means
+    // Guard misses the one control directive it was asked to enforce and
+    // says nothing. The capsule's own recall_errors do not cover this
+    // path: it has its own recall call and its own per-result context
+    // read, either of which can fail on their own.
+    addWarning(warnings, seen, {
+      type: 'memory_health',
+      severity: 'high',
+      message: 'Audrey could not complete the must-follow control sweep; rules may be missing.',
+      reason: shorten(err instanceof Error ? err.message : String(err), 220),
+      evidence_id: 'recall:must-follow-sweep',
+      recommended_action:
+        'Run audrey status and repair the degraded recall path before relying on Guard.',
+    });
   }
 
   for (const entry of capsule.sections.must_follow) {
@@ -407,13 +413,17 @@ export async function buildPreflight(
     );
   }
 
+  // Medium, not high: contradictions are opened automatically by post-encode
+  // validation with no human in the loop, and the capsule surfaces every open
+  // one regardless of the action. At high they would hard-block strict-mode
+  // sessions until someone runs resolve-truth.
   for (const entry of capsule.sections.contradictions) {
     addWarning(
       warnings,
       seen,
       warningFromEntry(
         'contradiction',
-        'high',
+        'medium',
         entry,
         'Resolve or scope this contradiction before acting.',
       ),
