@@ -286,10 +286,10 @@ function tokenize(command: string): Token[] {
       continue;
     }
 
-    // `$?`, `$$`, `$#`, `$!` and `$1`..`$9` expand to exactly one word;
-    // anything else the shell may split into several, and a brace inside a
-    // word (`f{1,2}.txt`) expands without any glob character at all.
-    if (ch === '$' && !/[?$#!0-9]/.test(next ?? '')) expands = true;
+    // `$?`, `$$`, `$#` and `$!` expand to exactly one word; anything else
+    // the shell may split into several, and a brace inside a word
+    // (`f{1,2}.txt`) expands without any glob character at all.
+    if (ch === '$' && !/[?$#!]/.test(next ?? '')) expands = true;
     if (ch === '*' || ch === '?' || ch === '[' || ch === '{') expands = true;
     buffer += ch;
     hasWord = true;
@@ -527,7 +527,6 @@ const GIT_READ_ONLY = new Set([
   'var',
   'version',
   '--version',
-  'grep',
   'diff-tree',
   'diff-index',
   'diff-files',
@@ -539,7 +538,6 @@ const GIT_READ_ONLY = new Set([
   'verify-pack',
   'verify-commit',
   'verify-tag',
-  'fsck',
 ]);
 
 const GIT_BARE_OPTIONS = new Set([
@@ -651,6 +649,18 @@ const DOCKER_GROUPS = new Set([
   'buildx',
   'manifest',
 ]);
+const DOCKER_COMPOSE_VALUE_OPTIONS = new Set([
+  '-f',
+  '--file',
+  '-p',
+  '--project-name',
+  '--project-directory',
+  '--env-file',
+  '--profile',
+  '--progress',
+  '--ansi',
+  '--parallel',
+]);
 const DOCKER_GROUP_READ_ONLY = new Set([
   'ls',
   'list',
@@ -725,7 +735,6 @@ const GH_READ_ONLY = new Set([
   'search code',
   'search commits',
 ]);
-const GH_API_WRITE_FLAGS = new Set(['-f', '-F', '--field', '--raw-field', '--input']);
 
 const PIP_READ_ONLY = new Set([
   'list',
@@ -894,7 +903,6 @@ function gitArgs(args: string[]): string[] | undefined {
     const arg = rest[0];
     if (arg === undefined) break;
     if (arg === '-C') rest.splice(0, 2);
-    else if (/^-C.+/.test(arg)) rest.shift();
     else if (GIT_BARE_OPTIONS.has(arg)) rest.shift();
     else if (arg.startsWith('-')) return undefined;
     else break;
@@ -902,14 +910,19 @@ function gitArgs(args: string[]): string[] | undefined {
   return rest;
 }
 
-// Flags that make an otherwise read-only git subcommand write a file or
-// start a program: `git log --output=<path>`, `git grep -O`.
-const GIT_OUTPUT_FLAGS = /^(?:--output(?:=|$)|-O|--open-files-in-pager(?:=|$))/;
-
 function gitIsReadOnly(sub: string, rest: string[]): boolean {
-  if (rest.some(arg => GIT_OUTPUT_FLAGS.test(arg))) return false;
+  // `--output=<path>` makes log, diff, show and their kind write a file.
+  if (rest.some(arg => /^--output(?:=|$)/.test(arg))) return false;
   if (GIT_READ_ONLY.has(sub)) return true;
   switch (sub) {
+    case 'grep':
+      // `-O` opens the matches in a pager or editor.
+      return (
+        !usesShortFlag(rest, 'O') && !rest.some(arg => arg.startsWith('--open-files-in-pager'))
+      );
+    case 'fsck':
+      // `--lost-found` writes recovered objects under .git/lost-found.
+      return !rest.some(arg => arg.startsWith('--lost-found'));
     case 'reflog':
       return rest.length === 0 || rest[0] === 'show';
     case 'stash':
@@ -921,20 +934,30 @@ function gitIsReadOnly(sub: string, rest: string[]): boolean {
     case 'notes':
       return rest[0] === 'list' || rest[0] === 'show';
     case 'symbolic-ref':
-      return positional(rest).length <= 1 && !rest.includes('-d') && !rest.includes('--delete');
+      return (
+        positional(rest).length <= 1 &&
+        !usesShortFlag(rest, 'd') &&
+        !rest.some(arg => arg.startsWith('--delete'))
+      );
     case 'branch':
-      if (rest.some(arg => GIT_BRANCH_WRITE_FLAGS.has(arg))) return false;
+      if (usesShortFlag(rest, 'dDmMcCuf') || rest.some(arg => GIT_BRANCH_WRITE_FLAGS.has(arg))) {
+        return false;
+      }
       return positional(rest).length === 0 || rest.some(arg => GIT_BRANCH_LIST_FLAGS.has(arg));
     case 'remote':
       return rest.length === 0 || rest[0] === '-v' || rest[0] === 'show' || rest[0] === 'get-url';
     case 'tag':
-      if (rest.some(arg => ['-d', '--delete', '-f', '--force'].includes(arg))) return false;
+      if (usesShortFlag(rest, 'df') || rest.some(arg => arg === '--delete' || arg === '--force')) {
+        return false;
+      }
       return (
         positional(rest).length === 0 ||
         rest.some(arg => GIT_TAG_LIST_FLAGS.has(arg) || /^-n\d*$/.test(arg))
       );
     case 'config':
-      if (rest.some(arg => GIT_CONFIG_WRITE_FLAGS.has(arg))) return false;
+      if (usesShortFlag(rest, 'e') || rest.some(arg => GIT_CONFIG_WRITE_FLAGS.has(arg))) {
+        return false;
+      }
       // `git config user.name` reads; `git config user.name Tyler` writes.
       return positional(rest).length <= 1;
     default:
@@ -1017,19 +1040,26 @@ function dockerProfile(args: string[]): VerbProfile {
   const sub = args[0];
   if (!sub) return { readOnly: false, signature: 'docker' };
   if (DOCKER_GROUPS.has(sub)) {
-    // `compose` takes its own options before the nested subcommand.
+    // `compose` takes its own options before the nested subcommand. Only
+    // the options known to take a value are skipped with their value, since
+    // `--progress ps down` makes docker read "ps" as the value and run
+    // `down`; any option this table does not know fails closed.
     const rest = args.slice(1);
     while (sub === 'compose' && rest[0]?.startsWith('-')) {
-      rest.splice(
-        0,
-        /^-(?:f|p|-file|-project-name|-project-directory|-env-file|-profile)$/.test(rest[0] ?? '')
-          ? 2
-          : 1,
-      );
+      const option = rest[0];
+      if (DOCKER_COMPOSE_VALUE_OPTIONS.has(option)) rest.splice(0, 2);
+      else if (
+        /^--(?:file|project-name|project-directory|env-file|profile|progress|ansi|parallel)=/.test(
+          option,
+        )
+      )
+        rest.shift();
+      else if (option === '--dry-run' || option === '--compatibility') rest.shift();
+      else return { readOnly: false, signature: 'docker compose' };
     }
     const nested = rest[0];
     // `compose config -o <file>` writes the resolved manifest.
-    const writesOutput = rest.some(arg => arg === '-o' || /^(?:-o=|--output)/.test(arg));
+    const writesOutput = usesShortFlag(rest, 'o') || rest.some(arg => arg.startsWith('--output'));
     return {
       readOnly: nested !== undefined && DOCKER_GROUP_READ_ONLY.has(nested) && !writesOutput,
       signature: nested ? `docker ${sub} ${nested}` : `docker ${sub}`,
@@ -1054,19 +1084,19 @@ function ghProfile(args: string[]): VerbProfile {
   if (!sub) return { readOnly: false, signature: 'gh' };
   if (sub === '--version' || sub === 'status') return { readOnly: true, signature: `gh ${sub}` };
   // `--web` opens a browser; `--hostname` sends the token somewhere else.
-  const opensBrowser = args.some(arg => arg === '--web' || arg === '-w');
+  const opensBrowser = usesShortFlag(args, 'w') || args.some(arg => arg.startsWith('--web'));
   if (sub === 'api') {
-    const methodIndex = args.findIndex(arg => arg === '-X' || arg === '--method');
-    const method = methodIndex === -1 ? 'GET' : (args[methodIndex + 1] ?? '').toUpperCase();
-    const readOnly =
-      method === 'GET' &&
-      !args.some(
-        arg =>
-          GH_API_WRITE_FLAGS.has(arg) ||
-          arg.startsWith('--method=') ||
-          arg === '--hostname' ||
-          arg.startsWith('--hostname='),
-      );
+    // Only a plain GET with no request body: `-X`, `--method`, `-f`, `-F`,
+    // `--input` in any spelling, glued or clustered, means a write.
+    const readOnly = !args.some(
+      arg =>
+        /^-[^-]*[XfF]/.test(arg) ||
+        arg.startsWith('--method') ||
+        arg.startsWith('--field') ||
+        arg.startsWith('--raw-field') ||
+        arg.startsWith('--input') ||
+        arg.startsWith('--hostname'),
+    );
     return { readOnly, signature: 'gh api' };
   }
   const pair = `${sub} ${args[1] ?? ''}`.trim();
@@ -1226,6 +1256,15 @@ function sedIsReadOnly(args: string[]): boolean {
   return scripts.every(sedScriptIsReadOnly);
 }
 
+// GNU-style short options cluster and glue their values: `-o file`,
+// `-ofile` and `-nofile` all set `o`. A single-dash argument containing one
+// of the letters anywhere is treated as setting it; over-matching (`-k2o`)
+// only fails closed.
+function usesShortFlag(args: string[], letters: string): boolean {
+  const pattern = new RegExp(`^-[^-]*[${letters}]`);
+  return args.some(arg => pattern.test(arg));
+}
+
 function subcommandProfile(verb: string, args: string[], readOnlySet: Set<string>): VerbProfile {
   const sub = args[0];
   return {
@@ -1245,16 +1284,16 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
       // A program file cannot be inspected; inline programs must not
       // redirect, pipe, or call system().
       return {
-        readOnly: !args.some(
-          arg =>
-            arg === '-f' ||
-            arg === '-E' ||
-            arg.startsWith('--file') ||
-            arg.startsWith('--exec') ||
-            arg.includes('>') ||
-            arg.includes('|') ||
-            arg.includes('system'),
-        ),
+        readOnly:
+          !usesShortFlag(args, 'fE') &&
+          !args.some(
+            arg =>
+              arg.startsWith('--file') ||
+              arg.startsWith('--exec') ||
+              arg.includes('>') ||
+              arg.includes('|') ||
+              arg.includes('system'),
+          ),
         signature: 'awk',
       };
     case 'rg':
@@ -1264,23 +1303,24 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
       return { readOnly: !args.some(arg => FIND_WRITE_FLAGS.has(arg)), signature: 'find' };
     case 'sort':
       return {
-        readOnly: !args.some(
-          arg =>
-            arg === '-o' ||
-            arg.startsWith('--output') ||
-            arg.startsWith('--compress-program') ||
-            // Windows' own sort.exe spells its output switch /O.
-            /^\/[oO]/.test(arg),
-        ),
+        readOnly:
+          !usesShortFlag(args, 'o') &&
+          !args.some(
+            arg =>
+              arg.startsWith('--output') ||
+              arg.startsWith('--compress-program') ||
+              // Windows' own sort.exe spells its output switch /O.
+              /^\/[oO]/.test(arg),
+          ),
         signature: 'sort',
       };
     case 'file':
       return {
-        readOnly: !args.some(arg => arg === '-C' || arg === '--compile'),
+        readOnly: !usesShortFlag(args, 'C') && !args.some(arg => arg.startsWith('--compile')),
         signature: 'file',
       };
     case 'tree':
-      return { readOnly: !args.includes('-o'), signature: 'tree' };
+      return { readOnly: !usesShortFlag(args, 'o'), signature: 'tree' };
     case 'xxd':
       // A second positional is an output file.
       return { readOnly: positional(args).length <= 1, signature: 'xxd' };
@@ -1288,14 +1328,14 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
     case 'more':
       // `-o` logs the input to a file; a `+` command can run anything.
       return {
-        readOnly: !args.some(
-          arg => /^-[oO]/.test(arg) || /^--log-file/i.test(arg) || arg.startsWith('+'),
-        ),
+        readOnly:
+          !usesShortFlag(args, 'oO') &&
+          !args.some(arg => /^--log-file/i.test(arg) || arg.startsWith('+')),
         signature: verb,
       };
     case 'printf':
       // `printf -v PATH ...` assigns a variable later commands resolve through.
-      return { readOnly: !args.includes('-v'), signature: undefined };
+      return { readOnly: !usesShortFlag(args, 'v'), signature: undefined };
     case 'alias':
       // Defining an alias rewrites what a later line's verb means.
       return { readOnly: args.every(arg => arg === '-p'), signature: undefined };
@@ -1312,10 +1352,13 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
     case 'uniq':
       return { readOnly: positional(args).length <= 1, signature: 'uniq' };
     case 'yq':
-      return { readOnly: !args.some(arg => arg === '-i' || arg === '--inplace'), signature: 'yq' };
+      return {
+        readOnly: !usesShortFlag(args, 'i') && !args.some(arg => arg.startsWith('--inplace')),
+        signature: 'yq',
+      };
     case 'date':
       return {
-        readOnly: !args.some(arg => arg === '-s' || arg.startsWith('--set')),
+        readOnly: !usesShortFlag(args, 's') && !args.some(arg => arg.startsWith('--set')),
         signature: 'date',
       };
     case 'hostname':
@@ -1338,7 +1381,8 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
       return {
         readOnly:
           args.some(arg => arg === '--noEmit' || VERSION_FLAGS.has(arg)) &&
-          !args.some(arg => arg === '-b' || arg === '--build'),
+          !usesShortFlag(args, 'b') &&
+          !args.some(arg => arg.startsWith('--build')),
         signature: 'tsc',
       };
     case 'docker':
@@ -1351,7 +1395,7 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
       return subcommandProfile(verb, args, CARGO_READ_ONLY);
     case 'go':
       // `go env -w` writes the user's Go configuration.
-      if (args[0] === 'env' && args.some(arg => arg === '-w' || arg === '-u')) {
+      if (args[0] === 'env' && usesShortFlag(args, 'wu')) {
         return { readOnly: false, signature: 'go env' };
       }
       return subcommandProfile(verb, args, GO_READ_ONLY);
