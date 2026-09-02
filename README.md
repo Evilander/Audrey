@@ -81,6 +81,28 @@ Try the complete loop without an API key or network call:
 audrey demo --scenario repeated-failure
 ```
 
+## Looking is not doing
+
+Between the failed deploy and the retry, an agent runs a lot of commands that cannot change anything: `grep` for the error, `git status`, `cat` on a config file, `ls` on a directory that turns out not to exist. A memory system that treats every one of those as a risk, or remembers `grep` finding nothing as a "failure", becomes a smoke alarm that goes off when you make toast. People stop listening, and then it is worth nothing on the day the toaster is on fire.
+
+Audrey reads the command the way an engineer would. A command whose every part is positively recognised as read-only (`grep`, `git log`, `npm view`, `docker ps`, `sed -n '1,40p'`, and their kind, with no command substitution, no redirect except to `/dev/null`, no `sudo` or `xargs`, no environment assignment that could change what the verb resolves to) never reaches the Guard at all. Its exit code is recorded but never counted as a lesson. Everything else is guarded exactly as before, and anything Audrey cannot positively recognise is treated as doing.
+
+```text
+$ grep -rn "prisma" src/          Guard: silent
+$ git status --short              Guard: silent
+$ cat prisma/schema.prisma        Guard: silent
+$ npm run deploy
+Audrey Guard: BLOCKED
+- recent_failure (high): This exact Bash action failed before: Prisma client was not generated. Run npm run db:generate before deploy.
+- must_follow (high): Before running npm run deploy, run npm run db:generate because Prisma client must be generated first.
+```
+
+That is the output of `audrey demo --scenario repeated-failure`, which runs the whole sequence with no API key and no network.
+
+When Guard does speak, it names the memory it is speaking from, and a remembered failure is matched to the proposed command by what it runs (`npm run deploy` against `npm run deploy`), not by how similar two strings look to an embedding.
+
+The line between looking and doing is drawn fail-closed and was tested adversarially before release: three independent review passes ran the classifier's "read-only" verdicts against real tools and found eleven ways to hide a write inside a command that looked harmless (`node --check -r ./x.js`, `GIT_EXTERNAL_DIFF=./x git diff`, `sort -ofile`, a backslash-newline hiding `$(`). Every one is closed and is a test case. Two limits remain by design: a git configuration that already names an external program runs on any read, and a file whose name is a flag can change what a pure reader does with a glob. Both require a prior write that Guard did see.
+
 ## What Audrey remembers
 
 Audrey treats memory as more than a pile of text chunks.

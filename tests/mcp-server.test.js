@@ -1201,6 +1201,9 @@ describe('MCP CLI: demo command', () => {
     }
     const output = lines.join('\n');
     expect(output).toContain('Audrey Guard repeated-failure demo');
+    // Looking is not doing: the probes go through the real hook and stay silent.
+    expect(output.match(/Guard: silent/g)).toHaveLength(3);
+    expect(output).not.toContain('Guard: warned');
     expect(output).toContain('Audrey Guard: BLOCKED');
     expect(output).toContain('repeated failure prevented');
     expect(output).toContain('Audrey stopped it from failing twice.');
