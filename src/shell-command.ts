@@ -1336,6 +1336,9 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
     case 'printf':
       // `printf -v PATH ...` assigns a variable later commands resolve through.
       return { readOnly: !usesShortFlag(args, 'v'), signature: undefined };
+    case 'history':
+      // `-w` and `-a` write the history list to a file.
+      return { readOnly: !usesShortFlag(args, 'wa'), signature: undefined };
     case 'alias':
       // Defining an alias rewrites what a later line's verb means.
       return { readOnly: args.every(arg => arg === '-p'), signature: undefined };
