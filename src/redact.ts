@@ -363,37 +363,67 @@ function looksLikeOrdinaryProse(words: string[]): boolean {
  * Filesystem paths share the secret alphabet (letters, digits, /, -, _),
  * and a mixed-case POSIX path past 32 chars can cross the entropy gate —
  * which would mangle cwd/file metadata at encode time and silently break
- * project scoping. Two or more separator-delimited word-like segments is a
- * path shape; base64 material essentially never splits into short clean
- * segments and, unlike paths, routinely contains '+' or '='.
+ * project scoping and grounding. Three or more separator-delimited clean
+ * segments is a path shape; base64 material essentially never splits into
+ * clean segments and, unlike paths, routinely contains '+' or '='.
  *
- * Path shape raises the entropy bar rather than granting an exemption. A
- * blanket exemption was measurably unsafe: an AWS secret access key draws
- * from an alphabet that includes '/', so about one in seventeen lands in
- * this segment shape by chance alone — not "deliberately formatted to look
- * like a path", just unlucky — and every one of those stayed plaintext.
- * Directory and file names are English-ish and repeat characters heavily,
- * so real paths cluster well below the raised bar while random credential
- * material sits above it. See PATH_SHAPE_ENTROPY_MIN.
+ * Path shape is not an exemption. A blanket exemption was measurably
+ * unsafe: an AWS secret access key draws from an alphabet that includes
+ * '/', so about one in seventeen lands in this segment shape by chance
+ * alone — not "deliberately formatted to look like a path", just unlucky —
+ * and every one of those stayed plaintext. Instead the token is judged by
+ * its segments. A path is mostly names, and names come in one case
+ * (`node_modules`, `AppData`, `README`, a hex hash); random material split
+ * on '/' is mixed-case in every piece. Judging the whole token by entropy
+ * was what redacted `/tmp/audrey-grounding-Ab3xQz/project`, every macOS
+ * `/var/folders/...` temp dir, and nix-store paths: one short random
+ * segment among ordinary names was enough to lift the total past the bar.
  */
-function looksLikePathShape(value: string): boolean {
-  if (/[+=]/.test(value)) return false;
+function pathSegments(value: string): string[] | undefined {
+  if (/[+=]/.test(value)) return undefined;
   const segments = value.split('/');
-  if (segments.length < 3) return false;
-  return segments.every(segment => segment.length <= 28 && /^[A-Za-z0-9._~-]*$/.test(segment));
+  if (segments.length < 3) return undefined;
+  if (!segments.every(segment => segment.length <= 64 && /^[A-Za-z0-9._~-]*$/.test(segment))) {
+    return undefined;
+  }
+  return segments.filter(Boolean);
+}
+
+// Lowercase, UPPERCASE, or Titlecase words joined by . _ ~ -. CamelCase is
+// deliberately not a name: a random mixed-case run parses as CamelCase too,
+// and admitting it would hand the blanket exemption back.
+function looksLikeNameSegment(segment: string): boolean {
+  return segment
+    .split(/[._~-]+/)
+    .filter(Boolean)
+    .every(
+      part => /^[a-z0-9]+$/.test(part) || /^[A-Z0-9]+$/.test(part) || /^[A-Z][a-z0-9]+$/.test(part),
+    );
 }
 
 /**
- * Entropy floor applied to values that carry a filesystem-path shape.
- * Calibrated against a corpus of real absolute, relative, temp-dir and
- * toolchain paths, whose highest observed token entropy was 4.33, and
- * against randomly generated 40-character AWS secret access keys, whose
- * path-shaped subset bottomed out at the same figure but sat at 4.75 by
- * the median. 4.4 clears every real path in that corpus while leaving
- * about one in four thousand keys below the bar.
+ * Entropy floor for a path-shaped token in which two or more segments look
+ * random, where the whole token is still the unit judged. Calibrated
+ * against a corpus of real absolute, relative, temp-dir and toolchain
+ * paths, whose highest observed token entropy was 4.33, and against
+ * randomly generated 40-character AWS secret access keys, whose path-shaped
+ * subset bottomed out at the same figure but sat at 4.75 by the median.
+ * 4.4 clears every real path in that corpus while leaving about one in four
+ * thousand keys below the bar.
  */
 const PATH_SHAPE_ENTROPY_MIN = 4.4;
 const GENERIC_ENTROPY_MIN = 4.0;
+
+function clearsEntropyBar(value: string, bar: number): boolean {
+  const entropy = shannonEntropy(value);
+  if (/^[a-f0-9]+$/i.test(value)) {
+    // Git SHA-1 (40), git tree/blob hashes, SHA-256 hex (64) are not secrets on their
+    // own. Only treat hex strings as secrets if they're long enough that they exceed
+    // common public-hash sizes (>=80 hex chars) AND have hash-grade entropy.
+    return value.length >= 80 && entropy >= 3.3;
+  }
+  return entropy >= bar;
+}
 
 function looksLikeHighEntropySecret(value: string): boolean {
   if (value.length < 32) return false;
@@ -406,14 +436,24 @@ function looksLikeHighEntropySecret(value: string): boolean {
   ].filter(Boolean).length;
   if (classes < 2) return false;
 
-  const entropy = shannonEntropy(value);
-  if (/^[a-f0-9]+$/i.test(value)) {
-    // Git SHA-1 (40), git tree/blob hashes, SHA-256 hex (64) are not secrets on their
-    // own. Only treat hex strings as secrets if they're long enough that they exceed
-    // common public-hash sizes (>=80 hex chars) AND have hash-grade entropy.
-    return value.length >= 80 && entropy >= 3.3;
+  const segments = pathSegments(value);
+  if (segments) {
+    const random = segments.filter(segment => !looksLikeNameSegment(segment));
+    if (random.length === 0) return false;
+    // One odd segment among names is a temp-dir suffix, a content hash, or a
+    // credential used as a directory name; only the last is a secret, and
+    // it is long enough to be judged on its own.
+    if (random.length === 1) {
+      const [segment] = random;
+      return (
+        segment !== undefined &&
+        segment.length >= 32 &&
+        clearsEntropyBar(segment, GENERIC_ENTROPY_MIN)
+      );
+    }
+    return clearsEntropyBar(value, PATH_SHAPE_ENTROPY_MIN);
   }
-  return entropy >= (looksLikePathShape(value) ? PATH_SHAPE_ENTROPY_MIN : GENERIC_ENTROPY_MIN);
+  return clearsEntropyBar(value, GENERIC_ENTROPY_MIN);
 }
 
 export function redact(input: string): RedactionResult {

@@ -253,6 +253,38 @@ describe('redact', () => {
     }
   });
 
+  it('leaves paths with one random-looking segment untouched', () => {
+    // A temp-dir suffix, a UUID, a content hash or a CamelCase directory
+    // among ordinary names lifted whole-token entropy past the bar, which
+    // redacted the cwd Autopilot stores and left grounding with no project
+    // root on Linux and macOS hosts.
+    for (const path of [
+      '/tmp/audrey-grounding-Ab3xQz/project',
+      '/home/runner/work/Audrey/Audrey/.tmp-vitest/audrey-grounding-Ab3xQz/project',
+      '/var/folders/x9/1k2j3h4g5f6d7s8a9p0o1i2u0000gn/T/tmp.Ab3xQz9K',
+      '/tmp/claude/B--projects-claude-audrey/24522074-1a60-4eb5-bcc8-2883bf582b7f/scratchpad',
+      '/nix/store/8fz4qsm1h3kzgm2p9f5v6d0r1x2y3z4w-nodejs-22.11.0/bin/node',
+      '/home/user/.cache/pnpm/dlx/f3a9c2b1e7d4/node_modules/.bin/tsc',
+      '/Users/tyler/Library/Caches/ms-playwright/chromium-1148/chrome-mac/Chromium.app/Contents/MacOS/Chromium',
+    ]) {
+      const result = redact(path);
+      expect(result.state).toBe('clean');
+      expect(result.text).toBe(path);
+    }
+  });
+
+  it('still redacts a credential used as a directory name', () => {
+    for (const path of [
+      '/home/user/wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY/config',
+      '/srv/app/aZ9kLpQ2mR7vT4wX1yB6cD8eF3gH5jK0nP0sU2vW9x/cache',
+    ]) {
+      const result = redact(path);
+      expect(result.state).toBe('redacted');
+      expect(result.text).not.toContain('EXAMPLEKEY');
+      expect(result.text).not.toContain('aZ9kLpQ2');
+    }
+  });
+
   it('still redacts base64 material even when it contains slashes', () => {
     const secret = 'dGhpcyBpcyBub3QgYSBwYXRo/aXQgaXM+c2VjcmV0IG1hdGVyaWFs+with+plus=';
     const result = redact(`token ${secret}`);
