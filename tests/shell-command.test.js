@@ -301,6 +301,8 @@ const SIDE_EFFECT = [
   'awk -fprogram.awk file',
   'git fsck --lost-found',
   'printf -vfoo "%s" x',
+  'history -w /tmp/h.txt',
+  'history -a /tmp/h.txt',
   'printf -vPATH /evil',
   'date -s"2020-01-01"',
   'tree -oout.txt .',
