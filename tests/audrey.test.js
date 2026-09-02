@@ -642,6 +642,37 @@ describe('Audrey with LLM', () => {
     ]);
   });
 
+  it('refuses to send a private claim to the LLM provider', async () => {
+    const now = new Date().toISOString();
+    brain.db
+      .prepare(
+        `INSERT INTO semantics (id, content, agent, state, created_at, evidence_count,
+          supporting_count, source_type_diversity, evidence_episode_ids, "private")
+        VALUES (?, ?, ?, 'disputed', ?, 1, 1, 1, '[]', 1)`,
+      )
+      .run('sem-private-claim', 'Private claim content', brain.agent, now);
+    brain.db
+      .prepare(
+        `INSERT INTO episodes (
+          id, content, agent, source, source_reliability, created_at
+        ) VALUES (?, ?, ?, 'direct-observation', 0.95, ?)`,
+      )
+      .run('ep-public-claim', 'Public claim content', brain.agent, now);
+    brain.db
+      .prepare(
+        `INSERT INTO contradictions (
+          id, claim_a_id, claim_a_type, claim_b_id, claim_b_type, state, created_at
+        ) VALUES (?, ?, 'semantic', ?, 'episodic', 'open', ?)`,
+      )
+      .run('con-private', 'sem-private-claim', 'ep-public-claim', now);
+
+    await expect(brain.resolveTruth('con-private')).rejects.toThrow(/private/);
+    // The contradiction stays open — nothing was resolved behind the refusal.
+    expect(
+      brain.db.prepare('SELECT state FROM contradictions WHERE id = ?').get('con-private').state,
+    ).toBe('open');
+  });
+
   it('activates the winning semantic claim and supersedes the losing episode', async () => {
     brain.llmProvider.responses.contextResolution = {
       resolution: 'a_wins',

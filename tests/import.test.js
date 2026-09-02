@@ -480,5 +480,84 @@ describe('import', () => {
       dest = new Audrey({ dataDir: IMPORT_DIR, embedding: { provider: 'mock', dimensions: 8 } });
       await expect(dest.import(snapshot)).rejects.toThrow();
     });
+
+    it('redacts secrets carried in episode tags', async () => {
+      const secret = 'QpW2yb5ZQiUqGUhnI47YuSKF/1pfCFy/Pbc0NISw';
+      const snapshot = craft(source.export(), {
+        content: 'tagged episode',
+        tags: ['deploy', `aws_secret_access_key = ${secret}`],
+      });
+      dest = new Audrey({ dataDir: IMPORT_DIR, embedding: { provider: 'mock', dimensions: 8 } });
+      await dest.import(snapshot);
+      const row = dest.db.prepare('SELECT tags FROM episodes WHERE id = ?').get('crafted-0001');
+      expect(row.tags).not.toContain(secret);
+      expect(JSON.parse(row.tags)).toContain('deploy');
+    });
+
+    it('redacts secrets in imported memory event summaries and metadata', async () => {
+      const secret = 'QpW2yb5ZQiUqGUhnI47YuSKF/1pfCFy/Pbc0NISw';
+      const snapshot = {
+        ...source.export(),
+        semantics: [],
+        procedures: [],
+        causalLinks: [],
+        contradictions: [],
+        memoryEvents: [
+          {
+            id: 'evt-crafted-01',
+            event_type: 'PostToolUseFailure',
+            source: 'autopilot-hook',
+            error_summary: `curl failed: aws_secret_access_key = ${secret}`,
+            metadata: JSON.stringify({
+              note: `retry with aws_secret_access_key = ${secret}`,
+              audrey_trust: 'user-verified',
+            }),
+            created_at: '2026-08-20T00:00:00.000Z',
+          },
+        ],
+      };
+      dest = new Audrey({ dataDir: IMPORT_DIR, embedding: { provider: 'mock', dimensions: 8 } });
+      await dest.import(snapshot);
+      const row = dest.db
+        .prepare('SELECT error_summary, metadata FROM memory_events WHERE id = ?')
+        .get('evt-crafted-01');
+      expect(row.error_summary).not.toContain(secret);
+      expect(row.error_summary).toContain('[REDACTED:');
+      expect(row.metadata).not.toContain(secret);
+      // Reserved trust markers cannot ride in through event metadata either.
+      expect(JSON.parse(row.metadata).audrey_trust).toBeUndefined();
+    });
+  });
+
+  describe('privacy flag round-trip on derived rows', () => {
+    it('round-trips the private flag on semantics and procedures', async () => {
+      const now = new Date().toISOString();
+      source.db
+        .prepare(
+          `INSERT INTO semantics (id, content, state, created_at, "private")
+           VALUES ('sem-priv-rt', 'private derived principle', 'active', ?, 1)`,
+        )
+        .run(now);
+      source.db
+        .prepare(
+          `INSERT INTO procedures (id, content, state, created_at, "private")
+           VALUES ('proc-priv-rt', 'private derived procedure', 'active', ?, 1)`,
+        )
+        .run(now);
+
+      const snapshot = source.export();
+      expect(snapshot.semantics.find(s => s.id === 'sem-priv-rt').private).toBe(1);
+      expect(snapshot.procedures.find(p => p.id === 'proc-priv-rt').private).toBe(1);
+
+      dest = new Audrey({ dataDir: IMPORT_DIR, embedding: { provider: 'mock', dimensions: 8 } });
+      await dest.import(snapshot);
+      expect(
+        dest.db.prepare('SELECT "private" FROM semantics WHERE id = ?').get('sem-priv-rt').private,
+      ).toBe(1);
+      expect(
+        dest.db.prepare('SELECT "private" FROM procedures WHERE id = ?').get('proc-priv-rt')
+          .private,
+      ).toBe(1);
+    });
   });
 });

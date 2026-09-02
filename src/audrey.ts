@@ -29,17 +29,22 @@ import type {
   ConsolidationRunRow,
   Affect,
 } from './types.js';
-import { createDatabase, closeDatabase } from './db.js';
+import { createDatabase, closeDatabase, liveRowClause, refreshVectorRow } from './db.js';
 import { createEmbeddingProvider } from './embedding.js';
 import { createLLMProvider } from './llm.js';
-import { encodeEpisode } from './encode.js';
+import { encodeEpisode, type SanitizedEncodeFields } from './encode.js';
 import { redact } from './redact.js';
 import { recall as recallFn, recallStream as recallStreamFn } from './recall.js';
 import { validateMemory } from './validate.js';
 import { runConsolidation } from './consolidate.js';
 import { applyDecay } from './decay.js';
 import { rollbackConsolidation, getConsolidationHistory } from './rollback.js';
-import { forgetMemory, forgetByQuery as forgetByQueryFn, purgeMemories } from './forget.js';
+import {
+  forgetMemory,
+  forgetByQuery as forgetByQueryFn,
+  purgeMemories,
+  retireReadOnlyProbeFailures,
+} from './forget.js';
 import { applyFeedback, type MemoryValidateInput, type MemoryValidateResult } from './feedback.js';
 import { buildImpactReport, type ImpactReport } from './impact.js';
 import { introspect as introspectFn } from './introspect.js';
@@ -78,15 +83,9 @@ import {
 } from './promote.js';
 import { renderAllRules, type RuleDoc } from './rules-compiler.js';
 import { insertEvent } from './events.js';
-import { requireAgent, resolveMemoryScope } from './utils.js';
+import { requireAgent, resolveMemoryScope, isContainedIn } from './utils.js';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import {
-  dirname,
-  join,
-  resolve as pathResolve,
-  relative,
-  isAbsolute as pathIsAbsolute,
-} from 'node:path';
+import { dirname, join, resolve as pathResolve, delimiter as pathDelimiter } from 'node:path';
 import { ProfileRecorder, type ProfileDiagnostics } from './profile.js';
 import { performance } from 'node:perf_hooks';
 import {
@@ -380,6 +379,19 @@ export class Audrey extends EventEmitter {
     });
     this.db = db;
     this._migrationPending = migrated;
+    // Runs once per store and then only costs a config lookup. Best-effort:
+    // a store that cannot be cleaned still opens, since every hook process
+    // passes through here and none of them may fail on housekeeping.
+    try {
+      const retired = retireReadOnlyProbeFailures(db);
+      if (retired > 0) {
+        console.error(`[audrey] retired ${retired} read-only probe failure records`);
+      }
+    } catch (error) {
+      console.error(
+        `[audrey] read-only probe cleanup skipped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     this.llmProvider = llm ? createLLMProvider(llm) : null;
     this.confidenceConfig = {
       weights: confidence.weights,
@@ -694,9 +706,13 @@ export class Audrey extends EventEmitter {
     let encodedVector: number[] | undefined;
     let encodedBuffer: Buffer | undefined;
     let redactionSummary: RedactionSummary | undefined;
+    let sanitizedFields: SanitizedEncodeFields | undefined;
     const captureRedaction = (summary: RedactionSummary) => {
       redactionSummary = summary;
       onRedaction?.(summary);
+    };
+    const captureSanitized = (sanitized: SanitizedEncodeFields) => {
+      sanitizedFields = sanitized;
     };
     const id = profile
       ? await profile.measure('encode.episode', () =>
@@ -707,6 +723,7 @@ export class Audrey extends EventEmitter {
               encodedBuffer = buffer;
             },
             onRedaction: captureRedaction,
+            onSanitized: captureSanitized,
           }),
         )
       : await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
@@ -715,15 +732,22 @@ export class Audrey extends EventEmitter {
             encodedBuffer = buffer;
           },
           onRedaction: captureRedaction,
+          onSanitized: captureSanitized,
         });
     const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
     if (redactionSummary?.redacted) this.emit('redaction', { id, ...redactionSummary });
     this.emit('encode', { id, ...params });
+    // The background pipeline (grounding, validation, the contradiction
+    // prompt sent to the cloud LLM) must only ever see what the row stores.
+    // Handing it the raw params would leak a secret redaction just scrubbed.
+    const postEncodeParams = sanitizedFields
+      ? { ...encodeParams, ...sanitizedFields }
+      : encodeParams;
     const postEncodeTask = profile
       ? profile.measureSync('encode.enqueue_background', () =>
-          this._enqueuePostEncode(id, encodeParams, encodedEmbedding),
+          this._enqueuePostEncode(id, postEncodeParams, encodedEmbedding),
         )
-      : this._enqueuePostEncode(id, encodeParams, encodedEmbedding);
+      : this._enqueuePostEncode(id, postEncodeParams, encodedEmbedding);
     if (params.waitForConsolidation) {
       if (profile) await profile.measure('encode.wait_for_consolidation', () => postEncodeTask);
       else await postEncodeTask;
@@ -812,6 +836,7 @@ export class Audrey extends EventEmitter {
       let encodedVector: number[] | undefined;
       let encodedBuffer: Buffer | undefined;
       let redactionSummary: RedactionSummary | undefined;
+      let sanitizedFields: SanitizedEncodeFields | undefined;
       const id = await encodeEpisode(this.db, this.embeddingProvider, encodeParams, {
         vector: vectors[i]!,
         onVector: (vector, buffer) => {
@@ -821,12 +846,19 @@ export class Audrey extends EventEmitter {
         onRedaction: summary => {
           redactionSummary = summary;
         },
+        onSanitized: sanitized => {
+          sanitizedFields = sanitized;
+        },
       });
       ids.push(id);
       if (redactionSummary?.redacted) this.emit('redaction', { id, ...redactionSummary });
       this.emit('encode', { id, ...paramsList[i] });
       const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
-      tasks.push(this._enqueuePostEncode(id, encodeParams, encodedEmbedding));
+      // Same boundary as _encodeInternal: background stages see stored values only.
+      const postEncodeParams = sanitizedFields
+        ? { ...encodeParams, ...sanitizedFields }
+        : encodeParams;
+      tasks.push(this._enqueuePostEncode(id, postEncodeParams, encodedEmbedding));
     }
 
     if (paramsList.some(p => p.waitForConsolidation)) {
@@ -943,8 +975,8 @@ export class Audrey extends EventEmitter {
     if (!contradiction) throw new Error(`Contradiction not found: ${contradictionId}`);
 
     const agent = requireAgent(options.agent, this.agent);
-    let claimA: string;
-    let claimB: string;
+    let claimA: { content: string; isPrivate: boolean };
+    let claimB: { content: string; isPrivate: boolean };
     try {
       claimA = this._loadClaimContent(contradiction.claim_a_id, contradiction.claim_a_type, agent);
       claimB = this._loadClaimContent(contradiction.claim_b_id, contradiction.claim_b_type, agent);
@@ -952,7 +984,15 @@ export class Audrey extends EventEmitter {
       throw new Error(`Contradiction not found: ${contradictionId}`);
     }
 
-    const messages = buildContextResolutionPrompt(claimA, claimB);
+    // Same rule as consolidation and the post-encode contradiction check:
+    // private memory content never goes into a cloud LLM prompt.
+    if (claimA.isPrivate || claimB.isPrivate) {
+      throw new Error(
+        'resolveTruth: a claim in this contradiction is private and cannot be sent to the LLM provider',
+      );
+    }
+
+    const messages = buildContextResolutionPrompt(claimA.content, claimB.content);
     const result = validateTruthResolution(await this.llmProvider.json(messages));
 
     const now = new Date().toISOString();
@@ -964,8 +1004,10 @@ export class Audrey extends EventEmitter {
           this.db
             .prepare("UPDATE semantics SET state = 'active', conditions = NULL WHERE id = ?")
             .run(id);
+          refreshVectorRow(this.db, 'semantics', id);
         } else {
           this.db.prepare('UPDATE episodes SET superseded_by = NULL WHERE id = ?').run(id);
+          refreshVectorRow(this.db, 'episodes', id);
         }
       };
       const supersede = (id: string, type: string, winnerId: string): void => {
@@ -973,8 +1015,10 @@ export class Audrey extends EventEmitter {
           this.db
             .prepare("UPDATE semantics SET state = 'superseded', conditions = NULL WHERE id = ?")
             .run(id);
+          refreshVectorRow(this.db, 'semantics', id);
         } else {
           this.db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ?').run(winnerId, id);
+          refreshVectorRow(this.db, 'episodes', id);
         }
       };
       const markContextDependent = (id: string, type: string): void => {
@@ -1014,21 +1058,25 @@ export class Audrey extends EventEmitter {
     return result;
   }
 
-  _loadClaimContent(claimId: string, claimType: string, agent?: string): string {
+  _loadClaimContent(
+    claimId: string,
+    claimType: string,
+    agent?: string,
+  ): { content: string; isPrivate: boolean } {
     const agentClause = agent ? ' AND agent = ?' : '';
     const params = agent ? [claimId, agent] : [claimId];
     if (claimType === 'semantic') {
       const row = this.db
-        .prepare(`SELECT content FROM semantics WHERE id = ?${agentClause}`)
-        .get(...params) as ContentRow | undefined;
+        .prepare(`SELECT content, "private" FROM semantics WHERE id = ?${agentClause}`)
+        .get(...params) as (ContentRow & { private: number }) | undefined;
       if (!row) throw new Error(`Semantic memory not found: ${claimId}`);
-      return row.content;
+      return { content: row.content, isPrivate: row.private === 1 };
     } else if (claimType === 'episodic') {
       const row = this.db
-        .prepare(`SELECT content FROM episodes WHERE id = ?${agentClause}`)
-        .get(...params) as ContentRow | undefined;
+        .prepare(`SELECT content, "private" FROM episodes WHERE id = ?${agentClause}`)
+        .get(...params) as (ContentRow & { private: number }) | undefined;
       if (!row) throw new Error(`Episode not found: ${claimId}`);
-      return row.content;
+      return { content: row.content, isPrivate: row.private === 1 };
     }
     throw new Error(`Unknown claim type: ${claimType}`);
   }
@@ -1042,25 +1090,26 @@ export class Audrey extends EventEmitter {
   }
 
   memoryStatus(): MemoryStatusResult {
-    const episodes = (this.db.prepare('SELECT COUNT(*) as c FROM episodes').get() as CountRow).c;
-    const semantics = (this.db.prepare('SELECT COUNT(*) as c FROM semantics').get() as CountRow).c;
-    const procedures = (this.db.prepare('SELECT COUNT(*) as c FROM procedures').get() as CountRow)
-      .c;
-    const searchableEpisodes = (
-      this.db
-        .prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL')
-        .get() as CountRow
-    ).c;
-    const searchableSemantics = (
-      this.db
-        .prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL')
-        .get() as CountRow
-    ).c;
-    const searchableProcedures = (
-      this.db
-        .prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL')
-        .get() as CountRow
-    ).c;
+    // Live rows only: a forgotten or superseded row has no vector by design
+    // (db.ts liveRowClause), so counting it here would report a healthy
+    // index as broken — and in strict mode Guard blocks on that report.
+    const count = (sql: string): number => (this.db.prepare(sql).get() as CountRow).c;
+    const episodes = count(`SELECT COUNT(*) as c FROM episodes WHERE ${liveRowClause('episodes')}`);
+    const semantics = count(
+      `SELECT COUNT(*) as c FROM semantics WHERE ${liveRowClause('semantics')}`,
+    );
+    const procedures = count(
+      `SELECT COUNT(*) as c FROM procedures WHERE ${liveRowClause('procedures')}`,
+    );
+    const searchableEpisodes = count(
+      `SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL AND ${liveRowClause('episodes')}`,
+    );
+    const searchableSemantics = count(
+      `SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL AND ${liveRowClause('semantics')}`,
+    );
+    const searchableProcedures = count(
+      `SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL AND ${liveRowClause('procedures')}`,
+    );
 
     let vecEpisodes = 0,
       vecSemantics = 0,
@@ -1087,8 +1136,13 @@ export class Audrey extends EventEmitter {
 
     const device = this.embeddingProvider._actualDevice ?? this.embeddingProvider.device ?? null;
 
+    // A live row with no vector is a hole in recall: unhealthy, and in
+    // strict mode Guard blocks on it. A vector whose row has since been
+    // superseded is the other way round, invisible to recall and cleared by
+    // the next maintenance sweep, and an older writer can put one back at
+    // any time, so a surplus only asks for a re-embed.
     const healthy =
-      episodes === vecEpisodes && semantics === vecSemantics && procedures === vecProcedures;
+      vecEpisodes >= episodes && vecSemantics >= semantics && vecProcedures >= procedures;
     const reembedRecommended =
       searchableEpisodes !== vecEpisodes ||
       searchableSemantics !== vecSemantics ||
@@ -1391,10 +1445,17 @@ export class Audrey extends EventEmitter {
 
   async forgetByQuery(
     query: string,
-    options: { minSimilarity?: number; purge?: boolean } = {},
+    options: { minSimilarity?: number; purge?: boolean; agent?: string | null } = {},
   ): Promise<ForgetResult | null> {
     await this._ensureMigrated();
-    const result = await forgetByQueryFn(this.db, this.embeddingProvider, query, options);
+    // A fuzzy match that deletes must not reach across agent namespaces by
+    // default. agent: null explicitly widens to all agents (admin cleanup).
+    const agent = options.agent === null ? undefined : requireAgent(options.agent, this.agent);
+    const result = await forgetByQueryFn(this.db, this.embeddingProvider, query, {
+      minSimilarity: options.minSimilarity,
+      purge: options.purge,
+      agent,
+    });
     if (result) this.emit('forget', result);
     return result;
   }
@@ -1534,21 +1595,22 @@ export class Audrey extends EventEmitter {
       const allowedRoots = [pathResolve(process.cwd())];
       const extra = process.env.AUDREY_PROMOTE_ROOTS;
       if (extra) {
+        // path.delimiter, not a raw [:;] split: "B:\projects" would
+        // otherwise shatter on its own drive-letter colon on Windows.
         for (const root of extra
-          .split(/[:;]/)
+          .split(pathDelimiter)
           .map(s => s.trim())
           .filter(Boolean)) {
           allowedRoots.push(pathResolve(root));
         }
       }
-      const isUnderAllowedRoot = allowedRoots.some(root => {
-        const rel = relative(root, projectDir);
-        return rel === '' || (!rel.startsWith('..') && !pathIsAbsolute(rel));
-      });
+      // isContainedIn canonicalizes both sides, so a junction or symlink
+      // inside an allowed root cannot smuggle the write elsewhere.
+      const isUnderAllowedRoot = allowedRoots.some(root => isContainedIn(root, projectDir));
       if (!isUnderAllowedRoot) {
         throw new Error(
           `promote: refusing to write to ${projectDir} — path is outside cwd and AUDREY_PROMOTE_ROOTS. ` +
-            `Set AUDREY_PROMOTE_ROOTS=<path1>:<path2> to allow additional locations.`,
+            `Set AUDREY_PROMOTE_ROOTS=<path1>${pathDelimiter}<path2> to allow additional locations.`,
         );
       }
     }

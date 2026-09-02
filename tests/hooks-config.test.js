@@ -18,6 +18,8 @@ const TEST_DIR = resolve('.tmp-vitest', 'hooks-config');
 const NODE_PATH = 'C:\\Program Files\\nodejs\\node.exe';
 const ENTRYPOINT = 'C:\\Program Files\\Audrey Memory\\dist\\mcp-server\\index.js';
 const SIDE_EFFECTFUL_MATCHER = `^(Bash|Edit|MultiEdit|Write|NotebookEdit|apply_patch|mcp__(?!${SERVER_NAME}__).*)$`;
+const CODEX_SIDE_EFFECTFUL_MATCHER =
+  '^(Bash|Edit|MultiEdit|Write|NotebookEdit|apply_patch|mcp__.*)$';
 
 function parseConfig(host) {
   return JSON.parse(
@@ -139,8 +141,17 @@ describe('formatHostHookConfig', () => {
         "'C:\\Program Files\\Audrey Memory\\dist\\mcp-server\\index.js' " +
         "'hook' '--host' 'codex' '--event' 'SessionStart'",
     );
-    expect(config.hooks.PreToolUse[0].matcher).toBe(SIDE_EFFECTFUL_MATCHER);
-    expect(config.hooks.PostToolUse[0].matcher).toBe(SIDE_EFFECTFUL_MATCHER);
+    expect(config.hooks.PreToolUse[0].matcher).toBe(CODEX_SIDE_EFFECTFUL_MATCHER);
+    expect(config.hooks.PostToolUse[0].matcher).toBe(CODEX_SIDE_EFFECTFUL_MATCHER);
+    expect(new RegExp(CODEX_SIDE_EFFECTFUL_MATCHER).test('mcp__github__create_pull_request')).toBe(
+      true,
+    );
+    // Codex uses Rust's regex crate, which rejects look-around. Audrey's
+    // runtime already skips its own MCP tools after the broad matcher fires.
+    expect(
+      new RegExp(CODEX_SIDE_EFFECTFUL_MATCHER).test(`mcp__${SERVER_NAME}__memory_recall`),
+    ).toBe(true);
+    expect(CODEX_SIDE_EFFECTFUL_MATCHER).not.toContain('(?!');
   });
 });
 
@@ -276,6 +287,128 @@ describe('removeHostHookSettings', () => {
     expect(removed.hooks.PostToolUse).toBeUndefined();
     expect(removed.hooks.Notification).toEqual(generated.hooks.Notification);
     expect(JSON.stringify(removed)).not.toContain('Audrey:');
+  });
+
+  it('recognizes pre-statusMessage legacy handlers by verb and entrypoint', () => {
+    // Verbatim shapes from real drifted installs: PowerShell-wrapped bare
+    // CLI verbs, empty matchers, no statusMessage, events the old matcher
+    // list never covered. The broken migration left these running alongside
+    // the current handlers, roughly doubling per-tool hook latency.
+    const legacyCommand = verb =>
+      `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& 'C:\\Program Files\\nodejs\\node.exe' 'B:\\projects\\claude\\audrey\\dist\\mcp-server\\index.js' ${verb}"`;
+    const settings = {
+      hooks: {
+        SessionStart: [
+          {
+            matcher: '',
+            hooks: [
+              { type: 'command', command: legacyCommand('greeting') },
+              { type: 'command', command: 'unrelated-session-tool' },
+            ],
+          },
+        ],
+        Stop: [{ matcher: '', hooks: [{ type: 'command', command: legacyCommand('reflect') }] }],
+        StopFailure: [
+          {
+            matcher: '',
+            hooks: [
+              { type: 'command', command: legacyCommand('observe-tool --event StopFailure') },
+            ],
+          },
+        ],
+        SubagentStart: [
+          {
+            matcher: '',
+            hooks: [
+              { type: 'command', command: legacyCommand('observe-tool --event SubagentStart') },
+            ],
+          },
+        ],
+        TaskCompleted: [
+          {
+            matcher: '',
+            hooks: [
+              { type: 'command', command: legacyCommand('observe-tool --event TaskCompleted') },
+            ],
+          },
+        ],
+        PreCompact: [
+          { matcher: '', hooks: [{ type: 'command', command: legacyCommand('reflect') }] },
+        ],
+      },
+    };
+
+    const removed = removeHostHookSettings('claude-code', settings);
+    expect(handlersFor(removed, 'SessionStart')).toEqual([
+      { type: 'command', command: 'unrelated-session-tool' },
+    ]);
+    expect(removed.hooks.Stop).toBeUndefined();
+    expect(removed.hooks.StopFailure).toBeUndefined();
+    expect(removed.hooks.SubagentStart).toBeUndefined();
+    expect(removed.hooks.TaskCompleted).toBeUndefined();
+    expect(removed.hooks.PreCompact).toBeUndefined();
+    expect(JSON.stringify(removed)).not.toContain('audrey');
+  });
+
+  it('does not claim an unrelated tool that happens to use a reflect verb', () => {
+    const settings = {
+      hooks: {
+        Stop: [
+          {
+            matcher: '',
+            hooks: [
+              { type: 'command', command: 'node C:\\tools\\reflect-notes\\index.js reflect' },
+            ],
+          },
+        ],
+      },
+    };
+    const removed = removeHostHookSettings('claude-code', settings);
+    expect(handlersFor(removed, 'Stop')).toHaveLength(1);
+  });
+
+  it('does not claim an unrelated mcp-server entrypoint under an audrey-mentioning path', () => {
+    // The entrypoint rule requires a directory segment that STARTS with
+    // "audrey" leading into mcp-server/index.js — a fork or neighbor project
+    // that merely contains the word must keep its hooks.
+    const settings = {
+      hooks: {
+        Stop: [
+          {
+            matcher: '',
+            hooks: [
+              {
+                type: 'command',
+                command: 'node C:\\tools\\my-audrey-fork\\mcp-server\\index.js reflect-all',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const removed = removeHostHookSettings('claude-code', settings);
+    expect(handlersFor(removed, 'Stop')).toHaveLength(1);
+  });
+
+  it('claims audrey-prefixed install directories, including spaced ones', () => {
+    const settings = {
+      hooks: {
+        Stop: [
+          {
+            matcher: '',
+            hooks: [
+              {
+                type: 'command',
+                command:
+                  "powershell.exe -Command \"& 'C:\\Program Files\\nodejs\\node.exe' 'C:\\Program Files\\Audrey Memory\\dist\\mcp-server\\index.js' reflect\"",
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const removed = removeHostHookSettings('claude-code', settings);
+    expect(removed.hooks.Stop).toBeUndefined();
   });
 });
 

@@ -175,6 +175,16 @@ export interface ExactActionHistoryOptions {
   since?: string;
 }
 
+// A non-zero exit from a read-only probe (grep with no match, ls of a
+// missing path) is recorded honestly as a failure, but Autopilot flags it so
+// no Guard path treats it as a lesson. The CASE keeps json_extract off rows
+// whose metadata is absent or malformed, which would otherwise raise.
+const READ_ONLY_FAILURE = `(
+  CASE WHEN metadata IS NOT NULL AND json_valid(metadata)
+       THEN COALESCE(json_extract(metadata, '$.read_only'), 0) = 1
+       ELSE 0 END
+)`;
+
 export function exactActionHistory(
   db: Database.Database,
   options: ExactActionHistoryOptions,
@@ -187,7 +197,7 @@ export function exactActionHistory(
       WHERE action_key = @actionKey
         AND (
           (event_type = 'PostToolUse' AND outcome = 'succeeded')
-          OR (event_type = 'PostToolUseFailure' AND outcome = 'failed')
+          OR (event_type = 'PostToolUseFailure' AND outcome = 'failed' AND NOT ${READ_ONLY_FAILURE})
         )
         AND (actor_agent IS NULL OR actor_agent = @actorAgent)
         ${options.since ? 'AND created_at >= @since' : ''}
@@ -398,7 +408,7 @@ export function recentFailures(
         AND created_at >= @since
         ${actorAgent ? 'AND actor_agent = @actorAgent' : ''}
         AND (
-          (outcome = 'failed' AND ${failureVisible})
+          (outcome = 'failed' AND ${failureVisible} AND NOT ${READ_ONLY_FAILURE})
           OR (outcome = 'succeeded' AND ${successVisible})
         )
     ),

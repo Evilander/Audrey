@@ -966,10 +966,15 @@ async function runScenarioForSubject(scenario, subject) {
         serialized.toLowerCase(),
         scenario.required.map(s => s.toLowerCase()),
       );
+    // Lineage text is required wherever the contract demands citing WHY —
+    // every non-allow decision. Allow scenarios keep the 1.0.1 rule: a
+    // correct allow needs no recital of evidence phrases.
+    const lineageSatisfied = scenario.expectedDecision === 'allow' || hasLineageText;
     const passed =
       result.decision === scenario.expectedDecision &&
       leakedSecrets.length === 0 &&
-      hasEvidenceForDecision;
+      hasEvidenceForDecision &&
+      lineageSatisfied;
 
     return {
       system: subject,
@@ -989,7 +994,7 @@ async function runScenarioForSubject(scenario, subject) {
       leakedSecrets,
       hasEvidenceForDecision,
       lineageTextMatched: hasLineageText,
-      requiredEvidenceMatched: hasEvidenceForDecision,
+      requiredEvidenceMatched: lineageSatisfied,
     };
   } finally {
     await audrey.closeAsync();
@@ -1027,10 +1032,14 @@ async function runScenarioForAdapter(scenario, adapter) {
         serialized.toLowerCase(),
         scenario.required.map(s => s.toLowerCase()),
       );
+    // Same lineage rule as runScenarioForSubject: cite-your-evidence is part
+    // of the contract for every non-allow decision.
+    const lineageSatisfied = scenario.expectedDecision === 'allow' || hasLineageText;
     const passed =
       normalized.decision === scenario.expectedDecision &&
       leakedSecrets.length === 0 &&
-      hasEvidenceForDecision;
+      hasEvidenceForDecision &&
+      lineageSatisfied;
 
     return {
       system: adapter.name,
@@ -1052,7 +1061,7 @@ async function runScenarioForAdapter(scenario, adapter) {
       leakedSecrets,
       hasEvidenceForDecision,
       lineageTextMatched: hasLineageText,
-      requiredEvidenceMatched: hasEvidenceForDecision,
+      requiredEvidenceMatched: lineageSatisfied,
     };
   } finally {
     if (typeof adapter.cleanup === 'function') {

@@ -21,6 +21,11 @@ import type { Audrey } from './audrey.js';
 import type { RecallError, RecallResult, RecallOptions, MemoryType, MemoryState } from './types.js';
 import { recentFailures, type FailurePattern } from './events.js';
 import { projectNamespace } from './project.js';
+import {
+  commandFromFailureRecord,
+  profileShellCommand,
+  signaturesOverlap,
+} from './shell-command.js';
 import { requireAgent, resolveMemoryScope } from './utils.js';
 import { controlTrustFor, type ControlTrust } from './trust.js';
 
@@ -49,6 +54,13 @@ export interface CapsuleOptions {
    * memories instead of just shrinking the capsule.
    */
   excludeIds?: Iterable<string>;
+  /**
+   * Verb signatures of the shell command this capsule is a preflight for.
+   * When set, an Autopilot-recorded Bash failure is surfaced only if it ran
+   * one of the same signatures; a prompt capsule leaves it unset and lets
+   * semantic similarity decide.
+   */
+  actionSignatures?: string[];
 }
 
 // Ceiling on how far excludeIds can widen the recall candidate pool, so a
@@ -274,6 +286,65 @@ function buildContradictionEntry(row: ContradictionRow, reason: string): Capsule
   };
 }
 
+/**
+ * Whether a recalled memory is one of Autopilot's own failure records rather
+ * than something a person or agent chose to remember. Shared with preflight
+ * so both sides agree on what gets the tool-matched, medium-severity path.
+ */
+export function isAutopilotFailureEpisode(
+  source: string | null | undefined,
+  tags: readonly string[],
+): boolean {
+  return source === 'tool-result' && tags.some(tag => tag.toLowerCase() === 'tool-failure');
+}
+
+function parseContextRecord(raw: string | null): Record<string, unknown> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Newer failure episodes carry their signatures in context; older rows only
+// have the command text inside the failure sentence, so it is parsed back out.
+function failureEpisodeSignatures(
+  rawContext: string | null,
+  content: string,
+): string[] | undefined {
+  const context = parseContextRecord(rawContext);
+  const stored = context?.['commandSignatures'];
+  if (typeof stored === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(stored);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((value): value is string => typeof value === 'string');
+      }
+    } catch {
+      // Fall through to the command text.
+    }
+  }
+  const command = commandFromFailureRecord(content);
+  return command === undefined ? undefined : profileShellCommand(command).signatures;
+}
+
+function failureEpisodeMatchesAction(
+  rawContext: string | null,
+  content: string,
+  actionSignatures: string[] | undefined,
+): boolean {
+  if (!actionSignatures) return true;
+  const signatures = failureEpisodeSignatures(rawContext, content);
+  // Not a shell failure (an Edit, a Write, an MCP tool): preflight's
+  // tool-name gate is the relevant comparison.
+  if (signatures === undefined) return true;
+  return signaturesOverlap(signatures, actionSignatures);
+}
+
 function loadEpisodeEnrichment(db: Database.Database, id: string): EpisodeTagRow | undefined {
   return db
     .prepare(
@@ -356,20 +427,29 @@ function categorize(
   //
   // Broken grounding also blocks escalation. A must-follow rule that names a
   // file or script which no longer exists is the worst thing to hand Guard:
-  // it is the one section that can turn into a high-severity block, and the
-  // rule cannot be followed. Such a memory is surfaced as uncertain instead
-  // of enforced, and is still readable by anyone who wants to repair it.
+  // must_follow and risks are the two sections that can turn into a
+  // high-severity block, and the rule cannot be followed. Such a memory is
+  // surfaced as uncertain instead of enforced, and is still readable by anyone
+  // who wants to repair it.
+  //
+  // Tag-derived risks get the same gate. Without it, any client able to
+  // encode could plant one untrusted 'risk'-tagged memory and have Guard
+  // hard-block every action it is recalled for. Tool-failure risks are
+  // unaffected: they come from memory_events, and Autopilot's own failure
+  // episodes are routed before this function is reached.
   const groundingBroken = result.grounding === 'broken';
-  const eligibleForMustFollow = controlTrust !== 'untrusted' && !groundingBroken;
+  const eligibleForControl = controlTrust !== 'untrusted' && !groundingBroken;
 
-  if (eligibleForMustFollow && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
+  if (eligibleForControl && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
     sections.add('must_follow');
-  } else if (!eligibleForMustFollow && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
+  } else if (!eligibleForControl && hashMatchesAny(lowerTags, MUST_FOLLOW_TAGS)) {
     sections.add('uncertain_or_disputed');
   }
 
-  if (hashMatchesAny(lowerTags, RISK_TAGS)) {
+  if (eligibleForControl && hashMatchesAny(lowerTags, RISK_TAGS)) {
     sections.add('risks');
+  } else if (!eligibleForControl && hashMatchesAny(lowerTags, RISK_TAGS)) {
+    sections.add('uncertain_or_disputed');
   }
 
   if (entry.memory_type === 'procedural' || hashMatchesAny(lowerTags, PROCEDURE_TAGS)) {
@@ -513,6 +593,23 @@ export async function buildCapsule(
       'Matched query via semantic similarity.',
       controlTrust,
     );
+    // Autopilot's own failure records are operational evidence, not claims
+    // about the project: never a project fact, and once decayed they are
+    // stale rather than "uncertain". Under a preflight they count only when
+    // they ran what the proposed action runs; a prompt query has no action
+    // to compare against, so similarity alone decides there.
+    if (result.type === 'episodic' && isAutopilotFailureEpisode(result.source, tags)) {
+      if (!failureEpisodeMatchesAction(rawContext, result.content, options.actionSignatures)) {
+        continue;
+      }
+      push('risks', {
+        ...entry,
+        reason: options.actionSignatures
+          ? 'Autopilot recorded a failure of the same command.'
+          : 'Autopilot recorded a related tool failure.',
+      });
+      continue;
+    }
     const assigned = categorize(entry, result, tags, recentWindowMs, controlTrust);
     for (const section of assigned) {
       const entryForSection = { ...entry };

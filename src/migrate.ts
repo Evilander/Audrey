@@ -8,6 +8,7 @@ interface EpisodeMigrateRow {
   content: string;
   source: string;
   consolidated: number | null;
+  superseded_by: string | null;
 }
 
 const REEMBED_BATCH_SIZE = 256;
@@ -60,7 +61,7 @@ export async function reembedAll(
   }
 
   const episodes = db
-    .prepare('SELECT id, agent, content, source, consolidated FROM episodes')
+    .prepare('SELECT id, agent, content, source, consolidated, superseded_by FROM episodes')
     .all() as EpisodeMigrateRow[];
   const semantics = db
     .prepare('SELECT id, agent, content, state FROM semantics')
@@ -103,11 +104,16 @@ export async function reembedAll(
     'INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
   );
 
+  // Every row gets a fresh embedding column, so a later restore of a
+  // superseded row has a vector of the right dimension to reinstate. Only
+  // live rows go back into the vec0 tables: a dead vector would take a KNN
+  // candidate slot and read as an unhealthy index to memoryStatus().
   const writeTx = db.transaction(() => {
     for (let i = 0; i < episodes.length; i++) {
       const buf = embeddingProvider.vectorToBuffer(episodeVectors[i]!);
       updateEpLegacy.run(buf, episodes[i]!.id);
       deleteVecEp.run(episodes[i]!.id);
+      if (episodes[i]!.superseded_by) continue;
       insertVecEp.run(
         episodes[i]!.id,
         episodes[i]!.agent,
@@ -120,12 +126,14 @@ export async function reembedAll(
       const buf = embeddingProvider.vectorToBuffer(semanticVectors[i]!);
       updateSemLegacy.run(buf, semantics[i]!.id);
       deleteVecSem.run(semantics[i]!.id);
+      if (semantics[i]!.state === 'superseded') continue;
       insertVecSem.run(semantics[i]!.id, semantics[i]!.agent, buf, semantics[i]!.state);
     }
     for (let i = 0; i < procedures.length; i++) {
       const buf = embeddingProvider.vectorToBuffer(procedureVectors[i]!);
       updateProcLegacy.run(buf, procedures[i]!.id);
       deleteVecProc.run(procedures[i]!.id);
+      if (procedures[i]!.state === 'superseded') continue;
       insertVecProc.run(procedures[i]!.id, procedures[i]!.agent, buf, procedures[i]!.state);
     }
   });

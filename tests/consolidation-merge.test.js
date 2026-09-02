@@ -66,6 +66,84 @@ describe('runConsolidation deduplicates against existing active memories', () =>
     expect(unconsolidated.count).toBe(0);
   });
 
+  it('merging a private cluster into a public semantic taints it, and public merges never clear it', async () => {
+    await encodeEpisode(db, embedding, {
+      content: 'taint batch one',
+      source: 'direct-observation',
+    });
+    await encodeEpisode(db, embedding, { content: 'taint batch one', source: 'tool-result' });
+    await encodeEpisode(db, embedding, { content: 'taint batch one', source: 'told-by-user' });
+    const principle = () => ({ content: 'Shared mergeable principle', type: 'semantic' });
+    await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: principle,
+    });
+    let sem = db.prepare("SELECT * FROM semantics WHERE state = 'active'").get();
+    expect(sem.private).toBe(0);
+
+    // A private cluster merging in must taint the existing row: it now cites
+    // private evidence, the same invariant the v16 backfill enforces.
+    for (const source of ['direct-observation', 'tool-result', 'told-by-user']) {
+      await encodeEpisode(db, embedding, {
+        content: 'taint batch two',
+        source,
+        private: true,
+      });
+    }
+    const secondRun = await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: principle,
+    });
+    expect(secondRun.semanticsMerged).toBe(1);
+    sem = db.prepare('SELECT * FROM semantics WHERE id = ?').get(sem.id);
+    expect(sem.private).toBe(1);
+
+    // A later all-public merge must not clear the flag.
+    for (const source of ['direct-observation', 'tool-result', 'told-by-user']) {
+      await encodeEpisode(db, embedding, { content: 'taint batch three', source });
+    }
+    const thirdRun = await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: principle,
+    });
+    expect(thirdRun.semanticsMerged).toBe(1);
+    sem = db.prepare('SELECT * FROM semantics WHERE id = ?').get(sem.id);
+    expect(sem.private).toBe(1);
+  });
+
+  it('merging a private cluster into a public procedural memory taints it', async () => {
+    for (const source of ['direct-observation', 'tool-result', 'told-by-user']) {
+      await encodeEpisode(db, embedding, { content: 'proc taint batch one', source });
+    }
+    const principle = () => ({ content: 'Shared mergeable procedure', type: 'procedural' });
+    await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: principle,
+    });
+    let proc = db.prepare("SELECT * FROM procedures WHERE state = 'active'").get();
+    expect(proc.private).toBe(0);
+
+    for (const source of ['direct-observation', 'tool-result', 'told-by-user']) {
+      await encodeEpisode(db, embedding, {
+        content: 'proc taint batch two',
+        source,
+        private: true,
+      });
+    }
+    const secondRun = await runConsolidation(db, embedding, {
+      minClusterSize: 3,
+      similarityThreshold: 0.99,
+      extractPrinciple: principle,
+    });
+    expect(secondRun.proceduresMerged).toBe(1);
+    proc = db.prepare('SELECT * FROM procedures WHERE id = ?').get(proc.id);
+    expect(proc.private).toBe(1);
+  });
+
   it('respects a configurable merge threshold', async () => {
     await encodeEpisode(db, embedding, { content: 'first batch b', source: 'direct-observation' });
     await encodeEpisode(db, embedding, { content: 'first batch b', source: 'tool-result' });

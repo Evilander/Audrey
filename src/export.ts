@@ -54,6 +54,7 @@ interface SemanticExportRow {
   challenge_count: number;
   interference_count: number;
   salience: number;
+  private: number;
   usage_count: number;
   last_used_at: string | null;
 }
@@ -74,6 +75,7 @@ interface ProcedureExportRow {
   retrieval_count: number;
   interference_count: number;
   salience: number;
+  private: number;
   usage_count: number;
   last_used_at: string | null;
 }
@@ -113,6 +115,9 @@ interface MemoryEventExportRow {
   created_at: string;
 }
 
+const TRANSIENT_CONFIG_KEY =
+  /^(?:vec_sync_|autopilot_|read_only_probe_failures_retired_at$|vec_index_reconciled_at$)/;
+
 interface ConfigRow {
   key: string;
   value: string;
@@ -135,7 +140,7 @@ export function exportMemories(db: Database.Database): object {
   const semantics = (
     db
       .prepare(
-        'SELECT id, content, agent, state, conditions, evidence_episode_ids, evidence_count, supporting_count, contradicting_count, source_type_diversity, consolidation_checkpoint, embedding_model, embedding_version, consolidation_model, consolidation_prompt_hash, created_at, last_reinforced_at, retrieval_count, challenge_count, interference_count, salience, usage_count, last_used_at FROM semantics',
+        'SELECT id, content, agent, state, conditions, evidence_episode_ids, evidence_count, supporting_count, contradicting_count, source_type_diversity, consolidation_checkpoint, embedding_model, embedding_version, consolidation_model, consolidation_prompt_hash, created_at, last_reinforced_at, retrieval_count, challenge_count, interference_count, salience, "private", usage_count, last_used_at FROM semantics',
       )
       .all() as SemanticExportRow[]
   ).map(sem => ({
@@ -146,7 +151,7 @@ export function exportMemories(db: Database.Database): object {
   const procedures = (
     db
       .prepare(
-        'SELECT id, content, agent, state, trigger_conditions, evidence_episode_ids, success_count, failure_count, embedding_model, embedding_version, created_at, last_reinforced_at, retrieval_count, interference_count, salience, usage_count, last_used_at FROM procedures',
+        'SELECT id, content, agent, state, trigger_conditions, evidence_episode_ids, success_count, failure_count, embedding_model, embedding_version, created_at, last_reinforced_at, retrieval_count, interference_count, salience, "private", usage_count, last_used_at FROM procedures',
       )
       .all() as ProcedureExportRow[]
   ).map(proc => ({
@@ -187,8 +192,14 @@ export function exportMemories(db: Database.Database): object {
     )
     .all() as MemoryEventExportRow[];
 
+  // Per-store housekeeping (vector sync marks, hook leases, one-time repair
+  // markers) describes this database, not the memory in it. Import never
+  // applied it, and carrying it made two snapshots of the same memory
+  // compare unequal.
   const configRows = db.prepare('SELECT key, value FROM audrey_config').all() as ConfigRow[];
-  const config = Object.fromEntries(configRows.map(r => [r.key, r.value]));
+  const config = Object.fromEntries(
+    configRows.filter(row => !TRANSIENT_CONFIG_KEY.test(row.key)).map(r => [r.key, r.value]),
+  );
 
   return {
     version: pkg.version,

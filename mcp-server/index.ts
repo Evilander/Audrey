@@ -32,7 +32,7 @@ import {
   escapeMemoryMarkup,
   MEMORY_TRUST_NOTICE,
 } from '../src/autopilot.js';
-import { stripReservedTrustKeys } from '../src/trust.js';
+import { stripReservedTrustKeys, TRUST_CONTEXT_KEY, USER_VERIFIED_TRUST } from '../src/trust.js';
 import { verifyAnchors } from '../src/grounding.js';
 import { projectRoot } from '../src/project.js';
 import type {
@@ -1434,6 +1434,18 @@ function formatControllerGuardResult(
   lines.push(`Reason: ${result.summary}`);
   lines.push(`Risk score: ${result.riskScore.toFixed(2)}`);
 
+  // What each signal says, not only that it exists.
+  if (result.warnings.length > 0) {
+    lines.push('');
+    lines.push('Signals:');
+    for (const warning of result.warnings.slice(0, 5)) {
+      const message = warning.message.replace(/\s+/g, ' ').trim();
+      lines.push(
+        `- ${warning.type} (${warning.severity}): ${message.length > 200 ? `${message.slice(0, 199)}…` : message}`,
+      );
+    }
+  }
+
   if (result.evidenceIds.length > 0) {
     lines.push('');
     lines.push('Evidence:');
@@ -1492,15 +1504,46 @@ async function runRepeatedFailureDemo({
       source: 'direct-observation',
       tags: ['must-follow', 'deploy', 'prisma', 'failure-prevention'],
       salience: 0.95,
-      context: { tool: 'Bash', command: 'npm run deploy', scenario: 'repeated-failure' },
+      // In real use this rule arrives as the user saying "remember that...",
+      // which Autopilot captures in-process with this marker; the demo
+      // stands in for that so the rule is a control memory, not a claim.
+      context: {
+        tool: 'Bash',
+        command: 'npm run deploy',
+        scenario: 'repeated-failure',
+        [TRUST_CONTEXT_KEY]: USER_VERIFIED_TRUST,
+      },
     });
 
     out('Step 2: Audrey stores the failure and the operational rule it implies.');
     out(`Lesson memory: ${lessonId}`);
     out('');
 
+    // These go through the real PreToolUse hook. A command that can only
+    // look at the project never reaches the preflight, so Guard has nothing
+    // to say about it.
+    out('Step 3: the agent looks around first. Guard stays silent: looking is not doing.');
+    const probes = ['grep -rn "prisma" src/', 'git status --short', 'cat prisma/schema.prisma'];
+    for (const [index, command] of probes.entries()) {
+      const hook = await runAutopilotHook(
+        audrey,
+        {
+          hook_event_name: 'PreToolUse',
+          session_id: 'audrey-demo',
+          cwd: demoDir,
+          tool_name: 'Bash',
+          tool_use_id: `demo-look-${index}`,
+          tool_input: { command },
+        },
+        { host: 'claude-code' },
+      );
+      const silent = Object.keys(hook.output).length === 0;
+      out(`  $ ${command.padEnd(28)} ${silent ? 'Guard: silent' : 'Guard: warned'}`);
+    }
+    out('');
+
     const result = await controller.beforeAction(action);
-    out('Step 3: a new preflight checks the same action before tool use.');
+    out('Step 4: the agent proposes the same deploy again. Guard speaks, and says why.');
     out('');
     out(formatControllerGuardResult(result));
 
@@ -1517,6 +1560,7 @@ async function runRepeatedFailureDemo({
     out('');
     out('Audrey saw the agent fail once.');
     out('Audrey stopped it from failing twice.');
+    out('And it stayed out of the way while the agent looked around in between.');
 
     if (keep) {
       out('');
@@ -3358,7 +3402,7 @@ async function main(): Promise<void> {
   server.tool(
     'memory_forget',
     memoryForgetToolSchema,
-    async ({ id, query, min_similarity, purge }) => {
+    async ({ id, query, min_similarity, purge, all_agents }) => {
       try {
         requireAdminTools();
         validateForgetSelection(id, query);
@@ -3369,6 +3413,9 @@ async function main(): Promise<void> {
           result = await audrey.forgetByQuery(query!, {
             minSimilarity: min_similarity ?? 0.9,
             purge: purge ?? false,
+            // Default stays agent-scoped: a fuzzy match must not delete
+            // another agent's closest memory unless explicitly widened.
+            ...(all_agents ? { agent: null } : {}),
           });
           if (!result) {
             return toolResult({
@@ -3649,6 +3696,7 @@ async function main(): Promise<void> {
     },
     async ({ target, min_confidence, min_evidence, limit, dry_run, yes, project_dir }) => {
       try {
+        requireAdminTools();
         const result = await audrey.promote({
           target,
           minConfidence: min_confidence,
