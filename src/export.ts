@@ -115,6 +115,9 @@ interface MemoryEventExportRow {
   created_at: string;
 }
 
+const TRANSIENT_CONFIG_KEY =
+  /^(?:vec_sync_|autopilot_|read_only_probe_failures_retired_at$|vec_index_reconciled_at$)/;
+
 interface ConfigRow {
   key: string;
   value: string;
@@ -189,8 +192,14 @@ export function exportMemories(db: Database.Database): object {
     )
     .all() as MemoryEventExportRow[];
 
+  // Per-store housekeeping (vector sync marks, hook leases, one-time repair
+  // markers) describes this database, not the memory in it. Import never
+  // applied it, and carrying it made two snapshots of the same memory
+  // compare unequal.
   const configRows = db.prepare('SELECT key, value FROM audrey_config').all() as ConfigRow[];
-  const config = Object.fromEntries(configRows.map(r => [r.key, r.value]));
+  const config = Object.fromEntries(
+    configRows.filter(row => !TRANSIENT_CONFIG_KEY.test(row.key)).map(r => [r.key, r.value]),
+  );
 
   return {
     version: pkg.version,

@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import type { EmbeddingProvider, ForgetResult, MemoryType, PurgeResult } from './types.js';
 import { deleteFTSEpisode, deleteFTSSemantic, deleteFTSProcedure } from './fts.js';
+import { commandFromFailureRecord, profileShellCommand } from './shell-command.js';
 
 interface IdRow {
   id: string;
@@ -172,6 +173,57 @@ export function forgetMemory(
   });
 
   return performForget();
+}
+
+export const READ_ONLY_PROBE_RETIREMENT_KEY = 'read_only_probe_failures_retired_at';
+export const READ_ONLY_PROBE_RETIREMENT_MARKER = 'retired:read-only-probe';
+
+/**
+ * One-time cleanup for stores written before Autopilot stopped recording
+ * read-only probes as failures. Every "Bash failed" episode whose command
+ * classifies as read-only is soft-retired the way forgetMemory({purge:
+ * false}) would: the row survives as superseded so nothing derived from it
+ * dangles, and it leaves the vector index so recall never sees it again.
+ * `audrey purge` removes the rows for good later, on the user's say-so.
+ *
+ * The stored command text had its newlines collapsed, so the classifier
+ * runs in flattened mode: a side-effecting verb hiding in an argument
+ * position keeps the row. Losing a genuine lesson is worse than keeping
+ * a stale probe, so every doubt resolves toward keeping.
+ */
+export function retireReadOnlyProbeFailures(db: Database.Database): number {
+  const done = db
+    .prepare('SELECT value FROM audrey_config WHERE key = ?')
+    .get(READ_ONLY_PROBE_RETIREMENT_KEY);
+  if (done) return 0;
+  const rows = db
+    .prepare(
+      `SELECT id, content FROM episodes
+       WHERE source = 'tool-result'
+         AND superseded_by IS NULL
+         AND tags LIKE '%"tool-failure"%'
+         AND content LIKE 'Tool failure: Bash failed while attempting: %'`,
+    )
+    .all() as Array<{ id: string; content: string }>;
+  const retire = db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ?');
+  const dropVector = db.prepare('DELETE FROM vec_episodes WHERE id = ?');
+  const markDone = db.prepare(
+    `INSERT INTO audrey_config (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  );
+  return db.transaction(() => {
+    let retired = 0;
+    for (const row of rows) {
+      const command = commandFromFailureRecord(row.content);
+      if (command === undefined) continue;
+      if (!profileShellCommand(command, { flattened: true }).readOnly) continue;
+      retire.run(READ_ONLY_PROBE_RETIREMENT_MARKER, row.id);
+      dropVector.run(row.id);
+      retired++;
+    }
+    markDone.run(READ_ONLY_PROBE_RETIREMENT_KEY, new Date().toISOString());
+    return retired;
+  })();
 }
 
 export function purgeMemories(db: Database.Database): PurgeResult {
