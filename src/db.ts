@@ -361,24 +361,34 @@ export function refreshVectorRow(db: Database.Database, source: VecSyncSource, i
 const VEC_RECONCILED_KEY = 'vec_index_reconciled_at';
 
 /**
- * One-time repair for stores written before every writer kept dead rows out
- * of the vec0 tables: a full re-embed, an import, or a resolve-truth
- * supersede used to leave vectors behind for rows recall would never
- * return. Runs once per store; the writers keep the invariant from then on.
+ * Drops every vector whose source row is no longer live and returns how
+ * many it dropped. Stores written before every writer kept dead rows out of
+ * the vec0 tables need this once (a full re-embed, an import, or a
+ * resolve-truth supersede used to leave vectors behind), and any older
+ * writer that is still around after an upgrade — an MCP server process
+ * that has not restarted, an older CLI pointed at the same store — can put
+ * such rows back at any time. The maintenance sweep therefore calls this
+ * whenever memoryStatus() reports a surplus.
  */
-function reconcileVectorIndex(db: Database.Database): void {
-  if (readConfigText(db, VEC_RECONCILED_KEY)) return;
+export function reconcileVectorIndex(db: Database.Database): number {
   const sources: VecSyncSource[] = ['episodes', 'semantics', 'procedures'];
-  db.transaction(() => {
+  return db.transaction(() => {
+    let removed = 0;
     for (const source of sources) {
       const dead = db
         .prepare(`SELECT id FROM ${source} WHERE NOT (${liveRowClause(source)})`)
         .all() as Array<{ id: string }>;
       const drop = db.prepare(`DELETE FROM ${VEC_TARGET_TABLE[source]} WHERE id = ?`);
-      for (const row of dead) drop.run(row.id);
+      for (const row of dead) removed += drop.run(row.id).changes;
     }
-    writeConfigText(db, VEC_RECONCILED_KEY, new Date().toISOString());
+    return removed;
   })();
+}
+
+function reconcileVectorIndexOnce(db: Database.Database): void {
+  if (readConfigText(db, VEC_RECONCILED_KEY)) return;
+  reconcileVectorIndex(db);
+  writeConfigText(db, VEC_RECONCILED_KEY, new Date().toISOString());
 }
 
 export function dropVec0Tables(db: Database.Database): void {
@@ -907,7 +917,7 @@ export function createDatabase(
 
     createVec0Tables(db, dimensions);
     migrateVec0AgentPartitions(db, dimensions);
-    reconcileVectorIndex(db);
+    reconcileVectorIndexOnce(db);
 
     if (!migrated && migrateEmbeddingsToVec0(db, dimensions)) {
       migrated = true;

@@ -1136,8 +1136,13 @@ export class Audrey extends EventEmitter {
 
     const device = this.embeddingProvider._actualDevice ?? this.embeddingProvider.device ?? null;
 
+    // A live row with no vector is a hole in recall: unhealthy, and in
+    // strict mode Guard blocks on it. A vector whose row has since been
+    // superseded is the other way round, invisible to recall and cleared by
+    // the next maintenance sweep, and an older writer can put one back at
+    // any time, so a surplus only asks for a re-embed.
     const healthy =
-      episodes === vecEpisodes && semantics === vecSemantics && procedures === vecProcedures;
+      vecEpisodes >= episodes && vecSemantics >= semantics && vecProcedures >= procedures;
     const reembedRecommended =
       searchableEpisodes !== vecEpisodes ||
       searchableSemantics !== vecSemantics ||
