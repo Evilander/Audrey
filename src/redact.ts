@@ -363,7 +363,7 @@ function looksLikeOrdinaryProse(words: string[]): boolean {
  * Filesystem paths share the secret alphabet (letters, digits, /, -, _),
  * and a mixed-case POSIX path past 32 chars can cross the entropy gate —
  * which would mangle cwd/file metadata at encode time and silently break
- * project scoping and grounding. Three or more separator-delimited clean
+ * project scoping and grounding. Two or more separator-delimited clean
  * segments is a path shape; base64 material essentially never splits into
  * clean segments and, unlike paths, routinely contains '+' or '='.
  *
@@ -382,7 +382,7 @@ function looksLikeOrdinaryProse(words: string[]): boolean {
 function pathSegments(value: string): string[] | undefined {
   if (/[+=]/.test(value)) return undefined;
   const segments = value.split('/');
-  if (segments.length < 3) return undefined;
+  if (segments.length < 2) return undefined;
   if (!segments.every(segment => segment.length <= 64 && /^[A-Za-z0-9._~-]*$/.test(segment))) {
     return undefined;
   }

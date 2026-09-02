@@ -259,7 +259,10 @@ describe('redact', () => {
     // redacted the cwd Autopilot stores and left grounding with no project
     // root on Linux and macOS hosts.
     for (const path of [
+      '/tmp/audrey-grounding-Ab3xQz',
       '/tmp/audrey-grounding-Ab3xQz/project',
+      // The dot ends the token, leaving two segments: still a path.
+      '/home/runner/work/Audrey/Audrey/.tmp-vitest/audrey-grounding-Ab3xQz',
       '/home/runner/work/Audrey/Audrey/.tmp-vitest/audrey-grounding-Ab3xQz/project',
       '/var/folders/x9/1k2j3h4g5f6d7s8a9p0o1i2u0000gn/T/tmp.Ab3xQz9K',
       '/tmp/claude/B--projects-claude-audrey/24522074-1a60-4eb5-bcc8-2883bf582b7f/scratchpad',
