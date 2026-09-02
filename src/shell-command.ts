@@ -35,6 +35,11 @@ interface Word {
   text: string;
   /** Some part of the word was quoted or escaped, so it is never a keyword. */
   quoted: boolean;
+  /**
+   * An unquoted `$` expansion or glob: the shell may turn this one word into
+   * several, so it can carry a flag or a positional the text does not show.
+   */
+  expands: boolean;
 }
 
 type Token =
@@ -57,13 +62,15 @@ function tokenize(command: string): Token[] {
   const pendingHeredocs: Array<{ delimiter: string; stripTabs: boolean; expands: boolean }> = [];
   let buffer = '';
   let quoted = false;
+  let expands = false;
   let hasWord = false;
   let i = 0;
 
   function flush(): void {
-    if (hasWord) tokens.push({ kind: 'word', word: { text: buffer, quoted } });
+    if (hasWord) tokens.push({ kind: 'word', word: { text: buffer, quoted, expands } });
     buffer = '';
     quoted = false;
+    expands = false;
     hasWord = false;
   }
 
@@ -85,6 +92,7 @@ function tokenize(command: string): Token[] {
     while (i < command.length && (command[i] === ' ' || command[i] === '\t')) i++;
     let text = '';
     let wasQuoted = false;
+    let wordExpands = false;
     let found = false;
     while (i < command.length) {
       const ch = command.charAt(i);
@@ -120,11 +128,12 @@ function tokenize(command: string): Token[] {
       }
       if (/[\s;&|<>()]/.test(ch)) break;
       if (ch === '`' || (ch === '$' && command[i + 1] === '(')) tokens.push({ kind: 'subst' });
+      if (ch === '$' || ch === '*' || ch === '?' || ch === '[') wordExpands = true;
       text += ch;
       found = true;
       i++;
     }
-    return found ? { text, quoted: wasQuoted } : undefined;
+    return found ? { text, quoted: wasQuoted, expands: wordExpands } : undefined;
   }
 
   // A heredoc body starts on the line after its operator and ends at a line
@@ -277,6 +286,10 @@ function tokenize(command: string): Token[] {
       continue;
     }
 
+    // `$?`, `$$`, `$#`, `$!` and `$1`..`$9` expand to exactly one word;
+    // anything else the shell may split into several.
+    if (ch === '$' && !/[?$#!0-9]/.test(next ?? '')) expands = true;
+    if (ch === '*' || ch === '?' || ch === '[') expands = true;
     buffer += ch;
     hasWord = true;
     i++;
@@ -1003,9 +1016,21 @@ function dockerProfile(args: string[]): VerbProfile {
   const sub = args[0];
   if (!sub) return { readOnly: false, signature: 'docker' };
   if (DOCKER_GROUPS.has(sub)) {
-    const nested = args[1];
+    // `compose` takes its own options before the nested subcommand.
+    const rest = args.slice(1);
+    while (sub === 'compose' && rest[0]?.startsWith('-')) {
+      rest.splice(
+        0,
+        /^-(?:f|p|-file|-project-name|-project-directory|-env-file|-profile)$/.test(rest[0] ?? '')
+          ? 2
+          : 1,
+      );
+    }
+    const nested = rest[0];
+    // `compose config -o <file>` writes the resolved manifest.
+    const writesOutput = rest.some(arg => arg === '-o' || /^(?:-o=|--output)/.test(arg));
     return {
-      readOnly: nested !== undefined && DOCKER_GROUP_READ_ONLY.has(nested),
+      readOnly: nested !== undefined && DOCKER_GROUP_READ_ONLY.has(nested) && !writesOutput,
       signature: nested ? `docker ${sub} ${nested}` : `docker ${sub}`,
     };
   }
@@ -1096,12 +1121,13 @@ const TRUSTED_BIN_DIRS = [
   '/opt/homebrew/bin/',
   '/mingw64/bin/',
   '/usr/lib/git-core/',
+  // System32 is deliberately absent: its sort.exe, find.exe and tree.exe
+  // share names with the GNU tools but take slash-style switches the rules
+  // here do not model (`sort.exe in /O out` writes a file).
   'c:/program files/',
   'c:/program files (x86)/',
-  'c:/windows/system32/',
   '/c/program files/',
   '/c/program files (x86)/',
-  '/c/windows/system32/',
 ];
 
 function inTrustedBinDir(text: string): boolean {
@@ -1238,7 +1264,12 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
     case 'sort':
       return {
         readOnly: !args.some(
-          arg => arg === '-o' || arg.startsWith('--output') || arg.startsWith('--compress-program'),
+          arg =>
+            arg === '-o' ||
+            arg.startsWith('--output') ||
+            arg.startsWith('--compress-program') ||
+            // Windows' own sort.exe spells its output switch /O.
+            /^\/[oO]/.test(arg),
         ),
         signature: 'sort',
       };
@@ -1411,12 +1442,63 @@ function profileSegment(segment: Segment, options: ShellProfileOptions): VerbPro
 
   const head = words[0];
   if (!head) return { readOnly };
+  const verb = normalizeVerb(head);
+  // For a verb whose verdict depends on its flags or how many operands it
+  // gets, an argument the shell may expand into several words (`$OPTS`,
+  // `*.txt`) could supply the flag or the second operand the text does not
+  // show: `sort $OPTS f`, `uniq *.txt`, `git config $ARGS`. Pure readers
+  // such as grep, cat and ls keep their globs.
+  if (FLAG_SENSITIVE_VERBS.has(verb) && words.slice(1).some(word => word.expands)) {
+    readOnly = false;
+  }
   const profile = profileVerb(
-    normalizeVerb(head),
+    verb,
     words.slice(1).map(word => word.text),
   );
   return { readOnly: readOnly && profile.readOnly, signature: profile.signature };
 }
+
+const FLAG_SENSITIVE_VERBS = new Set([
+  'sort',
+  'sed',
+  'awk',
+  'gawk',
+  'mawk',
+  'nawk',
+  'tree',
+  'file',
+  'less',
+  'more',
+  'xxd',
+  'uniq',
+  'find',
+  'rg',
+  'git',
+  'gh',
+  'docker',
+  'kubectl',
+  'npm',
+  'pnpm',
+  'yarn',
+  'npx',
+  'go',
+  'cargo',
+  'pip',
+  'pip3',
+  'dotnet',
+  'tsc',
+  'date',
+  'hostname',
+  'yq',
+  'printf',
+  'alias',
+  'export',
+  'declare',
+  'typeset',
+  'readonly',
+  'local',
+  'let',
+]);
 
 // Read-only verbs that, after a pipe, only shape another command's output.
 // `npm test | grep FAIL` is about npm test; the grep is not what it does.
@@ -1467,7 +1549,9 @@ export function profileShellCommand(
   ) {
     return { readOnly: false, signatures: [] };
   }
-  const parsed = splitSegments(tokenize(command));
+  // Bash removes a backslash-newline before it reads anything else, so `$\`
+  // followed by a newline and `(` is a substitution. Do the same first.
+  const parsed = splitSegments(tokenize(command.replace(/\\\r?\n/g, '')));
   let readOnly = !parsed.substitution && parsed.segments.length > 0;
   const signatures = new Set<string>();
   for (const segment of parsed.segments) {
