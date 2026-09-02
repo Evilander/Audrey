@@ -29,7 +29,7 @@ import type {
   ConsolidationRunRow,
   Affect,
 } from './types.js';
-import { createDatabase, closeDatabase } from './db.js';
+import { createDatabase, closeDatabase, liveRowClause, refreshVectorRow } from './db.js';
 import { createEmbeddingProvider } from './embedding.js';
 import { createLLMProvider } from './llm.js';
 import { encodeEpisode, type SanitizedEncodeFields } from './encode.js';
@@ -39,7 +39,12 @@ import { validateMemory } from './validate.js';
 import { runConsolidation } from './consolidate.js';
 import { applyDecay } from './decay.js';
 import { rollbackConsolidation, getConsolidationHistory } from './rollback.js';
-import { forgetMemory, forgetByQuery as forgetByQueryFn, purgeMemories } from './forget.js';
+import {
+  forgetMemory,
+  forgetByQuery as forgetByQueryFn,
+  purgeMemories,
+  retireReadOnlyProbeFailures,
+} from './forget.js';
 import { applyFeedback, type MemoryValidateInput, type MemoryValidateResult } from './feedback.js';
 import { buildImpactReport, type ImpactReport } from './impact.js';
 import { introspect as introspectFn } from './introspect.js';
@@ -374,6 +379,19 @@ export class Audrey extends EventEmitter {
     });
     this.db = db;
     this._migrationPending = migrated;
+    // Runs once per store and then only costs a config lookup. Best-effort:
+    // a store that cannot be cleaned still opens, since every hook process
+    // passes through here and none of them may fail on housekeeping.
+    try {
+      const retired = retireReadOnlyProbeFailures(db);
+      if (retired > 0) {
+        console.error(`[audrey] retired ${retired} read-only probe failure records`);
+      }
+    } catch (error) {
+      console.error(
+        `[audrey] read-only probe cleanup skipped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     this.llmProvider = llm ? createLLMProvider(llm) : null;
     this.confidenceConfig = {
       weights: confidence.weights,
@@ -986,8 +1004,10 @@ export class Audrey extends EventEmitter {
           this.db
             .prepare("UPDATE semantics SET state = 'active', conditions = NULL WHERE id = ?")
             .run(id);
+          refreshVectorRow(this.db, 'semantics', id);
         } else {
           this.db.prepare('UPDATE episodes SET superseded_by = NULL WHERE id = ?').run(id);
+          refreshVectorRow(this.db, 'episodes', id);
         }
       };
       const supersede = (id: string, type: string, winnerId: string): void => {
@@ -995,8 +1015,10 @@ export class Audrey extends EventEmitter {
           this.db
             .prepare("UPDATE semantics SET state = 'superseded', conditions = NULL WHERE id = ?")
             .run(id);
+          refreshVectorRow(this.db, 'semantics', id);
         } else {
           this.db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ?').run(winnerId, id);
+          refreshVectorRow(this.db, 'episodes', id);
         }
       };
       const markContextDependent = (id: string, type: string): void => {
@@ -1068,25 +1090,26 @@ export class Audrey extends EventEmitter {
   }
 
   memoryStatus(): MemoryStatusResult {
-    const episodes = (this.db.prepare('SELECT COUNT(*) as c FROM episodes').get() as CountRow).c;
-    const semantics = (this.db.prepare('SELECT COUNT(*) as c FROM semantics').get() as CountRow).c;
-    const procedures = (this.db.prepare('SELECT COUNT(*) as c FROM procedures').get() as CountRow)
-      .c;
-    const searchableEpisodes = (
-      this.db
-        .prepare('SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL')
-        .get() as CountRow
-    ).c;
-    const searchableSemantics = (
-      this.db
-        .prepare('SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL')
-        .get() as CountRow
-    ).c;
-    const searchableProcedures = (
-      this.db
-        .prepare('SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL')
-        .get() as CountRow
-    ).c;
+    // Live rows only: a forgotten or superseded row has no vector by design
+    // (db.ts liveRowClause), so counting it here would report a healthy
+    // index as broken — and in strict mode Guard blocks on that report.
+    const count = (sql: string): number => (this.db.prepare(sql).get() as CountRow).c;
+    const episodes = count(`SELECT COUNT(*) as c FROM episodes WHERE ${liveRowClause('episodes')}`);
+    const semantics = count(
+      `SELECT COUNT(*) as c FROM semantics WHERE ${liveRowClause('semantics')}`,
+    );
+    const procedures = count(
+      `SELECT COUNT(*) as c FROM procedures WHERE ${liveRowClause('procedures')}`,
+    );
+    const searchableEpisodes = count(
+      `SELECT COUNT(*) as c FROM episodes WHERE embedding IS NOT NULL AND ${liveRowClause('episodes')}`,
+    );
+    const searchableSemantics = count(
+      `SELECT COUNT(*) as c FROM semantics WHERE embedding IS NOT NULL AND ${liveRowClause('semantics')}`,
+    );
+    const searchableProcedures = count(
+      `SELECT COUNT(*) as c FROM procedures WHERE embedding IS NOT NULL AND ${liveRowClause('procedures')}`,
+    );
 
     let vecEpisodes = 0,
       vecSemantics = 0,
