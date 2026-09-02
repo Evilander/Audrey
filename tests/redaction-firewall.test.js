@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { encodeEpisode } from '../dist/src/encode.js';
 import { createDatabase, closeDatabase } from '../dist/src/db.js';
 import { MockEmbeddingProvider } from '../dist/src/embedding.js';
+import { Audrey } from '../dist/src/index.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
 const TEST_DIR = './test-redaction-firewall-data';
@@ -121,5 +122,94 @@ describe('encodeEpisode redaction firewall', () => {
     });
     expect(typeof id).toBe('string');
     expect(id.length).toBeGreaterThan(0);
+  });
+
+  it('hands the sanitized fields to onSanitized, matching what was stored', async () => {
+    const secret = 'sk-ant-abcdefghij1234567890';
+    let sanitized;
+    const id = await encodeEpisode(
+      db,
+      embedding,
+      {
+        content: `remember my key: ${secret}`,
+        source: 'told-by-user',
+        context: { note: `token ${secret}` },
+      },
+      {
+        onSanitized: s => {
+          sanitized = s;
+        },
+      },
+    );
+    expect(sanitized).toBeDefined();
+    expect(sanitized.content).not.toContain(secret);
+    expect(sanitized.content).toContain('[REDACTED:');
+    expect(JSON.stringify(sanitized.context)).not.toContain(secret);
+    const row = db.prepare('SELECT content FROM episodes WHERE id = ?').get(id);
+    expect(sanitized.content).toBe(row.content);
+  });
+});
+
+describe('post-encode pipeline never sees raw secrets', () => {
+  const PIPE_DIR = './test-redaction-pipeline-data';
+  let audrey;
+
+  beforeEach(() => {
+    if (existsSync(PIPE_DIR)) rmSync(PIPE_DIR, { recursive: true });
+    audrey = new Audrey({
+      dataDir: PIPE_DIR,
+      agent: 'firewall-pipeline-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    audrey.close();
+    if (existsSync(PIPE_DIR)) rmSync(PIPE_DIR, { recursive: true });
+  });
+
+  it('enqueues sanitized params for grounding/validation, not the raw request', async () => {
+    // The storage row was already redacted; the leak was the background
+    // pipeline (grounding, validation, the contradiction LLM prompt)
+    // receiving the caller's raw params object. This pins the seam: whatever
+    // _enqueuePostEncode gets is what every downstream stage sees.
+    const secret = 'sk-ant-abcdefghij1234567890';
+    const captured = [];
+    const original = audrey._enqueuePostEncode.bind(audrey);
+    audrey._enqueuePostEncode = (id, params, embeddingBuffer) => {
+      captured.push(params);
+      return original(id, params, embeddingBuffer);
+    };
+
+    await audrey.encode({
+      content: `remember my key: ${secret}`,
+      source: 'told-by-user',
+      context: { note: `token ${secret}` },
+    });
+    await audrey.drainPostEncodeQueue();
+
+    expect(captured).toHaveLength(1);
+    const serialized = JSON.stringify(captured[0]);
+    expect(serialized).not.toContain(secret);
+    expect(captured[0].content).toContain('[REDACTED:');
+  });
+
+  it('encodeBatch enqueues sanitized params too', async () => {
+    const secret = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+    const captured = [];
+    const original = audrey._enqueuePostEncode.bind(audrey);
+    audrey._enqueuePostEncode = (id, params, embeddingBuffer) => {
+      captured.push(params);
+      return original(id, params, embeddingBuffer);
+    };
+
+    await audrey.encodeBatch([
+      { content: `first with ${secret}`, source: 'tool-result' },
+      { content: 'second plain entry', source: 'tool-result' },
+    ]);
+    await audrey.drainPostEncodeQueue();
+
+    expect(captured).toHaveLength(2);
+    expect(JSON.stringify(captured)).not.toContain(secret);
   });
 });

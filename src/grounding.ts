@@ -1,8 +1,9 @@
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync } from 'node:fs';
-import { isAbsolute, join, normalize } from 'node:path';
+import { isAbsolute, join, normalize, relative } from 'node:path';
 import { ulid } from 'ulid';
 import type { MemoryType } from './types.js';
+import { isContainedIn } from './utils.js';
 
 /**
  * Grounding — checking whether a memory is still true, not just still recent.
@@ -104,9 +105,11 @@ const RUNNER_BUILTINS = new Set([
 
 function normalizeRelativePath(raw: string): string | null {
   const unified = raw.replace(/\\/g, '/').replace(/^\.\//, '');
-  if (!unified || unified.startsWith('../')) return null;
+  if (!unified) return null;
   if (isAbsolute(unified) || /^[A-Za-z]:\//.test(unified)) return null;
   const segments = unified.split('/');
+  // Any '..' segment, not only a leading one: 'docs/../../x' escapes too.
+  if (segments.includes('..')) return null;
   if (segments.some(segment => IGNORED_PATH_SEGMENTS.has(segment))) return null;
   return unified;
 }
@@ -171,7 +174,14 @@ export function verifyAnchor(
   if (!projectRoot || !existsSync(projectRoot)) return null;
   if (anchor.kind === 'path') {
     const target = normalize(join(projectRoot, anchor.value));
-    return existsSync(target);
+    // Anchors recorded or imported before the '..' segment check existed
+    // must not become an existence probe outside the project.
+    const rel = relative(projectRoot, target);
+    if (rel.startsWith('..') || isAbsolute(rel)) return false;
+    if (!existsSync(target)) return false;
+    // The lexical check above cannot see a junction or symlink inside the
+    // project pointing elsewhere; re-judge on canonical paths.
+    return isContainedIn(projectRoot, target);
   }
   const scripts = packageScripts(projectRoot, cache);
   if (scripts.size === 0) return null;

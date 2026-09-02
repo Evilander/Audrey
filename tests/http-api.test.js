@@ -55,6 +55,24 @@ describe('HTTP API', () => {
     expect(body.source).toBe('told-by-user');
   });
 
+  it('POST /v1/encode echoes what was stored, not the raw secret', async () => {
+    const secret = 'sk-ant-abcdefghij1234567890';
+    const res = await app.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: `remember my key: ${secret}`,
+        source: 'told-by-user',
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // The stored row is redacted; echoing the caller's raw content back
+    // re-emits the secret into HTTP logs and clients that trust the echo.
+    expect(body.content).not.toContain(secret);
+    expect(body.content).toContain('[REDACTED:');
+  });
+
   it('POST /v1/recall returns results after encoding', async () => {
     // Encode a memory first
     await app.request('/v1/encode', {

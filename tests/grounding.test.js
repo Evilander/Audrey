@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Audrey } from '../dist/src/index.js';
@@ -52,6 +52,7 @@ describe('extractAnchorCandidates', () => {
     expect(values('the ratio is 3/4 and we discussed it', 'path')).toEqual([]);
     expect(values('look in src/components for it', 'path')).toEqual([]);
     expect(values('check ../outside/repo.ts', 'path')).toEqual([]);
+    expect(values('check docs/../../outside/repo.ts', 'path')).toEqual([]);
     expect(values('node_modules/typescript/lib/tsc.js is vendored', 'path')).toEqual([]);
   });
 
@@ -121,6 +122,28 @@ describe('grounding against a project', () => {
     // A checkout that moved must not discredit the memories describing it.
     expect(verifyAnchor({ kind: 'path', value: 'a/b.ts' }, join(project, 'gone'))).toBeNull();
     expect(verifyAnchor({ kind: 'npm_script', value: 'test' }, join(project, 'gone'))).toBeNull();
+  });
+
+  it('does not treat a path through a junction escaping the project as intact', ctx => {
+    // A link inside the project pointing outside it: the lexical containment
+    // check passes, but the canonical target is not in the project, so the
+    // anchor must not become an existence probe (or a truth claim) about
+    // foreign paths.
+    const outside = mkdtempSync(join(tmpdir(), 'audrey-grounding-outside-'));
+    try {
+      writeFileSync(join(outside, 'loot.txt'), 'outside file');
+      try {
+        symlinkSync(outside, join(project, 'jx'), 'junction');
+      } catch {
+        // A runner that forbids link creation cannot exercise this path;
+        // skip loudly instead of reporting a pass with zero assertions.
+        ctx.skip();
+        return;
+      }
+      expect(verifyAnchor({ kind: 'path', value: 'jx/loot.txt' }, project)).toBe(false);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('records only the claims that verify when the memory is written', async () => {

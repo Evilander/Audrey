@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Audrey } from '../dist/src/index.js';
 import { findPromotionCandidates } from '../dist/src/promote.js';
 import { renderClaudeRule, renderAllRules } from '../dist/src/rules-compiler.js';
-import { existsSync, rmSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, rmSync, mkdirSync, readFileSync, mkdtempSync, symlinkSync } from 'node:fs';
+import { join, resolve, delimiter } from 'node:path';
+import { homedir } from 'node:os';
 
 const TEST_DIR = './test-promote-data';
 const PROJECT_DIR = './test-promote-project';
@@ -383,5 +384,69 @@ describe('promote — FS write + idempotency', () => {
     await audrey.promote({ projectDir: PROJECT_DIR });
     expect(received).toHaveLength(1);
     expect(received[0].target).toBe('claude-rules');
+  });
+});
+
+describe('promote — write containment', () => {
+  let audrey;
+  let outsideDir;
+  const savedRoots = process.env.AUDREY_PROMOTE_ROOTS;
+
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+    if (existsSync(PROJECT_DIR)) rmSync(PROJECT_DIR, { recursive: true, force: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+    mkdirSync(PROJECT_DIR, { recursive: true });
+    // vitest.config points TMP/TEMP at .tmp-vitest inside the repo, so
+    // os.tmpdir() is UNDER cwd here — useless as an outside path. The home
+    // directory is genuinely outside the checkout on dev boxes and CI both.
+    outsideDir = mkdtempSync(join(homedir(), 'audrey-promote-outside-'));
+    delete process.env.AUDREY_PROMOTE_ROOTS;
+    audrey = new Audrey({
+      dataDir: TEST_DIR,
+      agent: 'promote-containment-test',
+      embedding: { provider: 'mock', dimensions: 8 },
+    });
+  });
+
+  afterEach(() => {
+    audrey.close();
+    if (savedRoots === undefined) delete process.env.AUDREY_PROMOTE_ROOTS;
+    else process.env.AUDREY_PROMOTE_ROOTS = savedRoots;
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+    if (existsSync(PROJECT_DIR)) rmSync(PROJECT_DIR, { recursive: true, force: true });
+    if (outsideDir && existsSync(outsideDir)) rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  it('refuses a projectDir outside cwd when no roots are configured', async () => {
+    await expect(audrey.promote({ yes: true, projectDir: outsideDir })).rejects.toThrow(
+      /refusing to write/,
+    );
+  });
+
+  it('honors AUDREY_PROMOTE_ROOTS split on path.delimiter, drive letters intact', async () => {
+    // Two absolute entries joined with the platform delimiter. On Windows a
+    // raw [:;] split shattered "C:\Users\…" on its own drive-letter colon
+    // and no configured root ever matched.
+    process.env.AUDREY_PROMOTE_ROOTS = [outsideDir, resolve(PROJECT_DIR)].join(delimiter);
+    const result = await audrey.promote({ yes: true, projectDir: outsideDir });
+    expect(result.dry_run).toBe(false);
+  });
+
+  it('refuses a junction inside cwd that resolves outside every allowed root', async ctx => {
+    const linkPath = resolve(PROJECT_DIR, 'jx');
+    try {
+      symlinkSync(outsideDir, linkPath, 'junction');
+    } catch {
+      // A runner that forbids link creation cannot exercise this path; skip
+      // loudly instead of reporting a pass with zero assertions.
+      ctx.skip();
+      return;
+    }
+    // Lexically linkPath sits under cwd, so the pre-fix check allowed the
+    // write and it landed in outsideDir.
+    await expect(audrey.promote({ yes: true, projectDir: linkPath })).rejects.toThrow(
+      /refusing to write/,
+    );
   });
 });

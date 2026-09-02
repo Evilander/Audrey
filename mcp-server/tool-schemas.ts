@@ -127,6 +127,12 @@ export const memoryForgetToolSchema = {
     .boolean()
     .optional()
     .describe('Hard-delete the memory permanently (default false, soft-delete)'),
+  all_agents: z
+    .boolean()
+    .optional()
+    .describe(
+      'Widen the query match across every agent namespace instead of only this server agent (default false). Admin-only cleanup escape hatch.',
+    ),
 };
 
 export const memoryValidateToolSchema = {

@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 import { Audrey } from '../dist/src/index.js';
-import { TRUST_CONTEXT_KEY, USER_VERIFIED_TRUST } from '../dist/src/trust.js';
+import {
+  TRUST_CONTEXT_KEY,
+  USER_VERIFIED_TRUST,
+  LEGACY_TRUST_CUTOFF_ISO,
+} from '../dist/src/trust.js';
+import { createContradiction } from '../dist/src/validate.js';
 
 const TEST_DIR = './test-preflight-data';
 
@@ -58,12 +63,13 @@ describe('Memory Preflight', () => {
     expect(result.recommended_actions.length).toBeGreaterThan(0);
   });
 
-  it('keeps user-authored risks at high severity even when tagged tool-failure', async () => {
+  it('keeps user-verified risks at high severity even when tagged tool-failure', async () => {
     await audrey.encode({
       content: 'Deploying without draining the queue corrupts in-flight jobs',
       source: 'told-by-user',
       tags: ['risk', 'tool-failure'],
       salience: 0.9,
+      context: { [TRUST_CONTEXT_KEY]: USER_VERIFIED_TRUST },
     });
 
     const result = await audrey.preflight('deploy the queue worker', {
@@ -77,6 +83,54 @@ describe('Memory Preflight', () => {
     expect(risk).toBeDefined();
     expect(risk.severity).toBe('high');
     expect(risk.message).toContain('draining the queue');
+  });
+
+  it('does not let an unverified risk-tagged memory hard-block a strict session', async () => {
+    // Same shape as the capsule must_follow gate: claiming source alone is not
+    // trust. Pinned after the legacy cutoff so the test is clock-independent.
+    const id = await audrey.encode({
+      content: 'Running npm install corrupts node_modules on this host, never do it',
+      source: 'told-by-user',
+      tags: ['risk'],
+      salience: 0.9,
+    });
+    const afterCutoff = new Date(Date.parse(LEGACY_TRUST_CUTOFF_ISO) + 86400000).toISOString();
+    audrey.db.prepare('UPDATE episodes SET created_at = ? WHERE id = ?').run(afterCutoff, id);
+
+    const result = await audrey.preflight('run npm install for the release', {
+      tool: 'Bash',
+      strict: true,
+    });
+
+    expect(result.decision).not.toBe('block');
+    expect(result.warnings.some(w => w.type === 'risk')).toBe(false);
+    const demoted = result.warnings.find(
+      w => w.type === 'uncertain' && w.message.includes('corrupts node_modules'),
+    );
+    expect(demoted).toBeDefined();
+    expect(demoted.severity).toBe('medium');
+  });
+
+  it('treats an open contradiction as caution, not a strict-mode block', async () => {
+    const a = await audrey.encode({
+      content: 'Deploy with npm run deploy:prod',
+      source: 'direct-observation',
+    });
+    const b = await audrey.encode({
+      content: 'Deploy with npm run deploy:staging',
+      source: 'direct-observation',
+    });
+    createContradiction(audrey.db, a, 'episodic', b, 'episodic');
+
+    const result = await audrey.preflight('deploy the service', {
+      tool: 'Bash',
+      strict: true,
+    });
+
+    const contradiction = result.warnings.find(w => w.type === 'contradiction');
+    expect(contradiction).toBeDefined();
+    expect(contradiction.severity).toBe('medium');
+    expect(result.decision).toBe('caution');
   });
 
   it('does not warn on unrelated recent tool failures from the capsule', async () => {
@@ -429,5 +483,61 @@ describe('Memory Preflight', () => {
 
     const taggedCalls = recallCalls.filter(([, options]) => options?.tags?.includes('must-follow'));
     expect(taggedCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('runs the sweep even when the capsule already surfaced a must-follow rule', async () => {
+    // One rule the capsule's own recall ranks easily, and a second buried
+    // under noise so it can only reach the report through the tagged sweep.
+    // Pre-fix, one capsule hit suppressed the sweep entirely and the second
+    // rule vanished.
+    const visibleId = await audrey.encode({
+      content: 'Must-follow: verify the release checksum before publishing artifacts.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'release'],
+      salience: 1,
+      context: { [TRUST_CONTEXT_KEY]: USER_VERIFIED_TRUST },
+    });
+    for (let i = 0; i < 200; i++) {
+      await audrey.encode({
+        content: `Irrelevant background memory ${i}: preference note with no release safety value.`,
+        source: 'direct-observation',
+        tags: ['noise'],
+        salience: 0.05,
+      });
+    }
+    const buriedId = await audrey.encode({
+      content: 'Must-follow: never delete the audit log directory.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'delete'],
+      salience: 1,
+      context: { [TRUST_CONTEXT_KEY]: USER_VERIFIED_TRUST },
+    });
+
+    const originalRecall = audrey.recall.bind(audrey);
+    const recallCalls = [];
+    audrey.recall = (...args) => {
+      recallCalls.push(args);
+      return originalRecall(...args);
+    };
+
+    let result;
+    try {
+      result = await audrey.preflight('verify the release checksum before publishing artifacts', {
+        tool: 'Bash',
+      });
+    } finally {
+      audrey.recall = originalRecall;
+    }
+
+    const taggedCalls = recallCalls.filter(([, options]) => options?.tags?.includes('must-follow'));
+    expect(taggedCalls.length).toBeGreaterThanOrEqual(1);
+
+    const mustFollowIds = result.warnings
+      .filter(w => w.type === 'must_follow')
+      .map(w => w.evidence_id);
+    expect(mustFollowIds).toContain(visibleId);
+    expect(mustFollowIds).toContain(buriedId);
+    // Deduped: a rule the capsule already surfaced is not warned twice.
+    expect(mustFollowIds.filter(id => id === visibleId)).toHaveLength(1);
   });
 });

@@ -96,6 +96,8 @@ function escapeRegExp(value: string): string {
 export const AUDREY_MCP_TOOL_PREFIX = `mcp__${SERVER_NAME}__`;
 
 const SIDE_EFFECTFUL_TOOL_MATCHER = `^(Bash|Edit|MultiEdit|Write|NotebookEdit|apply_patch|mcp__(?!${escapeRegExp(SERVER_NAME)}__).*)$`;
+const CODEX_SIDE_EFFECTFUL_TOOL_MATCHER =
+  '^(Bash|Edit|MultiEdit|Write|NotebookEdit|apply_patch|mcp__.*)$';
 
 const EVENT_DEFINITIONS: readonly EventDefinition[] = [
   {
@@ -261,8 +263,12 @@ function eventGroup(
     host === 'claude-code'
       ? claudeHandler(host, definition, nodePath, entrypoint, runtimeArgs)
       : codexHandler(host, definition, nodePath, entrypoint, runtimeArgs);
+  const matcher =
+    host === 'codex' && definition.matcher === SIDE_EFFECTFUL_TOOL_MATCHER
+      ? CODEX_SIDE_EFFECTFUL_TOOL_MATCHER
+      : definition.matcher;
   return {
-    ...(definition.matcher ? { matcher: definition.matcher } : {}),
+    ...(matcher ? { matcher } : {}),
     hooks: [handler],
   };
 }
@@ -308,8 +314,26 @@ function isAudreyHandler(value: unknown): boolean {
     );
   if (isAutopilot) return true;
   if (/\bguard\s+--hook\b/i.test(normalized)) return true;
-  if (/\bobserve-tool\s+--event(?:\s+|=)PostToolUse(?:Failure)?\b/i.test(normalized)) return true;
+  // Any observe-tool event, not just PostToolUse(Failure): legacy configs
+  // registered StopFailure, SubagentStart/Stop, TaskCreated/Completed too.
+  if (/\bobserve-tool\s+--event(?:\s+|=)[A-Za-z]+\b/i.test(normalized)) return true;
   if (/(?:audrey[^\r\n]*autopilot|autopilot[^\r\n]*audrey)/i.test(normalized)) return true;
+  // Legacy handlers predate statusMessage and ran bare CLI verbs (greeting,
+  // reflect) with no --host/--event flags. Recognize them by the entrypoint
+  // they invoke — a path whose directory segment starts with "audrey"
+  // (repo checkout, npm global, npx cache, "Audrey Memory" installs) leading
+  // into an mcp-server build — so an unrelated tool that merely mentions
+  // audrey somewhere, or lives in "my-audrey-fork", is never claimed.
+  if (/[\\/]audrey[^\\/]*[\\/](?:dist[\\/])?mcp-server[\\/]index\.[cm]?js\b/i.test(normalized)) {
+    return true;
+  }
+  // CLI-via-package forms ("npx audrey reflect", "audrey greeting"). Only
+  // the verbs that never appear with flags — hook/guard forms always carry
+  // --host/--hook and are matched by the stricter rules above, so keeping
+  // them out of this list shrinks the false-positive surface.
+  if (/\baudrey\b\s+(?:greeting|reflect|observe-tool|dream)\b/i.test(normalized)) {
+    return true;
+  }
   return false;
 }
 

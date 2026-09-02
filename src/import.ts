@@ -95,6 +95,7 @@ const exportedSemanticSchema = z.object({
   challenge_count: countSchema.optional(),
   interference_count: countSchema.optional(),
   salience: scoreSchema.optional(),
+  private: z.union([z.literal(0), z.literal(1)]).optional(),
   usage_count: countSchema.optional(),
   last_used_at: optionalTextSchema,
 });
@@ -115,6 +116,7 @@ const exportedProcedureSchema = z.object({
   retrieval_count: countSchema.optional(),
   interference_count: countSchema.optional(),
   salience: scoreSchema.optional(),
+  private: z.union([z.literal(0), z.literal(1)]).optional(),
   usage_count: countSchema.optional(),
   last_used_at: optionalTextSchema,
 });
@@ -293,6 +295,25 @@ function sanitizeImportedMemories(snapshot: ImportSnapshot): void {
     const stripped = stripReservedTrustKeys(value as Record<string, string>);
     return redactJson(stripped ?? {}).value as Record<string, unknown>;
   };
+  // Metadata arrives as a JSON string. Sanitize the parsed structure (values
+  // can nest) and strip reserved trust keys so a snapshot cannot smuggle
+  // trust markers through event metadata; unparseable strings are treated as
+  // plain text. Autopilot's indexed keys (action_key etc.) survive because
+  // the redactor exempts bare identifiers, and the insert re-validates their
+  // shape before using them anyway.
+  const cleanJsonText = (value: string | null | undefined): string | null | undefined => {
+    if (typeof value !== 'string') return value;
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const cleaned = cleanObject(parsed as Record<string, unknown>);
+        return JSON.stringify(cleaned ?? {});
+      }
+      return JSON.stringify(redactJson(parsed).value);
+    } catch {
+      return cleanText(value);
+    }
+  };
 
   for (const episode of snapshot.episodes) {
     episode.content = cleanText(episode.content);
@@ -300,6 +321,7 @@ function sanitizeImportedMemories(snapshot: ImportSnapshot): void {
     episode.affect = cleanObject(episode.affect);
     episode.causal_trigger = cleanOptionalText(episode.causal_trigger);
     episode.causal_consequence = cleanOptionalText(episode.causal_consequence);
+    if (episode.tags) episode.tags = episode.tags.map(tag => cleanText(tag));
   }
   for (const semantic of snapshot.semantics ?? []) {
     semantic.content = cleanText(semantic.content);
@@ -308,6 +330,13 @@ function sanitizeImportedMemories(snapshot: ImportSnapshot): void {
   for (const procedure of snapshot.procedures ?? []) {
     procedure.content = cleanText(procedure.content);
     procedure.trigger_conditions = cleanOptionalText(procedure.trigger_conditions);
+  }
+  // Memory events were inserted verbatim: error_summary carries raw tool
+  // error text and metadata is caller-controlled JSON — both are the same
+  // untrusted ingestion surface as episode content.
+  for (const event of snapshot.memoryEvents ?? []) {
+    event.error_summary = cleanOptionalText(event.error_summary);
+    event.metadata = cleanJsonText(event.metadata);
   }
 }
 
@@ -373,8 +402,8 @@ export async function importMemories(
       evidence_count, supporting_count, contradicting_count, source_type_diversity,
       consolidation_checkpoint, embedding_model, embedding_version, consolidation_model,
       consolidation_prompt_hash, created_at, last_reinforced_at, retrieval_count, challenge_count,
-      interference_count, salience, usage_count, last_used_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      interference_count, salience, "private", usage_count, last_used_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVecSemantic = db.prepare(
     'INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
@@ -383,8 +412,8 @@ export async function importMemories(
   const insertProcedure = db.prepare(`
     INSERT INTO procedures (id, content, agent, embedding, state, trigger_conditions, evidence_episode_ids,
       success_count, failure_count, embedding_model, embedding_version, created_at, last_reinforced_at,
-      retrieval_count, interference_count, salience, usage_count, last_used_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      retrieval_count, interference_count, salience, "private", usage_count, last_used_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertVecProcedure = db.prepare(
     'INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
@@ -496,6 +525,7 @@ export async function importMemories(
         sem.challenge_count ?? 0,
         sem.interference_count ?? 0,
         sem.salience ?? 0.5,
+        sem.private ?? 0,
         sem.usage_count ?? 0,
         sem.last_used_at ?? null,
       );
@@ -524,6 +554,7 @@ export async function importMemories(
         proc.retrieval_count ?? 0,
         proc.interference_count ?? 0,
         proc.salience ?? 0.5,
+        proc.private ?? 0,
         proc.usage_count ?? 0,
         proc.last_used_at ?? null,
       );
