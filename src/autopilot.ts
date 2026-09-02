@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Audrey } from './audrey.js';
 import type { MemoryCapsule, CapsuleEntry } from './capsule.js';
 import { MemoryController, type ControllerGuardResult } from './controller.js';
+import { reconcileVectorIndex } from './db.js';
 import { deleteEventsBefore } from './events.js';
 import { projectNamespace, projectRoot } from './project.js';
 import { redact } from './redact.js';
@@ -1557,12 +1558,32 @@ function runGroundingSweep(
   }
 }
 
+/**
+ * Drops vectors left behind for superseded rows. Not interval-gated: the
+ * surplus check is three count comparisons memoryStatus() already makes,
+ * and while a surplus stands every Guard preflight carries a re-embed
+ * recommendation, so it should not wait a day.
+ */
+function runVectorReconcile(audrey: Audrey): void {
+  try {
+    const status = audrey.memoryStatus();
+    const surplus =
+      status.vec_episodes > status.searchable_episodes ||
+      status.vec_semantics > status.searchable_semantics ||
+      status.vec_procedures > status.searchable_procedures;
+    if (surplus) reconcileVectorIndex(audrey.db);
+  } catch (error) {
+    reportMaintenanceError(audrey, 'vector-reconcile', error);
+  }
+}
+
 async function runMaintenance(
   audrey: Audrey,
   options: AutopilotHookOptions,
   cwd?: string,
 ): Promise<boolean> {
   runEventRetention(audrey, options);
+  runVectorReconcile(audrey);
   runGroundingSweep(audrey, options, cwd);
 
   const intervalMs = (options.maintenanceIntervalHours ?? 24) * 60 * 60 * 1000;

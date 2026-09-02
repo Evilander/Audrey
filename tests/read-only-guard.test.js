@@ -333,12 +333,31 @@ describe('vector index mirrors live rows', () => {
     expect(row.embedding).not.toBeNull();
   });
 
-  it('repairs a store whose index still holds dead rows', async () => {
+  it('treats a surplus dead vector as a re-embed recommendation, not a broken index', async () => {
+    await audrey.encode({ content: 'kept memory', source: 'told-by-user' });
+    const drop = await audrey.encode({ content: 'dropped memory', source: 'told-by-user' });
+    // An older writer superseding a row without touching its vector.
+    audrey.db.prepare("UPDATE episodes SET superseded_by = 'forgotten' WHERE id = ?").run(drop);
+    const status = audrey.memoryStatus();
+    expect(status.healthy).toBe(true);
+    expect(status.reembed_recommended).toBe(true);
+    expect(status.vec_episodes).toBe(2);
+    expect(status.episodes).toBe(1);
+  });
+
+  it('reports a missing vector as unhealthy', async () => {
+    const id = await audrey.encode({ content: 'kept memory', source: 'told-by-user' });
+    audrey.db.prepare('DELETE FROM vec_episodes WHERE id = ?').run(id);
+    const status = audrey.memoryStatus();
+    expect(status.healthy).toBe(false);
+    expect(status.reembed_recommended).toBe(true);
+  });
+
+  it('repairs a store whose index still holds dead rows on first open', async () => {
     await audrey.encode({ content: 'kept memory', source: 'told-by-user' });
     const drop = await audrey.encode({ content: 'dropped memory', source: 'told-by-user' });
     audrey.db.prepare("UPDATE episodes SET superseded_by = 'forgotten' WHERE id = ?").run(drop);
     audrey.db.prepare("DELETE FROM audrey_config WHERE key = 'vec_index_reconciled_at'").run();
-    expect(audrey.memoryStatus().healthy).toBe(false);
     await audrey.closeAsync();
 
     audrey = new Audrey({
@@ -346,7 +365,22 @@ describe('vector index mirrors live rows', () => {
       agent: 'claude-code',
       embedding: { provider: 'mock', dimensions: 8 },
     });
-    expect(audrey.memoryStatus().healthy).toBe(true);
+    expect(audrey.memoryStatus().reembed_recommended).toBe(false);
+    expect(audrey.db.prepare('SELECT COUNT(*) AS c FROM vec_episodes').get().c).toBe(1);
+  });
+
+  it('clears surplus dead vectors in the maintenance sweep', async () => {
+    await audrey.encode({ content: 'kept memory', source: 'told-by-user' });
+    const drop = await audrey.encode({ content: 'dropped memory', source: 'told-by-user' });
+    audrey.db.prepare("UPDATE episodes SET superseded_by = 'forgotten' WHERE id = ?").run(drop);
+    expect(audrey.memoryStatus().reembed_recommended).toBe(true);
+
+    await runAutopilotHook(
+      audrey,
+      { hook_event_name: 'Stop', session_id: 'session-1', cwd: PROJECT },
+      { host: 'claude-code' },
+    );
+    expect(audrey.memoryStatus().reembed_recommended).toBe(false);
     expect(audrey.db.prepare('SELECT COUNT(*) AS c FROM vec_episodes').get().c).toBe(1);
   });
 });
