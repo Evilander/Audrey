@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 - 2026-09-02
 
 Audrey now knows the difference between looking and doing. It stays silent while an agent explores and speaks up only when the agent is about to repeat something that actually broke.
 
