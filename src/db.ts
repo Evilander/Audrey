@@ -205,8 +205,8 @@ interface PragmaColumn {
 }
 
 interface MigrateTableOptions {
-  source: string;
-  target: string;
+  source: VecSyncSource;
+  target: Vec0TableName;
   selectCols: string;
   insertCols: string;
   placeholders: string;
@@ -274,7 +274,7 @@ export function createVec0Tables(db: Database.Database, dimensions: number): voi
   }
 }
 
-type VecSyncSource = 'episodes' | 'semantics' | 'procedures';
+export type VecSyncSource = 'episodes' | 'semantics' | 'procedures';
 
 const VEC_SYNC_SOURCES: readonly VecSyncSource[] = ['episodes', 'semantics', 'procedures'];
 
@@ -309,6 +309,76 @@ function writeConfigText(db: Database.Database, key: string, value: string): voi
     `INSERT INTO audrey_config (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
   ).run(key, value);
+}
+
+const VEC_TARGET_TABLE: Record<VecSyncSource, Vec0TableName> = {
+  episodes: 'vec_episodes',
+  semantics: 'vec_semantics',
+  procedures: 'vec_procedures',
+};
+
+/**
+ * The vec0 tables mirror live rows only. A forgotten or superseded episode,
+ * or a semantic/procedural row in the superseded state, has no vector:
+ * recall would filter it out after the KNN anyway, but a dead vector still
+ * spends one of the k candidate slots, and memoryStatus() reads "vector
+ * count equals live embedded count" as the index being healthy. In strict
+ * mode Guard blocks every action while that reads false, so every writer
+ * that changes a row's liveness must keep the two in step.
+ */
+export function liveRowClause(source: VecSyncSource, alias = ''): string {
+  const column = alias ? `${alias}.` : '';
+  return source === 'episodes'
+    ? `${column}superseded_by IS NULL`
+    : `${column}state != 'superseded'`;
+}
+
+/**
+ * Drops the vector for a row and re-inserts it when the row is live and
+ * carries an embedding. Safe to call for a row that was just superseded,
+ * restored, or deleted.
+ */
+export function refreshVectorRow(db: Database.Database, source: VecSyncSource, id: string): void {
+  const target = VEC_TARGET_TABLE[source];
+  db.prepare(`DELETE FROM ${target} WHERE id = ?`).run(id);
+  if (source === 'episodes') {
+    db.prepare(
+      `INSERT INTO vec_episodes(id, agent, embedding, source, consolidated)
+       SELECT id, COALESCE(agent, 'default'), embedding, source, consolidated
+       FROM episodes
+       WHERE id = ? AND embedding IS NOT NULL AND superseded_by IS NULL`,
+    ).run(id);
+    return;
+  }
+  db.prepare(
+    `INSERT INTO ${target}(id, agent, embedding, state)
+     SELECT id, COALESCE(agent, 'default'), embedding, state
+     FROM ${source}
+     WHERE id = ? AND embedding IS NOT NULL AND state != 'superseded'`,
+  ).run(id);
+}
+
+const VEC_RECONCILED_KEY = 'vec_index_reconciled_at';
+
+/**
+ * One-time repair for stores written before every writer kept dead rows out
+ * of the vec0 tables: a full re-embed, an import, or a resolve-truth
+ * supersede used to leave vectors behind for rows recall would never
+ * return. Runs once per store; the writers keep the invariant from then on.
+ */
+function reconcileVectorIndex(db: Database.Database): void {
+  if (readConfigText(db, VEC_RECONCILED_KEY)) return;
+  const sources: VecSyncSource[] = ['episodes', 'semantics', 'procedures'];
+  db.transaction(() => {
+    for (const source of sources) {
+      const dead = db
+        .prepare(`SELECT id FROM ${source} WHERE NOT (${liveRowClause(source)})`)
+        .all() as Array<{ id: string }>;
+      const drop = db.prepare(`DELETE FROM ${VEC_TARGET_TABLE[source]} WHERE id = ?`);
+      for (const row of dead) drop.run(row.id);
+    }
+    writeConfigText(db, VEC_RECONCILED_KEY, new Date().toISOString());
+  })();
 }
 
 export function dropVec0Tables(db: Database.Database): void {
@@ -360,6 +430,7 @@ function migrateTable(
     FROM ${source} source_row
     WHERE source_row.id > ?
       AND source_row.embedding IS NOT NULL
+      AND ${liveRowClause(source, 'source_row')}
       AND NOT EXISTS (
         SELECT 1 FROM ${target} target_row WHERE target_row.id = source_row.id
       )
@@ -836,6 +907,7 @@ export function createDatabase(
 
     createVec0Tables(db, dimensions);
     migrateVec0AgentPartitions(db, dimensions);
+    reconcileVectorIndex(db);
 
     if (!migrated && migrateEmbeddingsToVec0(db, dimensions)) {
       migrated = true;

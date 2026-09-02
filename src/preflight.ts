@@ -1,6 +1,11 @@
 import type { Audrey } from './audrey.js';
 import { guardActionKey } from './action-key.js';
-import type { CapsuleEntry, CapsuleMode, MemoryCapsule } from './capsule.js';
+import {
+  isAutopilotFailureEpisode,
+  type CapsuleEntry,
+  type CapsuleMode,
+  type MemoryCapsule,
+} from './capsule.js';
 import type { FailurePattern } from './events.js';
 import { redact } from './redact.js';
 import { controlTrustFor, type ControlTrust } from './trust.js';
@@ -35,6 +40,8 @@ export interface PreflightOptions {
   recordEvent?: boolean;
   scope?: RecallOptions['scope'];
   agent?: string;
+  /** Verb signatures of the proposed shell command; see AgentAction.signatures. */
+  actionSignatures?: string[];
 }
 
 export interface PreflightWarning {
@@ -136,10 +143,7 @@ function isToolFailureEntry(entry: CapsuleEntry): boolean {
   // Only Autopilot-learned failure episodes (tool-result source) get the
   // tool-matched medium-severity treatment. A user-authored memory that
   // happens to carry the tag stays a full high-severity risk.
-  return (
-    entry.source === 'tool-result' &&
-    Boolean(entry.tags?.some(tag => tag.toLowerCase() === 'tool-failure'))
-  );
+  return isAutopilotFailureEpisode(entry.source, entry.tags ?? []);
 }
 
 function addWarning(
@@ -270,6 +274,7 @@ export async function buildPreflight(
     scope,
     agent,
     ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.actionSignatures ? { actionSignatures: options.actionSignatures } : {}),
     recall: { scope, agent },
   });
 

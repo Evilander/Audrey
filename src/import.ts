@@ -488,13 +488,16 @@ export async function importMemories(
         ep.usage_count ?? 0,
         ep.last_used_at ?? null,
       );
-      insertVecEpisode.run(
-        ep.id,
-        ownerAgent,
-        embeddingBuffer,
-        ep.source,
-        BigInt(ep.consolidated ?? 0),
-      );
+      // The vec0 tables mirror live rows only (see db.ts liveRowClause).
+      if (!ep.superseded_by) {
+        insertVecEpisode.run(
+          ep.id,
+          ownerAgent,
+          embeddingBuffer,
+          ep.source,
+          BigInt(ep.consolidated ?? 0),
+        );
+      }
       insertFTSEpisode(db, ep.id, ep.content, ep.tags ?? null);
     }
 
@@ -529,7 +532,9 @@ export async function importMemories(
         sem.usage_count ?? 0,
         sem.last_used_at ?? null,
       );
-      insertVecSemantic.run(sem.id, ownerAgent, embeddingBuffer, sem.state);
+      if (sem.state !== 'superseded') {
+        insertVecSemantic.run(sem.id, ownerAgent, embeddingBuffer, sem.state);
+      }
       insertFTSSemantic(db, sem.id, sem.content);
     }
 
@@ -558,7 +563,9 @@ export async function importMemories(
         proc.usage_count ?? 0,
         proc.last_used_at ?? null,
       );
-      insertVecProcedure.run(proc.id, ownerAgent, embeddingBuffer, proc.state);
+      if (proc.state !== 'superseded') {
+        insertVecProcedure.run(proc.id, ownerAgent, embeddingBuffer, proc.state);
+      }
       insertFTSProcedure(db, proc.id, proc.content);
     }
 
