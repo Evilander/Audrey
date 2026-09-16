@@ -97,6 +97,10 @@ function withArtifactCopy(edit) {
   }
 }
 
+const packageVersion = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+).version;
+
 describe('GuardBench harness', () => {
   it('publishes scenario seeds and external adapter subjects in the manifest', () => {
     const manifest = guardBenchManifest([
@@ -652,7 +656,10 @@ describe('GuardBench harness', () => {
   });
 
   it('reports release readiness without hiding publish blockers', async () => {
-    const report = await verifyReleaseReadiness({ targetVersion: '1.3.0', allowPending: true });
+    const report = await verifyReleaseReadiness({
+      targetVersion: packageVersion,
+      allowPending: true,
+    });
 
     expect(report.ok).toBe(true);
     expect(report.ready).toBe(false);
@@ -672,11 +679,11 @@ describe('GuardBench harness', () => {
   });
 
   it('keeps the release cut idempotent after it is applied', () => {
-    const report = prepareReleaseCut({ targetVersion: '1.3.0', date: '2026-09-02' });
+    const report = prepareReleaseCut({ targetVersion: packageVersion, date: '2026-09-16' });
 
     expect(report.ok).toBe(true);
     expect(report.apply).toBe(false);
-    expect(report.currentVersions.packageJson).toBe('1.3.0');
+    expect(report.currentVersions.packageJson).toBe(packageVersion);
     expect(report.files.filter(file => file.changed).map(file => file.path)).toEqual([]);
     expect(report.nextCommands).toContain('npm run release:gate:paper');
   });
