@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type { IntrospectResult } from './types.js';
 
 interface CountsRow {
@@ -24,7 +24,7 @@ interface CountRow {
   count: number;
 }
 
-export function introspect(db: Database.Database): IntrospectResult {
+export function introspect(db: Database): IntrospectResult {
   const counts = db
     .prepare(
       `

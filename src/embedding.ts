@@ -196,13 +196,16 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
         // affect other consumers in the same process). AUDREY_ONNX_VERBOSE=1 opts out.
         const verbose = process.env.AUDREY_ONNX_VERBOSE === '1';
         const sessionOptions = verbose ? undefined : { logSeverityLevel: 3 };
+        // Transformers 4 expands "gpu" to both DirectML and WebGPU on Windows,
+        // but ONNX Runtime cannot combine DirectML with another GPU provider.
+        const device = this.device === 'gpu' && process.platform === 'win32' ? 'dml' : this.device;
         try {
           this._pipeline = (await pipeline('feature-extraction', this.model, {
             dtype: 'fp32',
-            device: this.device,
+            device,
             ...(sessionOptions ? { session_options: sessionOptions } : {}),
           })) as FeatureExtractionPipeline;
-          this._actualDevice = this.device;
+          this._actualDevice = device;
         } catch {
           this._pipeline = (await pipeline('feature-extraction', this.model, {
             dtype: 'fp32',

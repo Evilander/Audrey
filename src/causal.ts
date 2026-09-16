@@ -1,10 +1,10 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type { CausalLinkRow, LLMProvider } from './types.js';
 import { generateId } from './ulid.js';
 import { buildCausalArticulationPrompt } from './prompts.js';
 
 export function addCausalLink(
-  db: Database.Database,
+  db: Database,
   {
     causeId,
     effectId,
@@ -33,7 +33,7 @@ export function addCausalLink(
 }
 
 export function getCausalChain(
-  db: Database.Database,
+  db: Database,
   memoryId: string,
   options: { depth?: number } = {},
 ): CausalLinkRow[] {
@@ -69,7 +69,7 @@ export function getCausalChain(
 }
 
 export async function articulateCausalLink(
-  db: Database.Database,
+  db: Database,
   llmProvider: LLMProvider,
   cause: { id: string; content: string; source: string },
   effect: { id: string; content: string; source: string },

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0 - 2026-09-16
+
+Breaking changes: Node 20 and Node 23 are no longer supported. The SDK's `audrey.db` now exposes Audrey's SQLite adapter instead of a `better-sqlite3` instance; code using driver-specific methods must be updated. Existing memory stores need no conversion.
+
+- Keeps automatic GPU embeddings on DirectML on Windows, avoiding an incompatible DirectML/WebGPU combination in Transformers.js 4.
+- Uses Node's built-in SQLite instead of `better-sqlite3`. Requires Node.js 22.16+ (22.x) or 24+. Existing database files remain compatible; fresh npm 12 installs and MCP `npx` launches no longer require install-script approval.
+- Updates Transformers.js to 4.3+ so downstream installs receive patched sharp binaries without relying on root-only npm overrides. Refreshes compatible Hono, qs, and fast-uri dependencies.
+
 ## 1.3.0 - 2026-09-02
 
 Audrey now knows the difference between looking and doing. It stays silent while an agent explores and speaks up only when the agent is about to repeat something that actually broke.

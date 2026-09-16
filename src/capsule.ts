@@ -16,7 +16,7 @@
  * Every entry carries a `reason` explaining why it was included.
  */
 
-import type Database from 'better-sqlite3';
+import type Database from './sqlite.js';
 import type { Audrey } from './audrey.js';
 import type { RecallError, RecallResult, RecallOptions, MemoryType, MemoryState } from './types.js';
 import { recentFailures, type FailurePattern } from './events.js';
@@ -345,7 +345,7 @@ function failureEpisodeMatchesAction(
   return signaturesOverlap(signatures, actionSignatures);
 }
 
-function loadEpisodeEnrichment(db: Database.Database, id: string): EpisodeTagRow | undefined {
+function loadEpisodeEnrichment(db: Database, id: string): EpisodeTagRow | undefined {
   return db
     .prepare(
       `SELECT id, tags, source, created_at, private, agent, context FROM episodes WHERE id = ?`,
@@ -367,7 +367,7 @@ function episodeProjectNamespace(row: EpisodeTagRow | undefined): string | undef
   }
 }
 
-function loadSemanticEnrichment(db: Database.Database, id: string): SemanticTagRow | undefined {
+function loadSemanticEnrichment(db: Database, id: string): SemanticTagRow | undefined {
   return db
     .prepare(
       `SELECT id, state, evidence_episode_ids, created_at, last_reinforced_at FROM semantics WHERE id = ?`,
@@ -375,7 +375,7 @@ function loadSemanticEnrichment(db: Database.Database, id: string): SemanticTagR
     .get(id) as SemanticTagRow | undefined;
 }
 
-function loadProcedureEnrichment(db: Database.Database, id: string): SemanticTagRow | undefined {
+function loadProcedureEnrichment(db: Database, id: string): SemanticTagRow | undefined {
   return db
     .prepare(
       `SELECT id, state, evidence_episode_ids, created_at, last_reinforced_at FROM procedures WHERE id = ?`,
@@ -383,11 +383,7 @@ function loadProcedureEnrichment(db: Database.Database, id: string): SemanticTag
     .get(id) as SemanticTagRow | undefined;
 }
 
-function loadOpenContradictions(
-  db: Database.Database,
-  limit: number,
-  agent?: string,
-): ContradictionRow[] {
+function loadOpenContradictions(db: Database, limit: number, agent?: string): ContradictionRow[] {
   return db
     .prepare(
       `

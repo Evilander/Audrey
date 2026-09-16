@@ -34,11 +34,11 @@ The model does not have to remember that a memory tool exists. That is the point
 Install Audrey once, review the hooks once, and then use Codex or Claude Code normally.
 
 ```bash
-npm install -g audrey --allow-scripts=better-sqlite3,onnxruntime-node,sharp,protobufjs
+npm install -g audrey
 audrey install --host auto
 ```
 
-The explicit install-script list is for npm 12's safer dependency policy. It permits only the four packages Audrey needs for SQLite, local inference, and their generated runtime files. With npm 11 or earlier, the shorter `npm install -g audrey` is equivalent.
+Requires Node.js 22.16+ (22.x) or 24+. SQLite is built into Node, so fresh installs and `npx` launches work without approving dependency scripts. npm 11.17+ may warn about dependency scripts, and npm 12 may report that it blocked them; those scripts are not required for Audrey's CPU embedding runtime.
 
 `auto` configures whichever supported CLIs are installed. You can choose one explicitly:
 
@@ -195,7 +195,7 @@ Vector candidates are partitioned by agent before nearest-neighbor ranking, so o
 ## See it before installing anything
 
 ```bash
-npm exec --yes --package=audrey --allow-scripts=better-sqlite3,onnxruntime-node,sharp,protobufjs -- audrey demo --scenario repeated-failure
+npm exec --yes --package=audrey -- audrey demo --scenario repeated-failure
 ```
 
 That command runs from the npm cache, exercises the full SQLite-backed Guard loop, and leaves host configuration unchanged.
@@ -220,7 +220,7 @@ Everything below is the machinery. The short version above is the product.
 
 ### Requirements and packages
 
-- Node.js 20+
+- Node.js 22.16+ (22.x) or 24+; Node 20 and 23 are no longer supported
 - npm package: `audrey`
 - Python client: `audrey-memory`
 - Default storage: local SQLite + FTS5 + `sqlite-vec`
@@ -231,12 +231,7 @@ npm install audrey
 pip install audrey-memory
 ```
 
-For a project install with npm 12, approve Audrey's reviewed dependency scripts in the project root and rebuild once if npm reported that it blocked them:
-
-```bash
-npm install-scripts approve better-sqlite3 onnxruntime-node sharp protobufjs
-npm rebuild
-```
+Audrey uses `node:sqlite`; `sqlite-vec` ships its extension in platform packages. The local embedding runtime also includes its CPU binaries, so `npm install --ignore-scripts audrey` works. Keep optional dependencies enabled: they contain the platform files for `sqlite-vec` and `sharp`. GPU acceleration may require additional ONNX Runtime libraries for your platform. Some supported Node releases print an experimental SQLite warning at startup; it does not prevent operation.
 
 For Autopilot, prefer a global or otherwise stable installation. Hook and MCP configuration pins the actual Node executable and Audrey entrypoint; an ephemeral `npx` cache is not a durable production runtime.
 
@@ -427,7 +422,7 @@ The server also sends host instructions explaining the Guard receipt loop when l
 | `AUDREY_ENABLE_SHARED_SCOPE` | `0` | Allow explicit cross-agent REST recall; admin tools also enable it |
 | `AUDREY_PROFILE` | `0` | Include stage timing diagnostics |
 | `AUDREY_DISABLE_WARMUP` | `0` | Disable MCP embedding warmup |
-| `AUDREY_PRAGMA_DEFAULTS` | `1` | Set `0` to use better-sqlite3 PRAGMA defaults |
+| `AUDREY_PRAGMA_DEFAULTS` | `1` | Set `0` to disable SQLite performance tuning |
 
 Provider secrets are never embedded in generated hook commands. `--include-secrets` applies only to MCP registration; prefer host environment injection or a secret manager.
 
@@ -444,7 +439,7 @@ Provider secrets are never embedded in generated hook commands. `--include-secre
 - Keep the hook runtime on a stable installed path.
 - Load-test concurrent writers for your topology; SQLite WAL is not a distributed coordination layer.
 
-`npm audit --omit=dev` reports two high-severity advisories against `sharp`, pulled in as a hard dependency of `@huggingface/transformers` for the local embedding runtime. There is no patched release compatible with the version range that package declares. Audrey never imports `sharp` — it is image-preprocessing code that a text-only embedding pipeline does not reach — but the package is installed, so the advisory is genuine and unresolved rather than dismissed. Running with `AUDREY_EMBEDDING_PROVIDER` set to a hosted provider avoids the dependency path entirely.
+Local embeddings use Transformers.js 4.3+ with `sharp` 0.35.4+, resolving the earlier libvips/libheif advisories in the published dependency tree. A hosted embedding provider changes runtime execution but does not remove installed packages. Run `npm audit --omit=dev` against your installation to check current advisories.
 
 ### Benchmarks and evidence
 

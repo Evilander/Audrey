@@ -3,7 +3,7 @@
  * summarization) lives in tool-trace.ts.
  */
 
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import { namespaceMatcher } from './project.js';
 import { generateId } from './ulid.js';
 import { requireAgent } from './utils.js';
@@ -91,7 +91,7 @@ function indexedText(explicit: string | null | undefined, metadataValue: unknown
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
-export function insertEvent(db: Database.Database, input: EventInsert): MemoryEvent {
+export function insertEvent(db: Database, input: EventInsert): MemoryEvent {
   const id = input.id ?? generateId();
   const createdAt = input.createdAt ?? new Date().toISOString();
   const redactionState = input.redactionState ?? 'unreviewed';
@@ -186,7 +186,7 @@ const READ_ONLY_FAILURE = `(
 )`;
 
 export function exactActionHistory(
-  db: Database.Database,
+  db: Database,
   options: ExactActionHistoryOptions,
 ): MemoryEvent[] {
   const actorAgent = requireAgent(options.actorAgent);
@@ -211,7 +211,7 @@ export function exactActionHistory(
     }) as MemoryEvent[];
 }
 
-export function listEvents(db: Database.Database, query: EventQuery = {}): MemoryEvent[] {
+export function listEvents(db: Database, query: EventQuery = {}): MemoryEvent[] {
   const conditions: string[] = [];
   const params: Record<string, unknown> = {};
 
@@ -248,7 +248,7 @@ export function listEvents(db: Database.Database, query: EventQuery = {}): Memor
     .all(params) as MemoryEvent[];
 }
 
-export function countEvents(db: Database.Database, query: EventQuery = {}): number {
+export function countEvents(db: Database, query: EventQuery = {}): number {
   const conditions: string[] = [];
   const params: Record<string, unknown> = {};
   if (query.sessionId) {
@@ -309,7 +309,7 @@ export interface RecentFailureOptions {
 }
 
 function matchingCwds(
-  db: Database.Database,
+  db: Database,
   cwd: string,
   since: string,
   actorAgent: string | undefined,
@@ -363,10 +363,7 @@ function cwdVisibility(kind: 'failure' | 'success', cwdNames: string[] | undefin
  * once per referencing CTE as co-routines over the low-selectivity outcome
  * index (~30x slower at 50k rows, measured).
  */
-export function recentFailures(
-  db: Database.Database,
-  options: RecentFailureOptions = {},
-): FailurePattern[] {
+export function recentFailures(db: Database, options: RecentFailureOptions = {}): FailurePattern[] {
   const since = options.since ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const limit = Math.max(1, Math.min(options.limit ?? 20, 200));
   const actorAgent =
@@ -486,7 +483,7 @@ export interface DeleteEventsBeforeOptions {
  * rows deleted across all batches.
  */
 export function deleteEventsBefore(
-  db: Database.Database,
+  db: Database,
   cutoffIso: string,
   options: DeleteEventsBeforeOptions = {},
 ): number {

@@ -3,13 +3,12 @@ FROM node:22-bookworm-slim AS build
 
 WORKDIR /build
 
-# better-sqlite3 needs python3 + make + g++ to compile its native bindings.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
+  && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json tsconfig.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 COPY src ./src
 COPY mcp-server ./mcp-server

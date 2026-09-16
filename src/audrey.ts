@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type {
   AudreyConfig,
   ConfidenceConfig,
@@ -319,7 +319,7 @@ export class Audrey extends EventEmitter {
   agent: string;
   dataDir: string;
   embeddingProvider: EmbeddingProvider;
-  db: Database.Database;
+  db: Database;
   llmProvider: LLMProvider | null;
   confidenceConfig: ConfidenceConfig;
   consolidationConfig: { minEpisodes: number };
@@ -1714,7 +1714,7 @@ export interface PromoteResult {
 // Re-exports so the rules-compiler output is easy to consume by callers.
 export type { RuleDoc };
 
-function db_prepare_get_status(db: Database.Database, runId: string): StatusRow | undefined {
+function db_prepare_get_status(db: Database, runId: string): StatusRow | undefined {
   return db.prepare('SELECT status FROM consolidation_runs WHERE id = ?').get(runId) as
     StatusRow | undefined;
 }

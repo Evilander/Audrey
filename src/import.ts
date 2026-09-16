@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import { z } from 'zod';
 import type { EmbeddingProvider } from './types.js';
 import { insertFTSEpisode, insertFTSSemantic, insertFTSProcedure } from './fts.js';
@@ -243,7 +243,7 @@ function actionKeyFromMetadata(metadata: string | null | undefined): string | nu
   return actionKey && /^[a-f0-9]{64}$/.test(actionKey) ? actionKey : null;
 }
 
-function isDatabaseEmpty(db: Database.Database): boolean {
+function isDatabaseEmpty(db: Database): boolean {
   const tables = [
     'episodes',
     'semantics',
@@ -354,7 +354,7 @@ function validateSnapshotBudget(snapshot: ImportSnapshot): void {
 }
 
 export async function importMemories(
-  db: Database.Database,
+  db: Database,
   embeddingProvider: EmbeddingProvider,
   rawSnapshot: unknown,
 ): Promise<void> {

@@ -14,7 +14,7 @@
  * failure_prevented score, which bubbles it up in the ranked list.
  */
 
-import type Database from 'better-sqlite3';
+import type Database from './sqlite.js';
 import { recentFailures, type FailurePattern } from './events.js';
 
 export type PromotionTarget = 'claude-rules' | 'agents-md' | 'playbook' | 'hook' | 'checklist';
@@ -75,11 +75,7 @@ interface EventRow {
   metadata: string | null;
 }
 
-function loadPromotedMemoryIds(
-  db: Database.Database,
-  target: PromotionTarget,
-  agent?: string,
-): Set<string> {
+function loadPromotedMemoryIds(db: Database, target: PromotionTarget, agent?: string): Set<string> {
   const rows = db
     .prepare(
       `SELECT metadata FROM memory_events
@@ -160,7 +156,7 @@ function parseTags(raw: string | null): string[] {
 }
 
 export function findPromotionCandidates(
-  db: Database.Database,
+  db: Database,
   options: FindCandidatesOptions = {},
 ): PromotionCandidate[] {
   const minConfidence = options.minConfidence ?? 0.7;

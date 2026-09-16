@@ -151,9 +151,7 @@ describe('CLI surface', () => {
     expect(r.stdout).toContain('demo');
     expect(r.stdout).toContain('guard');
     expect(r.stdout).toContain('guard-after');
-    expect(r.stdout).toContain(
-      'npm install -g audrey --allow-scripts=better-sqlite3,onnxruntime-node,sharp,protobufjs',
-    );
+    expect(r.stdout).toContain('npm install -g audrey');
   });
 
   it('--version prints version and exits 0', () => {
@@ -295,7 +293,9 @@ describe('CLI surface', () => {
 
     expect(r.status).toBe(1);
     expect(JSON.parse(r.stdout)).toEqual({});
-    expect(r.stderr.trim().split(/\r?\n/)).toHaveLength(1);
+    // Older supported Node versions also print the built-in SQLite warning.
+    const messages = r.stderr.split(/\r?\n/).filter(line => line.startsWith('[audrey:autopilot]'));
+    expect(messages).toHaveLength(1);
     expect(r.stderr).not.toContain(secret);
     expect(r.stderr).not.toContain('at parseAutopilotArgs');
   });
@@ -1632,6 +1632,23 @@ describe('MCP status automation', () => {
 });
 
 describe('MCP doctor automation', () => {
+  it.each([
+    ['20.20.0', false],
+    ['22.13.0', false],
+    ['22.15.0', false],
+    ['22.16.0', true],
+    ['23.11.0', false],
+    ['24.0.0', true],
+    ['26.0.0', true],
+  ])('checks the SQLite runtime requirement for Node %s', (nodeVersion, supported) => {
+    const report = buildDoctorReport({
+      dataDir: './missing-audrey-dir',
+      claudeJsonPath: './missing-claude-config.json',
+      nodeVersion,
+    });
+    expect(report.checks.find(check => check.name === 'node-runtime').ok).toBe(supported);
+  });
+
   afterEach(() => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
   });
@@ -1641,7 +1658,7 @@ describe('MCP doctor automation', () => {
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
       env: { CODEX_HOME: resolve(TEST_DIR, 'missing-codex-home') },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
     });
 
     expect(report.version).toBe(VERSION);
@@ -1658,7 +1675,7 @@ describe('MCP doctor automation', () => {
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
       env: { CODEX_HOME: resolve(TEST_DIR, 'missing-codex-home') },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
     });
     const text = formatDoctorReport(report);
 
@@ -1684,7 +1701,7 @@ describe('MCP doctor automation', () => {
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
       env: { CODEX_HOME: codexHome },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       codexCliRunner: args => {
         if (args.join(' ') === 'features --help') {
           return 'Commands:\n  list\n  enable\n  disable\n';
@@ -1758,7 +1775,7 @@ describe('MCP doctor automation', () => {
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
       env: { CODEX_HOME: codexHome },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       codexCliRunner: args => {
         if (args.join(' ') === 'features list') return 'hooks stable true\n';
         throw new Error(`unexpected Codex args: ${args.join(' ')}`);
@@ -1796,7 +1813,7 @@ describe('MCP doctor automation', () => {
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
       env: { CODEX_HOME: codexHome },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       codexCliRunner: args => {
         if (args.join(' ') === 'features list') return 'hooks stable true\n';
         throw new Error(`unexpected Codex args: ${args.join(' ')}`);
@@ -1830,7 +1847,7 @@ describe('MCP doctor automation', () => {
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
       env: { CODEX_HOME: codexHome },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       codexCliRunner: args => {
         if (args.join(' ') === 'features list') return 'hooks stable true\n';
         throw new Error(`unexpected Codex args: ${args.join(' ')}`);
@@ -1864,7 +1881,7 @@ describe('MCP doctor automation', () => {
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
       env: { CODEX_HOME: codexHome },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       codexCliRunner: args => {
         if (args.join(' ') === 'features list') return 'hooks stable true\n';
         throw new Error(`unexpected Codex args: ${args.join(' ')}`);
@@ -1906,7 +1923,7 @@ describe('MCP doctor automation', () => {
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
       env: { CODEX_HOME: codexHome },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       codexCliRunner: args => {
         if (args.join(' ') === 'features --help') {
           return 'Commands:\n  list\n  enable\n  disable\n';
@@ -1951,7 +1968,7 @@ describe('MCP doctor automation', () => {
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
       env: { CODEX_HOME: codexHome },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
     });
 
     expect(report.checks).toContainEqual(
@@ -2903,7 +2920,7 @@ describe('MCP doctor automation: Claude Code diagnostics (6c)', () => {
         CODEX_HOME: join(workDir, 'codex-home-unused'),
         CLAUDE_CONFIG_DIR: join(workDir, 'claude-user-home'),
       },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       projectDir: workDir,
       ...overrides,
     };
@@ -3039,7 +3056,7 @@ describe('MCP doctor automation: hook version skew (6d)', () => {
         CODEX_HOME: join(workDir, 'codex-home-unused'),
         CLAUDE_CONFIG_DIR: claudeHome,
       },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       projectDir: workDir,
     });
 
@@ -3067,7 +3084,7 @@ describe('MCP doctor automation: hook version skew (6d)', () => {
         CODEX_HOME: join(workDir, 'codex-home-unused'),
         CLAUDE_CONFIG_DIR: claudeHome,
       },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       projectDir: workDir,
     });
 
@@ -3092,7 +3109,7 @@ describe('MCP doctor automation: hook version skew (6d)', () => {
         CODEX_HOME: codexHome,
         CLAUDE_CONFIG_DIR: join(workDir, 'claude-home-unused'),
       },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       projectDir: workDir,
       codexCliRunner: args => {
         if (args.join(' ') === 'features --help') {
@@ -3180,7 +3197,7 @@ describe('Hook failure log (6e)', () => {
         CODEX_HOME: join(workDir, 'codex-home-unused'),
         CLAUDE_CONFIG_DIR: join(workDir, 'claude-home-unused'),
       },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       projectDir: workDir,
     });
 
@@ -3199,7 +3216,7 @@ describe('Hook failure log (6e)', () => {
         CODEX_HOME: join(workDir, 'codex-home-unused'),
         CLAUDE_CONFIG_DIR: join(workDir, 'claude-home-unused'),
       },
-      nodeVersion: '20.0.0',
+      nodeVersion: '22.16.0',
       projectDir: workDir,
     });
 
