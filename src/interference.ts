@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type { EmbeddingProvider, InterferenceConfig } from './types.js';
 import { requireAgent } from './utils.js';
 
@@ -14,7 +14,7 @@ export function interferenceModifier(interferenceCount: number, weight: number =
 }
 
 export async function applyInterference(
-  db: Database.Database,
+  db: Database,
   embeddingProvider: EmbeddingProvider,
   episodeId: string,
   params: { content: string; agent?: string },

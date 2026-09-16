@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, normalize, relative } from 'node:path';
 import { ulid } from 'ulid';
@@ -203,7 +203,7 @@ export interface RecordAnchorsInput {
  * see the module comment — only a claim that was once true carries
  * information when it later stops being true.
  */
-export function recordAnchors(db: Database.Database, input: RecordAnchorsInput): number {
+export function recordAnchors(db: Database, input: RecordAnchorsInput): number {
   const { memoryId, memoryType, agent, content, projectRoot } = input;
   if (!projectRoot) return 0;
   const candidates = extractAnchorCandidates(content);
@@ -260,10 +260,7 @@ export interface VerifyAnchorsOptions {
  * comes back — a reverted delete, a restored checkout — clears the broken
  * state, so a transient absence does not permanently discredit a memory.
  */
-export function verifyAnchors(
-  db: Database.Database,
-  options: VerifyAnchorsOptions = {},
-): GroundingReport {
+export function verifyAnchors(db: Database, options: VerifyAnchorsOptions = {}): GroundingReport {
   const report: GroundingReport = {
     checked: 0,
     intact: 0,
@@ -333,7 +330,7 @@ export function verifyAnchors(
  * than being presented as verified.
  */
 export function groundingForMemories(
-  db: Database.Database,
+  db: Database,
   memoryIds: string[],
 ): Map<string, MemoryGrounding> {
   const grounding = new Map<string, MemoryGrounding>();

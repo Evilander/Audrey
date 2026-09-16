@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase, closeDatabase } from '../dist/src/db.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
+import Database from '../dist/src/sqlite.js';
 
 const TEST_DIR = './test-schema-migration';
 

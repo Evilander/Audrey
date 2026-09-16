@@ -110,7 +110,8 @@
     "docker:build": "docker build -t audrey:local .",
     "docker:up": "docker compose up -d --build",
     "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f audrey"
+    "docker:logs": "docker compose logs -f audrey",
+    "smoke:install": "node scripts/smoke-install.mjs"
   },
   "keywords": [
     "ai",
@@ -160,22 +161,20 @@
   },
   "author": "evilander",
   "engines": {
-    "node": ">=20"
+    "node": "^22.16.0 || >=24.0.0"
   },
   "license": "MIT",
   "dependencies": {
     "@hono/node-server": "^1.19.14",
-    "@huggingface/transformers": "^3.8.1",
+    "@huggingface/transformers": "^4.3.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "better-sqlite3": "^12.9.0",
-    "hono": "^4.12.18",
+    "hono": "^4.13.5",
     "sqlite-vec": "^0.1.9",
     "ulid": "^3.0.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.2",
     "eslint": "^10.4.0",
     "eslint-config-prettier": "^10.1.8",
@@ -186,14 +185,7 @@
     "vitest": "^4.1.5"
   },
   "overrides": {
-    "qs": "^6.15.2",
-    "sharp": "^0.35.0"
-  },
-  "allowScripts": {
-    "better-sqlite3@12.9.0": true,
-    "onnxruntime-node@1.21.0": true,
-    "protobufjs@7.6.5": true,
-    "sharp@0.34.5": true
+    "qs": "^6.16.0"
   },
   "directories": {
     "example": "examples",

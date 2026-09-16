@@ -3,7 +3,7 @@
  * Creates virtual tables alongside vec0 tables for hybrid retrieval.
  */
 
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 
 export interface FTSMatch {
   id: string;
@@ -12,7 +12,7 @@ export interface FTSMatch {
   rank: number;
 }
 
-export function createFTSTables(db: Database.Database): void {
+export function createFTSTables(db: Database): void {
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS fts_episodes
       USING fts5(id UNINDEXED, content, tags, tokenize='porter unicode61');
@@ -23,7 +23,7 @@ export function createFTSTables(db: Database.Database): void {
   `);
 }
 
-export function hasFTSTables(db: Database.Database): boolean {
+export function hasFTSTables(db: Database): boolean {
   const row = db
     .prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name='fts_episodes'")
     .get() as { c: number };
@@ -31,7 +31,7 @@ export function hasFTSTables(db: Database.Database): boolean {
 }
 
 export function insertFTSEpisode(
-  db: Database.Database,
+  db: Database,
   id: string,
   content: string,
   tags?: string | string[] | null,
@@ -44,23 +44,23 @@ export function insertFTSEpisode(
   );
 }
 
-export function insertFTSSemantic(db: Database.Database, id: string, content: string): void {
+export function insertFTSSemantic(db: Database, id: string, content: string): void {
   db.prepare('INSERT OR REPLACE INTO fts_semantics(id, content) VALUES (?, ?)').run(id, content);
 }
 
-export function insertFTSProcedure(db: Database.Database, id: string, content: string): void {
+export function insertFTSProcedure(db: Database, id: string, content: string): void {
   db.prepare('INSERT OR REPLACE INTO fts_procedures(id, content) VALUES (?, ?)').run(id, content);
 }
 
-export function deleteFTSEpisode(db: Database.Database, id: string): void {
+export function deleteFTSEpisode(db: Database, id: string): void {
   db.prepare('DELETE FROM fts_episodes WHERE id = ?').run(id);
 }
 
-export function deleteFTSSemantic(db: Database.Database, id: string): void {
+export function deleteFTSSemantic(db: Database, id: string): void {
   db.prepare('DELETE FROM fts_semantics WHERE id = ?').run(id);
 }
 
-export function deleteFTSProcedure(db: Database.Database, id: string): void {
+export function deleteFTSProcedure(db: Database, id: string): void {
   db.prepare('DELETE FROM fts_procedures WHERE id = ?').run(id);
 }
 
@@ -68,7 +68,7 @@ export function deleteFTSProcedure(db: Database.Database, id: string): void {
  * Search episodes via FTS5 BM25.
  */
 export function searchFTSEpisodes(
-  db: Database.Database,
+  db: Database,
   query: string,
   limit: number = 30,
   agentFilter: string | null = null,
@@ -92,7 +92,7 @@ export function searchFTSEpisodes(
 }
 
 export function searchFTSSemantics(
-  db: Database.Database,
+  db: Database,
   query: string,
   limit: number = 30,
   agentFilter: string | null = null,
@@ -116,7 +116,7 @@ export function searchFTSSemantics(
 }
 
 export function searchFTSProcedures(
-  db: Database.Database,
+  db: Database,
   query: string,
   limit: number = 30,
   agentFilter: string | null = null,
@@ -153,7 +153,7 @@ interface ContentRow {
 /**
  * Backfill FTS tables from existing data.
  */
-export function backfillFTS(db: Database.Database): void {
+export function backfillFTS(db: Database): void {
   const episodes = db.prepare('SELECT id, content, tags FROM episodes').all() as EpisodeRow[];
   const insert = db.prepare(
     'INSERT OR IGNORE INTO fts_episodes(id, content, tags) VALUES (?, ?, ?)',

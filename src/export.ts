@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
@@ -123,7 +123,7 @@ interface ConfigRow {
   value: string;
 }
 
-export function exportMemories(db: Database.Database): object {
+export function exportMemories(db: Database): object {
   const episodes = (
     db
       .prepare(

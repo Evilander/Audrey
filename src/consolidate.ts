@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type {
   ConsolidationOptions,
   ConsolidationResult,
@@ -28,7 +28,7 @@ interface CountRow {
 }
 
 function clusterViaKNN(
-  db: Database.Database,
+  db: Database,
   episodes: EpisodeRow[],
   similarityThreshold: number,
   minClusterSize: number,
@@ -105,7 +105,7 @@ function clusterViaKNN(
 }
 
 export function clusterEpisodes(
-  db: Database.Database,
+  db: Database,
   _embeddingProvider: EmbeddingProvider,
   options: {
     similarityThreshold?: number;
@@ -226,7 +226,7 @@ interface MergeMatch {
 const MERGE_CANDIDATE_K = 20;
 
 function findActiveSemanticMatch(
-  db: Database.Database,
+  db: Database,
   agent: string,
   embeddingBuffer: Buffer,
 ): MergeMatch | null {
@@ -249,7 +249,7 @@ function findActiveSemanticMatch(
 }
 
 function findActiveProceduralMatch(
-  db: Database.Database,
+  db: Database,
   agent: string,
   embeddingBuffer: Buffer,
 ): MergeMatch | null {
@@ -288,7 +288,7 @@ function unionEvidenceIds(
   return { ids, addedCount };
 }
 
-function sourceDiversityFor(db: Database.Database, evidenceIds: string[], agent: string): number {
+function sourceDiversityFor(db: Database, evidenceIds: string[], agent: string): number {
   if (evidenceIds.length === 0) return 0;
   const placeholders = inClause(evidenceIds);
   const rows = db
@@ -301,7 +301,7 @@ function sourceDiversityFor(db: Database.Database, evidenceIds: string[], agent:
 // episode matches an existing semantic, generalized to a whole cluster of
 // new evidence ids landing at once.
 function mergeIntoSemantic(
-  db: Database.Database,
+  db: Database,
   semanticId: string,
   newEpisodeIds: string[],
   agent: string,
@@ -342,7 +342,7 @@ function mergeIntoSemantic(
 }
 
 function mergeIntoProcedural(
-  db: Database.Database,
+  db: Database,
   proceduralId: string,
   newEpisodeIds: string[],
   taintPrivate: boolean,
@@ -368,7 +368,7 @@ function mergeIntoProcedural(
 }
 
 export async function runConsolidation(
-  db: Database.Database,
+  db: Database,
   embeddingProvider: EmbeddingProvider,
   options: ConsolidationOptions = {},
 ): Promise<ConsolidationResult> {

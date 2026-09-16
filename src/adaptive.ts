@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 
 interface MetricRow {
   min_cluster_size: number;
@@ -14,7 +14,7 @@ interface ParamScore {
   yields: number[];
 }
 
-export function suggestConsolidationParams(db: Database.Database): {
+export function suggestConsolidationParams(db: Database): {
   minClusterSize: number;
   similarityThreshold: number;
   confidence: string;

@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type { EmbeddingProvider, LLMProvider, SemanticRow } from './types.js';
 import { generateId } from './ulid.js';
 import { requireAgent, safeJsonParse } from './utils.js';
@@ -28,7 +28,7 @@ interface ValidateResult {
 }
 
 export async function validateMemory(
-  db: Database.Database,
+  db: Database,
   embeddingProvider: EmbeddingProvider,
   episode: { id: string; content: string; source: string; agent?: string },
   options: {
@@ -216,7 +216,7 @@ export async function validateMemory(
 }
 
 function computeSourceDiversity(
-  db: Database.Database,
+  db: Database,
   evidenceIds: string[],
   currentEpisode: { source: string },
   agent: string,
@@ -245,7 +245,7 @@ function computeSourceDiversity(
 }
 
 export function createContradiction(
-  db: Database.Database,
+  db: Database,
   claimAId: string,
   claimAType: string,
   claimBId: string,
@@ -271,7 +271,7 @@ export function createContradiction(
 }
 
 export function reopenContradiction(
-  db: Database.Database,
+  db: Database,
   contradictionId: string,
   newEvidenceId: string,
 ): void {
