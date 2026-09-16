@@ -25,7 +25,7 @@
  * capsule's categorization layer does the heavy interpretive lifting.
  */
 
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type { MemoryType, RecallResult, RetrievalMode } from './types.js';
 import {
   searchFTSEpisodes,
@@ -76,7 +76,7 @@ interface ProceduralFTSRow {
 }
 
 export function ftsIdsByType(
-  db: Database.Database,
+  db: Database,
   query: string,
   types: MemoryType[],
   limit: number,
@@ -110,7 +110,7 @@ export function ftsIdsByType(
 }
 
 function loadFtsOnlyEpisode(
-  db: Database.Database,
+  db: Database,
   id: string,
   includePrivate: boolean,
   filters: FuseFilters | undefined,
@@ -142,7 +142,7 @@ function loadFtsOnlyEpisode(
 }
 
 function loadFtsOnlySemantic(
-  db: Database.Database,
+  db: Database,
   id: string,
   includePrivate: boolean,
   includeDormant: boolean,
@@ -181,7 +181,7 @@ function loadFtsOnlySemantic(
 }
 
 function loadFtsOnlyProcedural(
-  db: Database.Database,
+  db: Database,
   id: string,
   includePrivate: boolean,
   includeDormant: boolean,
@@ -265,7 +265,7 @@ export interface FuseInput {
   agentFilter?: string;
 }
 
-export function fuseResults(db: Database.Database, input: FuseInput): RecallResult[] {
+export function fuseResults(db: Database, input: FuseInput): RecallResult[] {
   const { vectorResults, ftsIds, mode } = input;
   const includePrivate = input.includePrivate ?? false;
   const includeDormant = input.includeDormant ?? false;

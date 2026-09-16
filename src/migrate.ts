@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type { EmbeddingProvider, ReembedCounts } from './types.js';
 import { dropVec0Tables, createVec0Tables } from './db.js';
 
@@ -51,7 +51,7 @@ interface ProcedureMigrateRow {
 }
 
 export async function reembedAll(
-  db: Database.Database,
+  db: Database,
   embeddingProvider: EmbeddingProvider,
   { dropAndRecreate = false }: { dropAndRecreate?: boolean } = {},
 ): Promise<ReembedCounts> {

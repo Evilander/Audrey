@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDatabase, closeDatabase, readStoredDimensions } from '../dist/src/db.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
-import Database from 'better-sqlite3';
+import Database from '../dist/src/sqlite.js';
 import * as sqliteVec from 'sqlite-vec';
 
 const TEST_DIR = './test-audrey-data';

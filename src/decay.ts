@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type { DecayResult, HalfLives } from './types.js';
 import { computeConfidence, DEFAULT_HALF_LIVES, salienceModifier } from './confidence.js';
 import { interferenceModifier } from './interference.js';
@@ -27,7 +27,7 @@ interface DecayProceduralRow {
 }
 
 export function applyDecay(
-  db: Database.Database,
+  db: Database,
   {
     dormantThreshold = 0.1,
     halfLives,

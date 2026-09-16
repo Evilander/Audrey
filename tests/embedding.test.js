@@ -315,6 +315,36 @@ describe('LocalEmbeddingProvider device config', () => {
     expect(provider.device).toBe('gpu');
   });
 
+  it('selects one Windows GPU backend instead of combining DirectML and WebGPU', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    try {
+      const pipelineFactory = createFakeLocalPipelineFactory();
+      const provider = new LocalEmbeddingProvider({ pipelineFactory });
+      await provider.ready();
+      expect(pipelineFactory).toHaveBeenCalledWith(
+        'feature-extraction',
+        provider.model,
+        expect.objectContaining({ device: 'dml' }),
+      );
+      expect(provider._actualDevice).toBe('dml');
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
+  it('falls back to CPU if the Windows GPU backend fails', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    try {
+      const pipelineFactory = createFakeLocalPipelineFactory({ failDevices: ['dml'] });
+      const provider = new LocalEmbeddingProvider({ pipelineFactory });
+      await provider.ready();
+      expect(pipelineFactory.mock.calls.map(call => call[2].device)).toEqual(['dml', 'cpu']);
+      expect(provider._actualDevice).toBe('cpu');
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it('exposes _actualDevice after ready()', async () => {
     const pipelineFactory = createFakeLocalPipelineFactory();
     const provider = new LocalEmbeddingProvider({ device: 'cpu', pipelineFactory });

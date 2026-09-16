@@ -44,6 +44,7 @@ function createTempRoot() {
 const tempRoot = createTempRoot();
 const env = {
   ...process.env,
+  CODEX_HOME: join(tempRoot, 'codex'),
   AUDREY_DATA_DIR: join(tempRoot, 'store'),
   AUDREY_EMBEDDING_PROVIDER: 'mock',
   AUDREY_LLM_PROVIDER: 'mock',

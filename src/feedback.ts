@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type Database from './sqlite.js';
 
 export type MemoryValidateOutcome = 'used' | 'helpful' | 'wrong';
 
@@ -67,7 +67,7 @@ function clampSalience(value: number): number {
 }
 
 function findRow(
-  db: Database.Database,
+  db: Database,
   id: string,
   agent: string,
 ): { type: MemoryType; row: RowSnapshot } | null {
@@ -102,7 +102,7 @@ function findRow(
  * Returns `null` if no memory matches the id.
  */
 export function applyFeedback(
-  db: Database.Database,
+  db: Database,
   input: MemoryValidateInput,
 ): MemoryValidateResult | null {
   if (!input.agent) throw new Error('agent is required for memory feedback');

@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type {
   Affect,
   CausalParams,
@@ -45,7 +45,7 @@ function mergeRedactionHits(...sets: RedactionHit[][]): RedactionHit[] {
 }
 
 export async function encodeEpisode(
-  db: Database.Database,
+  db: Database,
   embeddingProvider: EmbeddingProvider,
   {
     content,

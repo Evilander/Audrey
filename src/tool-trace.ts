@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 
 import {
   insertEvent,
@@ -145,7 +145,7 @@ function mergeHits(...sets: RedactionHit[][]): RedactionHit[] {
   }));
 }
 
-export function observeTool(db: Database.Database, input: ObserveToolInput): ObserveToolResult {
+export function observeTool(db: Database, input: ObserveToolInput): ObserveToolResult {
   const errorSummary = safeErrorSummary(input.errorSummary);
   const outputSummary = input.retainDetails
     ? { text: null, hits: [] as RedactionHit[] }

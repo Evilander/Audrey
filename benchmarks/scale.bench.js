@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-import Database from 'better-sqlite3';
+import Database from '../dist/src/sqlite.js';
 import { Audrey, createDatabase, closeDatabase, buildPreflight } from '../dist/src/index.js';
 import { insertEvent, recentFailures } from '../dist/src/events.js';
 

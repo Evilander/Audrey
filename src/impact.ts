@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 
 export interface ImpactRow {
   id: string;
@@ -43,7 +43,7 @@ interface ChallengedRow {
 }
 
 function rowsFromTable(
-  db: Database.Database,
+  db: Database,
   table: 'episodes' | 'semantics' | 'procedures',
   type: ImpactRow['type'],
   orderBy: string,
@@ -77,7 +77,7 @@ function rowsFromTable(
 }
 
 function topAcrossTables(
-  db: Database.Database,
+  db: Database,
   orderBy: string,
   whereClause: string,
   limit: number,
@@ -121,7 +121,7 @@ function topAcrossTables(
 }
 
 export function buildImpactReport(
-  db: Database.Database,
+  db: Database,
   windowDays = 7,
   limit = 5,
   agent?: string,
