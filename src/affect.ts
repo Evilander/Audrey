@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type { Affect, EmbeddingProvider, ResonanceConfig } from './types.js';
 import { requireAgent } from './utils.js';
 
@@ -41,7 +41,7 @@ export function moodCongruenceModifier(
 }
 
 export async function detectResonance(
-  db: Database.Database,
+  db: Database,
   embeddingProvider: EmbeddingProvider,
   episodeId: string,
   params: { content: string; affect?: Affect; agent?: string },

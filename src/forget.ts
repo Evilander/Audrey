@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type { EmbeddingProvider, ForgetResult, MemoryType, PurgeResult } from './types.js';
 import { deleteFTSEpisode, deleteFTSSemantic, deleteFTSProcedure } from './fts.js';
 import { commandFromFailureRecord, profileShellCommand } from './shell-command.js';
@@ -18,7 +18,7 @@ interface SimilarityRow {
   type: MemoryType;
 }
 
-function deleteAnchors(db: Database.Database, memoryId: string): void {
+function deleteAnchors(db: Database, memoryId: string): void {
   db.prepare('DELETE FROM memory_anchors WHERE memory_id = ?').run(memoryId);
 }
 
@@ -32,7 +32,7 @@ function deleteAnchors(db: Database.Database, memoryId: string): void {
  * content.
  */
 function purgeDerivedFromEpisode(
-  db: Database.Database,
+  db: Database,
   episodeId: string,
 ): { semantics: number; procedures: number } {
   const findDerived = (table: 'semantics' | 'procedures'): DerivedRow[] =>
@@ -108,7 +108,7 @@ function purgeDerivedFromEpisode(
 }
 
 export function forgetMemory(
-  db: Database.Database,
+  db: Database,
   id: string,
   { purge = false }: { purge?: boolean } = {},
 ): ForgetResult {
@@ -191,7 +191,7 @@ export const READ_ONLY_PROBE_RETIREMENT_MARKER = 'retired:read-only-probe';
  * position keeps the row. Losing a genuine lesson is worse than keeping
  * a stale probe, so every doubt resolves toward keeping.
  */
-export function retireReadOnlyProbeFailures(db: Database.Database): number {
+export function retireReadOnlyProbeFailures(db: Database): number {
   const done = db
     .prepare('SELECT value FROM audrey_config WHERE key = ?')
     .get(READ_ONLY_PROBE_RETIREMENT_KEY);
@@ -226,7 +226,7 @@ export function retireReadOnlyProbeFailures(db: Database.Database): number {
   })();
 }
 
-export function purgeMemories(db: Database.Database): PurgeResult {
+export function purgeMemories(db: Database): PurgeResult {
   const selectDeadEpisodes = db.prepare('SELECT id FROM episodes WHERE superseded_by IS NOT NULL');
   const selectDeadSemantics = db.prepare(
     "SELECT id FROM semantics WHERE state IN ('superseded', 'dormant', 'rolled_back')",
@@ -278,7 +278,7 @@ export function purgeMemories(db: Database.Database): PurgeResult {
 }
 
 export async function forgetByQuery(
-  db: Database.Database,
+  db: Database,
   embeddingProvider: EmbeddingProvider,
   query: string,
   {

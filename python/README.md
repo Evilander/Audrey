@@ -20,7 +20,7 @@ python -m pip install -e .
 Start Audrey's REST API:
 
 ```bash
-npm install -g audrey --allow-scripts=better-sqlite3,onnxruntime-node,sharp,protobufjs
+npm install -g audrey
 audrey serve
 ```
 

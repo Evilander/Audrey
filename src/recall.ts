@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type {
   ConfidenceConfig,
   EmbeddingProvider,
@@ -175,7 +175,7 @@ function vectorTableForType(type: MemoryType): 'vec_episodes' | 'vec_semantics' 
 }
 
 function reportMissingVectorTables(
-  db: Database.Database,
+  db: Database,
   searchTypes: MemoryType[],
   options: RecallInternalOptions,
 ): void {
@@ -577,7 +577,7 @@ function retryCandidateK(initialK: number, maxVectorCount: number): number {
 }
 
 function prepareRetrievalUpdate(
-  db: Database.Database,
+  db: Database,
   table: 'semantics' | 'procedures',
 ): (timestamp: string, id: string) => void {
   const statement = db.prepare(
@@ -589,7 +589,7 @@ function prepareRetrievalUpdate(
 }
 
 function countVectorTable(
-  db: Database.Database,
+  db: Database,
   table: 'vec_episodes' | 'vec_semantics' | 'vec_procedures',
   agent?: string,
 ): number {
@@ -604,7 +604,7 @@ function countVectorTable(
 }
 
 function countVectorTables(
-  db: Database.Database,
+  db: Database,
   searchTypes: MemoryType[],
   agent?: string,
 ): VectorTableCounts {
@@ -650,7 +650,7 @@ function countVectorTables(
 }
 
 function knnEpisodic(
-  db: Database.Database,
+  db: Database,
   queryBuffer: Buffer,
   candidateK: number,
   tableCount: number,
@@ -727,7 +727,7 @@ function knnEpisodic(
 }
 
 function knnSemantic(
-  db: Database.Database,
+  db: Database,
   queryBuffer: Buffer,
   candidateK: number,
   tableCount: number,
@@ -773,7 +773,7 @@ function knnSemantic(
 }
 
 function knnProcedural(
-  db: Database.Database,
+  db: Database,
   queryBuffer: Buffer,
   candidateK: number,
   tableCount: number,
@@ -819,7 +819,7 @@ function knnProcedural(
 }
 
 export async function* recallStream(
-  db: Database.Database,
+  db: Database,
   embeddingProvider: EmbeddingProvider,
   query: string,
   options: RecallInternalOptions = {},
@@ -1079,7 +1079,7 @@ export async function* recallStream(
 }
 
 export async function recall(
-  db: Database.Database,
+  db: Database,
   embeddingProvider: EmbeddingProvider,
   query: string,
   options: RecallInternalOptions = {},
@@ -1116,7 +1116,7 @@ export async function recall(
  * Failure here is swallowed deliberately — grounding is an annotation, and
  * losing it must never take a recall down with it.
  */
-function annotateGrounding(db: Database.Database, results: RecallResults): void {
+function annotateGrounding(db: Database, results: RecallResults): void {
   if (results.length === 0) return;
   try {
     const grounding = groundingForMemories(

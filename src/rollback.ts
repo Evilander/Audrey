@@ -1,8 +1,8 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import type { ConsolidationRunRow } from './types.js';
 import { safeJsonParse } from './utils.js';
 
-export function getConsolidationHistory(db: Database.Database): ConsolidationRunRow[] {
+export function getConsolidationHistory(db: Database): ConsolidationRunRow[] {
   return db
     .prepare(
       `
@@ -15,7 +15,7 @@ export function getConsolidationHistory(db: Database.Database): ConsolidationRun
 }
 
 export function rollbackConsolidation(
-  db: Database.Database,
+  db: Database,
   runId: string,
 ): { rolledBackMemories: number; restoredEpisodes: number } {
   const run = db.prepare('SELECT * FROM consolidation_runs WHERE id = ?').get(runId) as

@@ -3,7 +3,7 @@
  * All types are derived from the actual JS source — no behavioral changes.
  */
 
-export type { Database } from 'better-sqlite3';
+export type { default as Database } from './sqlite.js';
 
 // ---------------------------------------------------------------------------
 // Primitive union types

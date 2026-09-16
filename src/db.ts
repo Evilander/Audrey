@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from './sqlite.js';
 import * as sqliteVec from 'sqlite-vec';
 import { join } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
@@ -243,7 +243,7 @@ const VEC0_MIGRATION_SPECS: Vec0MigrationSpec[] = [
   },
 ];
 
-function createVec0Table(db: Database.Database, dimensions: number, table: Vec0TableName): void {
+function createVec0Table(db: Database, dimensions: number, table: Vec0TableName): void {
   if (table === 'vec_episodes') {
     db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS vec_episodes USING vec0(
@@ -268,7 +268,7 @@ function createVec0Table(db: Database.Database, dimensions: number, table: Vec0T
   `);
 }
 
-export function createVec0Tables(db: Database.Database, dimensions: number): void {
+export function createVec0Tables(db: Database, dimensions: number): void {
   for (const spec of VEC0_MIGRATION_SPECS) {
     createVec0Table(db, dimensions, spec.table);
   }
@@ -298,13 +298,13 @@ function vecSyncMarkKey(source: VecSyncSource): string {
   return `vec_sync_id_${source}`;
 }
 
-function readConfigText(db: Database.Database, key: string): string {
+function readConfigText(db: Database, key: string): string {
   const row = db.prepare('SELECT value FROM audrey_config WHERE key = ?').get(key) as
     ConfigRow | undefined;
   return row ? String(row.value) : '';
 }
 
-function writeConfigText(db: Database.Database, key: string, value: string): void {
+function writeConfigText(db: Database, key: string, value: string): void {
   db.prepare(
     `INSERT INTO audrey_config (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
@@ -338,7 +338,7 @@ export function liveRowClause(source: VecSyncSource, alias = ''): string {
  * carries an embedding. Safe to call for a row that was just superseded,
  * restored, or deleted.
  */
-export function refreshVectorRow(db: Database.Database, source: VecSyncSource, id: string): void {
+export function refreshVectorRow(db: Database, source: VecSyncSource, id: string): void {
   const target = VEC_TARGET_TABLE[source];
   db.prepare(`DELETE FROM ${target} WHERE id = ?`).run(id);
   if (source === 'episodes') {
@@ -370,7 +370,7 @@ const VEC_RECONCILED_KEY = 'vec_index_reconciled_at';
  * such rows back at any time. The maintenance sweep therefore calls this
  * whenever memoryStatus() reports a surplus.
  */
-export function reconcileVectorIndex(db: Database.Database): number {
+export function reconcileVectorIndex(db: Database): number {
   const sources: VecSyncSource[] = ['episodes', 'semantics', 'procedures'];
   return db.transaction(() => {
     let removed = 0;
@@ -385,13 +385,13 @@ export function reconcileVectorIndex(db: Database.Database): number {
   })();
 }
 
-function reconcileVectorIndexOnce(db: Database.Database): void {
+function reconcileVectorIndexOnce(db: Database): void {
   if (readConfigText(db, VEC_RECONCILED_KEY)) return;
   reconcileVectorIndex(db);
   writeConfigText(db, VEC_RECONCILED_KEY, new Date().toISOString());
 }
 
-export function dropVec0Tables(db: Database.Database): void {
+export function dropVec0Tables(db: Database): void {
   const drop = db.transaction(() => {
     db.exec('DROP TABLE IF EXISTS vec_episodes');
     db.exec('DROP TABLE IF EXISTS vec_semantics');
@@ -416,7 +416,7 @@ export function dropVec0Tables(db: Database.Database): void {
  * them as handled.
  */
 function migrateTable(
-  db: Database.Database,
+  db: Database,
   {
     source,
     target,
@@ -477,7 +477,7 @@ function migrateTable(
  * Returns true if any table still has an unresolved gap, signaling the
  * caller that a full reembed is needed.
  */
-function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): boolean {
+function migrateEmbeddingsToVec0(db: Database, dimensions: number): boolean {
   const episodesMismatch = migrateTable(db, {
     source: 'episodes',
     target: 'vec_episodes',
@@ -520,14 +520,14 @@ function migrateEmbeddingsToVec0(db: Database.Database, dimensions: number): boo
   return episodesMismatch || semanticsMismatch || proceduresMismatch;
 }
 
-function hasAgentPartition(db: Database.Database, table: Vec0TableName): boolean {
+function hasAgentPartition(db: Database, table: Vec0TableName): boolean {
   const row = db
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(table) as SqlDefinitionRow | undefined;
   return Boolean(row?.sql && /\bagent\s+text\s+partition\s+key\b/i.test(row.sql));
 }
 
-function migrateVec0AgentPartitions(db: Database.Database, dimensions: number): void {
+function migrateVec0AgentPartitions(db: Database, dimensions: number): void {
   const legacySpecs = VEC0_MIGRATION_SPECS.filter(spec => !hasAgentPartition(db, spec.table));
   if (legacySpecs.length === 0) return;
 
@@ -580,12 +580,7 @@ function migrateVec0AgentPartitions(db: Database.Database, dimensions: number): 
   migrate();
 }
 
-function addColumnIfMissing(
-  db: Database.Database,
-  table: string,
-  column: string,
-  definition: string,
-): void {
+function addColumnIfMissing(db: Database, table: string, column: string, definition: string): void {
   const columns = db.pragma(`table_info(${table})`) as PragmaColumn[];
   const exists = columns.some(col => col.name === column);
   if (!exists) {
@@ -595,7 +590,7 @@ function addColumnIfMissing(
 
 const SCHEMA_VERSION = 16;
 
-const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
+const MIGRATIONS: { version: number; up(db: Database): void }[] = [
   {
     version: 1,
     up(db) {
@@ -836,7 +831,7 @@ const MIGRATIONS: { version: number; up(db: Database.Database): void }[] = [
   },
 ];
 
-function runMigrations(db: Database.Database): void {
+function runMigrations(db: Database): void {
   const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get() as
     ConfigRow | undefined;
   const currentVersion = row ? Number(row.value) : 0;
@@ -859,7 +854,7 @@ function runMigrations(db: Database.Database): void {
 export function createDatabase(
   dataDir: string,
   options: { dimensions?: number } = {},
-): { db: Database.Database; migrated: boolean } {
+): { db: Database; migrated: boolean } {
   let { dimensions } = options;
   let migrated = false;
 
@@ -871,7 +866,7 @@ export function createDatabase(
   db.pragma('busy_timeout = 5000');
   // Tuned for memory-store workloads (synchronous=NORMAL is durable under WAL,
   // 64 MiB page cache + 256 MiB mmap reduce read syscalls on hot recall paths).
-  // AUDREY_PRAGMA_DEFAULTS=0 reverts to better-sqlite3 defaults.
+  // AUDREY_PRAGMA_DEFAULTS=0 uses SQLite defaults apart from WAL, foreign keys, and busy timeout.
   if (process.env.AUDREY_PRAGMA_DEFAULTS !== '0') {
     db.pragma('synchronous = NORMAL');
     db.pragma('cache_size = -65536');
@@ -943,7 +938,7 @@ export function readStoredDimensions(dataDir: string): number | null {
   }
 }
 
-export function closeDatabase(db: Database.Database): void {
+export function closeDatabase(db: Database): void {
   if (db && db.open) {
     db.close();
   }
