@@ -285,7 +285,7 @@ describe('schema migration framework', () => {
 
     const row = db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get();
     expect(row).toBeDefined();
-    expect(Number(row.value)).toBe(16);
+    expect(Number(row.value)).toBe(17);
   });
 
   it('is idempotent — running migrations twice causes no errors', () => {
@@ -625,7 +625,7 @@ describe('schema migration framework', () => {
     });
     expect(
       db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get().value,
-    ).toBe('16');
+    ).toBe('17');
     const indexes = db.prepare("PRAGMA index_list('memory_events')").all();
     expect(indexes.map(index => index.name)).toEqual(
       expect.arrayContaining([
@@ -639,7 +639,7 @@ describe('schema migration framework', () => {
     ({ db } = createDatabase(LEGACY_DIR));
     expect(
       db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get().value,
-    ).toBe('16');
+    ).toBe('17');
   });
 });
 
@@ -776,7 +776,7 @@ describe('v14 vec0 sync high-water mark', () => {
 
     expect(
       db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get().value,
-    ).toBe('16');
+    ).toBe('17');
     expect(db.prepare('SELECT id FROM vec_episodes WHERE id = ?').get('ep-legacy')).toBeDefined();
     expect(readConfigValue(db, 'vec_sync_id_episodes')).toBeDefined();
 

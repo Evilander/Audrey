@@ -33,8 +33,7 @@ import {
   MEMORY_TRUST_NOTICE,
 } from '../src/autopilot.js';
 import { stripReservedTrustKeys, TRUST_CONTEXT_KEY, USER_VERIFIED_TRUST } from '../src/trust.js';
-import { verifyAnchors } from '../src/grounding.js';
-import { projectRoot } from '../src/project.js';
+import { checkoutRoot } from '../src/project.js';
 import type {
   Affect,
   AudreyConfig,
@@ -312,7 +311,7 @@ async function dream(): Promise<void> {
 
     // Whole-store sweep: dream runs across every agent, so grounding is not
     // scoped to the synthetic 'dream' agent, which owns no memories.
-    const grounding = verifyAnchors(audrey.db, { projectRoot: projectRoot(process.cwd()) });
+    const grounding = audrey.ground({ agent: undefined, projectRoot: checkoutRoot(process.cwd()) });
     console.log(
       `[audrey] Grounding: checked ${grounding.checked} anchors, ` +
         `${grounding.broken} broken, ${grounding.repaired} repaired`,
@@ -339,9 +338,9 @@ async function ground(): Promise<void> {
   const embedding = resolveEmbeddingProvider(process.env, process.env['AUDREY_EMBEDDING_PROVIDER']);
   const audrey = new Audrey({ dataDir, agent: 'ground', embedding });
   try {
-    const root = projectRoot(process.cwd());
+    const root = checkoutRoot(process.cwd());
     console.log(`[audrey] Grounding memories against ${root}`);
-    const report = verifyAnchors(audrey.db, { projectRoot: root });
+    const report = audrey.ground({ projectRoot: root });
     if (report.checked === 0) {
       console.log('[audrey] No checkable claims recorded for this project yet.');
       console.log(
@@ -3350,8 +3349,8 @@ async function main(): Promise<void> {
         // paths and package scripts that existed when the memory was
         // written — and reports the ones that stopped being true. Broken
         // memories are down-weighted and labelled on recall, never deleted.
-        const report = verifyAnchors(audrey.db, {
-          projectRoot: projectRoot(cwd ?? process.cwd()),
+        const report = audrey.ground({
+          projectRoot: checkoutRoot(cwd ?? process.cwd()),
         });
         return toolResult(report, undefined, { escapeMarkup: true });
       } catch (err) {

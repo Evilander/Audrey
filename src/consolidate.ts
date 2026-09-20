@@ -11,6 +11,7 @@ import { generateId } from './ulid.js';
 import { insertFTSSemantic, insertFTSProcedure } from './fts.js';
 import { buildPrincipleExtractionPrompt } from './prompts.js';
 import { safeJsonParse } from './utils.js';
+import type { ConsolidationUndo } from './rollback.js';
 
 const DEFAULT_MERGE_SIMILARITY_THRESHOLD = 0.92;
 
@@ -440,6 +441,7 @@ export async function runConsolidation(
     let semanticsMergedCount = 0;
     let proceduresMergedCount = 0;
     const preparedClusters: PreparedCluster[] = [];
+    const undo: ConsolidationUndo = { version: 1, changes: [] };
     const insertProcedure = db.prepare(`
       INSERT INTO procedures (
         id, content, agent, embedding, state, trigger_conditions,
@@ -466,7 +468,8 @@ export async function runConsolidation(
       SET status = 'completed',
           completed_at = ?,
           input_episode_ids = ?,
-          output_memory_ids = ?
+          output_memory_ids = ?,
+          rollback_data = ?
       WHERE id = ?
     `);
     const insertMetrics = db.prepare(`
@@ -536,6 +539,22 @@ export async function runConsolidation(
         let outputId: string;
         if (shouldMerge && mergeMatch) {
           outputId = mergeMatch.id;
+          const table = isProcedural ? 'procedures' : 'semantics';
+          const before = db
+            .prepare(`SELECT evidence_episode_ids, last_reinforced_at FROM ${table} WHERE id = ?`)
+            .get(outputId) as {
+            evidence_episode_ids: string | null;
+            last_reinforced_at: string | null;
+          };
+          const previousIds = new Set(safeJsonParse<string[]>(before.evidence_episode_ids, []));
+          const change: ConsolidationUndo['changes'][number] = {
+            id: outputId,
+            type: isProcedural ? 'procedural' : 'semantic',
+            created: false,
+            addedEvidence: prepared.clusterIds.filter(id => !previousIds.has(id)),
+            previousReinforcedAt: before.last_reinforced_at,
+          };
+          undo.changes.push(change);
           if (isProcedural) {
             mergeIntoProcedural(db, mergeMatch.id, prepared.clusterIds, prepared.isPrivate);
             proceduresMergedCount++;
@@ -543,8 +562,19 @@ export async function runConsolidation(
             mergeIntoSemantic(db, mergeMatch.id, prepared.clusterIds, agent, prepared.isPrivate);
             semanticsMergedCount++;
           }
+          change.writtenReinforcedAt = (
+            db.prepare(`SELECT last_reinforced_at FROM ${table} WHERE id = ?`).get(outputId) as {
+              last_reinforced_at: string | null;
+            }
+          ).last_reinforced_at;
         } else {
           outputId = prepared.memoryId;
+          undo.changes.push({
+            id: outputId,
+            type: isProcedural ? 'procedural' : 'semantic',
+            created: true,
+            addedEvidence: [],
+          });
           if (isProcedural) {
             insertProcedure.run(
               prepared.memoryId,
@@ -612,6 +642,7 @@ export async function runConsolidation(
         completedAt,
         JSON.stringify(allInputIds),
         JSON.stringify(allOutputIds),
+        JSON.stringify(undo),
         runId,
       );
       insertMetrics.run(

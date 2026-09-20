@@ -1,7 +1,16 @@
 import Database from './sqlite.js';
 import * as sqliteVec from 'sqlite-vec';
 import { join } from 'node:path';
-import { mkdirSync, existsSync } from 'node:fs';
+import {
+  mkdirSync,
+  existsSync,
+  openSync,
+  closeSync,
+  fchmodSync,
+  chmodSync,
+  constants,
+} from 'node:fs';
+import { checkoutRoot } from './project.js';
 import { createFTSTables, backfillFTS } from './fts.js';
 import { requireAgent } from './utils.js';
 
@@ -588,7 +597,7 @@ function addColumnIfMissing(db: Database, table: string, column: string, definit
   }
 }
 
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 const MIGRATIONS: { version: number; up(db: Database): void }[] = [
   {
@@ -829,6 +838,40 @@ const MIGRATIONS: { version: number; up(db: Database): void }[] = [
       `);
     },
   },
+  {
+    version: 17,
+    up(db) {
+      addColumnIfMissing(db, 'memory_anchors', 'last_checked_at', 'TEXT');
+      addColumnIfMissing(db, 'consolidation_runs', 'rollback_data', 'TEXT');
+      db.exec(`
+        UPDATE memory_anchors SET last_checked_at = last_verified_at;
+        CREATE INDEX IF NOT EXISTS idx_memory_anchors_checked
+          ON memory_anchors(agent, project_root, last_checked_at);
+      `);
+      const rows = db
+        .prepare(
+          `
+        SELECT a.id, e.agent, e.context FROM memory_anchors a
+        JOIN episodes e ON e.id = a.memory_id WHERE a.memory_type = 'episodic'
+      `,
+        )
+        .all() as Array<{ id: string; agent: string; context: string | null }>;
+      for (const row of rows) {
+        db.prepare('UPDATE memory_anchors SET agent = ? WHERE id = ?').run(row.agent, row.id);
+        try {
+          const context = JSON.parse(row.context ?? '{}') as { cwd?: unknown };
+          if (typeof context.cwd === 'string' && existsSync(context.cwd)) {
+            db.prepare('UPDATE OR IGNORE memory_anchors SET project_root = ? WHERE id = ?').run(
+              checkoutRoot(context.cwd),
+              row.id,
+            );
+          }
+        } catch {
+          /* An unavailable checkout keeps its last known anchor. */
+        }
+      }
+    },
+  },
 ];
 
 function runMigrations(db: Database): void {
@@ -851,75 +894,121 @@ function runMigrations(db: Database): void {
   }
 }
 
+/** Retry lock acquisition only; failed transactions roll back before retrying. */
+function retryBusy<T>(operation: () => T): T {
+  const deadline = Date.now() + 5000;
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    try {
+      return operation();
+    } catch (error) {
+      const code = (error as { errcode?: number }).errcode;
+      if (code === undefined || ![5, 6].includes(code & 0xff) || Date.now() >= deadline)
+        throw error;
+      Atomics.wait(sleeper, 0, 0, 20);
+    }
+  }
+}
+
 export function createDatabase(
   dataDir: string,
-  options: { dimensions?: number } = {},
+  options: { dimensions?: number; sharedStore?: boolean } = {},
 ): { db: Database; migrated: boolean } {
   let { dimensions } = options;
   let migrated = false;
 
-  mkdirSync(dataDir, { recursive: true });
+  const sharedStore = options.sharedStore ?? process.env.AUDREY_SHARED_STORE === '1';
+  mkdirSync(dataDir, { recursive: true, mode: sharedStore ? 0o770 : 0o700 });
   const dbPath = join(dataDir, 'audrey.db');
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.pragma('busy_timeout = 5000');
-  // Tuned for memory-store workloads (synchronous=NORMAL is durable under WAL,
-  // 64 MiB page cache + 256 MiB mmap reduce read syscalls on hot recall paths).
-  // AUDREY_PRAGMA_DEFAULTS=0 uses SQLite defaults apart from WAL, foreign keys, and busy timeout.
-  if (process.env.AUDREY_PRAGMA_DEFAULTS !== '0') {
-    db.pragma('synchronous = NORMAL');
-    db.pragma('cache_size = -65536');
-    db.pragma('mmap_size = 268435456');
-    db.pragma('temp_store = MEMORY');
-  }
-  db.exec(SCHEMA);
-  runMigrations(db);
-
-  if (dimensions == null) {
-    const stored = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as
-      ConfigRow | undefined;
-    if (stored) {
-      dimensions = parseInt(stored.value, 10);
+  // Protect the file before SQLite can write content or create WAL sidecars.
+  if (!sharedStore) {
+    const fd = openSync(
+      dbPath,
+      constants.O_CREAT | constants.O_RDWR | (constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    try {
+      if (process.platform !== 'win32') fchmodSync(fd, 0o600);
+    } finally {
+      closeSync(fd);
     }
-  }
-
-  if (dimensions != null) {
-    if (!Number.isInteger(dimensions) || dimensions <= 0) {
-      throw new Error(`dimensions must be a positive integer, got: ${dimensions}`);
-    }
-
-    sqliteVec.load(db);
-
-    const existing = db
-      .prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'")
-      .get() as ConfigRow | undefined;
-
-    if (existing) {
-      const storedDims = parseInt(existing.value, 10);
-      if (storedDims !== dimensions) {
-        dropVec0Tables(db);
-        db.prepare("UPDATE audrey_config SET value = ? WHERE key = 'dimensions'").run(
-          String(dimensions),
-        );
-        migrated = true;
+    if (process.platform !== 'win32') {
+      for (const suffix of ['-wal', '-shm']) {
+        try {
+          chmodSync(dbPath + suffix, 0o600);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
       }
-    } else {
-      db.prepare("INSERT INTO audrey_config (key, value) VALUES ('dimensions', ?)").run(
-        String(dimensions),
-      );
-    }
-
-    createVec0Tables(db, dimensions);
-    migrateVec0AgentPartitions(db, dimensions);
-    reconcileVectorIndexOnce(db);
-
-    if (!migrated && migrateEmbeddingsToVec0(db, dimensions)) {
-      migrated = true;
     }
   }
+  const db = new Database(dbPath);
+  try {
+    retryBusy(() => db.pragma('journal_mode = WAL'));
+    db.pragma('foreign_keys = ON');
+    db.pragma('busy_timeout = 5000');
+    // Tuned for memory-store workloads (synchronous=NORMAL is durable under WAL,
+    // 64 MiB page cache + 256 MiB mmap reduce read syscalls on hot recall paths).
+    // AUDREY_PRAGMA_DEFAULTS=0 uses SQLite defaults apart from WAL, foreign keys, and busy timeout.
+    if (process.env.AUDREY_PRAGMA_DEFAULTS !== '0') {
+      db.pragma('synchronous = NORMAL');
+      db.pragma('cache_size = -65536');
+      db.pragma('mmap_size = 268435456');
+      db.pragma('temp_store = MEMORY');
+    }
+    sqliteVec.load(db);
+    const initialize = db.transaction(() => {
+      db.exec(SCHEMA);
+      runMigrations(db);
 
-  return { db, migrated };
+      if (dimensions == null) {
+        const stored = db
+          .prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'")
+          .get() as ConfigRow | undefined;
+        if (stored) {
+          dimensions = parseInt(stored.value, 10);
+        }
+      }
+
+      if (dimensions != null) {
+        if (!Number.isInteger(dimensions) || dimensions <= 0) {
+          throw new Error(`dimensions must be a positive integer, got: ${dimensions}`);
+        }
+
+        const existing = db
+          .prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'")
+          .get() as ConfigRow | undefined;
+
+        if (existing) {
+          const storedDims = parseInt(existing.value, 10);
+          if (storedDims !== dimensions) {
+            dropVec0Tables(db);
+            db.prepare("UPDATE audrey_config SET value = ? WHERE key = 'dimensions'").run(
+              String(dimensions),
+            );
+            migrated = true;
+          }
+        } else {
+          db.prepare("INSERT INTO audrey_config (key, value) VALUES ('dimensions', ?)").run(
+            String(dimensions),
+          );
+        }
+
+        createVec0Tables(db, dimensions);
+        migrateVec0AgentPartitions(db, dimensions);
+        reconcileVectorIndexOnce(db);
+
+        if (!migrated && migrateEmbeddingsToVec0(db, dimensions)) {
+          migrated = true;
+        }
+      }
+    });
+    retryBusy(() => initialize.immediate());
+    return { db, migrated };
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 export function readStoredDimensions(dataDir: string): number | null {

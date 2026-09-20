@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { entryBelongsToProject } from './project-memory.js';
 /**
  * Memory Capsule — structured, evidence-backed retrieval packet.
  *
@@ -54,6 +56,9 @@ export interface CapsuleOptions {
    * memories instead of just shrinking the capsule.
    */
   excludeIds?: Iterable<string>;
+  /** Previously rendered versions; changed state/content remains eligible. */
+  excludeEntryKeys?: Iterable<string>;
+  projectNamespace?: string;
   /**
    * Verb signatures of the shell command this capsule is a preflight for.
    * When set, an Autopilot-recorded Bash failure is surfaced only if it ran
@@ -94,6 +99,18 @@ export interface CapsuleEntry {
   grounding?: 'grounded' | 'broken';
   /** Present only on tool_failure entries; the pattern the entry summarizes. */
   failure_pattern?: FailurePattern;
+}
+
+export function capsuleEntryKey(entry: CapsuleEntry): string {
+  const version = JSON.stringify([
+    entry.content,
+    entry.state,
+    entry.grounding,
+    entry.trust,
+    entry.reason,
+    entry.recommended_action,
+  ]);
+  return `${entry.memory_id}@${createHash('sha256').update(version).digest('hex')}`;
 }
 
 export interface MemoryCapsule {
@@ -496,13 +513,15 @@ export async function buildCapsule(
     Number.parseInt(process.env['AUDREY_CONTEXT_BUDGET_CHARS'] ?? '4000', 10);
   const recentChangeWindowHours = options.recentChangeWindowHours ?? 24;
   const excludeIds = options.excludeIds ? new Set(options.excludeIds) : undefined;
+  const excludeEntryKeys = new Set(options.excludeEntryKeys);
+  const excludedCount = (excludeIds?.size ?? 0) + excludeEntryKeys.size;
   const baseRecallLimit =
     options.limit ?? (mode === 'conservative' ? 8 : mode === 'aggressive' ? 24 : 16);
   // Widen the candidate pool by however many ids are being excluded so
   // filtering them out still leaves room for genuinely new memories, instead
   // of just returning a shorter capsule built from the same fixed top slots.
-  const recallLimit = excludeIds?.size
-    ? Math.min(baseRecallLimit + excludeIds.size, MAX_CAPSULE_RECALL_LIMIT)
+  const recallLimit = excludedCount
+    ? Math.min(baseRecallLimit + excludedCount, MAX_CAPSULE_RECALL_LIMIT)
     : baseRecallLimit;
   const recentWindowMs = recentChangeWindowHours * 60 * 60 * 1000;
   const includeRisks = options.includeRisks ?? true;
@@ -525,7 +544,12 @@ export async function buildCapsule(
   const seenPerSection = new Map<keyof MemoryCapsule['sections'], Set<string>>();
 
   function push(section: keyof MemoryCapsule['sections'], entry: CapsuleEntry): void {
-    if (excludeIds?.has(entry.memory_id)) return;
+    if (excludeIds?.has(entry.memory_id) || excludeEntryKeys.has(capsuleEntryKey(entry))) return;
+    if (
+      options.projectNamespace &&
+      !entryBelongsToProject(audrey, entry, options.projectNamespace, memoryAgent)
+    )
+      return;
     let seen = seenPerSection.get(section);
     if (!seen) {
       seen = new Set();
