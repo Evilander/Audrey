@@ -358,7 +358,10 @@ export class MemoryController {
     this.failureDecayDays = options.failureDecayDays ?? DEFAULT_FAILURE_DECAY_DAYS;
   }
 
-  async beforeAction(action: AgentAction): Promise<ControllerGuardResult> {
+  async beforeAction(
+    action: AgentAction,
+    options: Pick<GuardBeforeOptions, 'scope' | 'projectNamespace'> = {},
+  ): Promise<ControllerGuardResult> {
     const evaluation = await this.evaluate(action, {
       tool: action.tool,
       actionDigest: action.actionDigest,
@@ -371,6 +374,7 @@ export class MemoryController {
       includeStatus: true,
       recordEvent: true,
       scope: 'agent',
+      ...options,
     });
     return evaluation.controller;
   }

@@ -287,6 +287,33 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   const allowAdminTools = adminToolsEnabled(options);
   const allowSharedScope = options.sharedScopeEnabled ?? allowAdminTools;
 
+  // The sidecar is an API, not a cross-origin browser endpoint. Reject web
+  // origins before routing, including simple text/plain requests to loopback.
+  app.use('/v1/*', async (c, next) => {
+    const requestUrl = new URL(c.req.url);
+    if (
+      !options.apiKey &&
+      process.env.AUDREY_ALLOW_NO_AUTH !== '1' &&
+      !['localhost', '127.0.0.1', '[::1]'].includes(requestUrl.hostname)
+    ) {
+      return c.json({ error: 'Unauthenticated requests require a loopback host' }, 403);
+    }
+    const origin = c.req.header('Origin');
+    if (origin && origin !== requestUrl.origin) {
+      return c.json({ error: 'Cross-origin requests are not allowed' }, 403);
+    }
+    if (c.req.header('Sec-Fetch-Site') === 'cross-site') {
+      return c.json({ error: 'Cross-site requests are not allowed' }, 403);
+    }
+    if (['POST', 'PUT', 'PATCH'].includes(c.req.method) && c.req.raw.body !== null) {
+      const contentType = c.req.header('Content-Type')?.split(';')[0]?.trim().toLowerCase();
+      if (contentType !== 'application/json') {
+        return c.json({ error: 'Content-Type must be application/json' }, 415);
+      }
+    }
+    await next();
+  });
+
   function adminDisabledResponse(c: Context) {
     return c.json(
       {

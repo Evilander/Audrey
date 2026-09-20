@@ -874,7 +874,7 @@ describe('Audrey Autopilot', () => {
     expect(audrey.countEvents({ eventType: 'PreToolUse' })).toBe(0);
   });
 
-  it('excludes already-injected memory ids from the next capsule() call before truncation', async () => {
+  it('excludes already-injected memory versions from the next capsule() call before truncation', async () => {
     const memoryId = await audrey.encode({
       content: 'Deploys must run migrations first',
       source: 'told-by-user',
@@ -890,9 +890,9 @@ describe('Audrey Autopilot', () => {
     expect(capsuleSpy.mock.calls[0][1].excludeIds).toBeUndefined();
 
     await runAutopilotHook(audrey, prompt(), { host: 'codex' });
-    const secondExcludeIds = capsuleSpy.mock.calls[1][1].excludeIds;
+    const secondExcludeIds = capsuleSpy.mock.calls[1][1].excludeEntryKeys;
     expect(secondExcludeIds).toBeTruthy();
-    expect([...secondExcludeIds]).toContain(memoryId);
+    expect([...secondExcludeIds].some(key => key.startsWith(`${memoryId}@`))).toBe(true);
   });
 
   it('requires the explicit global-preference tag to bypass project isolation', async () => {

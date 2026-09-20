@@ -141,16 +141,25 @@ export function extractAnchorCandidates(content: string): AnchorCandidate[] {
 }
 
 /** Reads a project's package scripts once per verification pass. */
-function packageScripts(projectRoot: string, cache: Map<string, Set<string>>): Set<string> {
+function packageScripts(
+  projectRoot: string,
+  cache: Map<string, Set<string> | null>,
+): Set<string> | null {
   const cached = cache.get(projectRoot);
-  if (cached) return cached;
-  let names = new Set<string>();
+  if (cached !== undefined) return cached;
+  let names: Set<string> | null = null;
   try {
     const parsed = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8')) as {
       scripts?: Record<string, unknown>;
     };
-    if (parsed.scripts && typeof parsed.scripts === 'object') {
-      names = new Set(Object.keys(parsed.scripts));
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      (parsed.scripts === undefined ||
+        (parsed.scripts && typeof parsed.scripts === 'object' && !Array.isArray(parsed.scripts)))
+    ) {
+      names = new Set(Object.keys(parsed.scripts ?? {}));
     }
   } catch {
     // No package.json, or unreadable: script anchors cannot be judged here.
@@ -169,7 +178,7 @@ function packageScripts(projectRoot: string, cache: Map<string, Set<string>>): S
 export function verifyAnchor(
   anchor: AnchorCandidate,
   projectRoot: string,
-  cache: Map<string, Set<string>> = new Map(),
+  cache: Map<string, Set<string> | null> = new Map(),
 ): boolean | null {
   if (!projectRoot || !existsSync(projectRoot)) return null;
   if (anchor.kind === 'path') {
@@ -184,7 +193,7 @@ export function verifyAnchor(
     return isContainedIn(projectRoot, target);
   }
   const scripts = packageScripts(projectRoot, cache);
-  if (scripts.size === 0) return null;
+  if (scripts === null) return null;
   return scripts.has(anchor.value);
 }
 
@@ -210,14 +219,14 @@ export function recordAnchors(db: Database, input: RecordAnchorsInput): number {
   if (candidates.length === 0) return 0;
 
   const timestamp = (input.now ?? new Date()).toISOString();
-  const cache = new Map<string, Set<string>>();
+  const cache = new Map<string, Set<string> | null>();
   const verified = candidates.filter(candidate => verifyAnchor(candidate, projectRoot, cache));
   if (verified.length === 0) return 0;
 
   const insert = db.prepare(`
     INSERT OR IGNORE INTO memory_anchors
-      (id, memory_id, memory_type, agent, project_root, kind, value, state, created_at, last_verified_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'intact', ?, ?)
+      (id, memory_id, memory_type, agent, project_root, kind, value, state, created_at, last_verified_at, last_checked_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'intact', ?, ?, ?)
   `);
   const write = db.transaction(() => {
     for (const anchor of verified) {
@@ -229,6 +238,7 @@ export function recordAnchors(db: Database, input: RecordAnchorsInput): number {
         projectRoot,
         anchor.kind,
         anchor.value,
+        timestamp,
         timestamp,
         timestamp,
       );
@@ -284,14 +294,26 @@ export function verifyAnchors(db: Database, options: VerifyAnchorsOptions = {}):
     .prepare(
       `SELECT id, memory_id, project_root, kind, value, state
        FROM memory_anchors ${where}
-       ORDER BY last_verified_at IS NULL DESC, last_verified_at ASC
+       ORDER BY COALESCE(last_checked_at, last_verified_at) IS NULL DESC,
+                COALESCE(last_checked_at, last_verified_at) ASC, id ASC
        LIMIT ?`,
     )
     .all(...params, limit) as AnchorRow[];
   if (rows.length === 0) return report;
 
   const timestamp = (options.now ?? new Date()).toISOString();
-  const cache = new Map<string, Set<string>>();
+  const latest = db
+    .prepare(
+      `SELECT MAX(COALESCE(last_checked_at, last_verified_at)) AS checked FROM memory_anchors ${where}`,
+    )
+    .get(...params) as { checked: string | null };
+  // A fixed clock or several checks within one millisecond must still move
+  // the selected rows behind the rest of the queue.
+  const checkedAt = new Date(
+    Math.max(Date.parse(timestamp), latest.checked ? Date.parse(latest.checked) + 1 : 0),
+  ).toISOString();
+  const cache = new Map<string, Set<string> | null>();
+  const markChecked = db.prepare('UPDATE memory_anchors SET last_checked_at = ? WHERE id = ?');
   const markIntact = db.prepare(
     `UPDATE memory_anchors SET state = 'intact', last_verified_at = ?, broken_at = NULL WHERE id = ?`,
   );
@@ -302,8 +324,9 @@ export function verifyAnchors(db: Database, options: VerifyAnchorsOptions = {}):
   const run = db.transaction(() => {
     for (const row of rows) {
       const result = verifyAnchor({ kind: row.kind, value: row.value }, row.project_root, cache);
-      // Unknown leaves the row exactly as it was, including its previous
-      // verification time, so it stays at the front of the queue.
+      // Preserve the last known truth on an unknown result while advancing
+      // the scan, so unavailable checkouts cannot starve other anchors.
+      markChecked.run(checkedAt, row.id);
       if (result === null) continue;
       report.checked += 1;
       if (result) {
