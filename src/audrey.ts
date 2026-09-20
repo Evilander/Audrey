@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import Database from './sqlite.js';
 import type {
   AudreyConfig,
@@ -84,7 +85,17 @@ import {
 import { renderAllRules, type RuleDoc } from './rules-compiler.js';
 import { insertEvent } from './events.js';
 import { requireAgent, resolveMemoryScope, isContainedIn } from './utils.js';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import {
+  mkdirSync,
+  writeFileSync,
+  existsSync,
+  lstatSync,
+  openSync,
+  closeSync,
+  fsyncSync,
+  renameSync,
+  rmSync,
+} from 'node:fs';
 import { dirname, join, resolve as pathResolve, delimiter as pathDelimiter } from 'node:path';
 import { ProfileRecorder, type ProfileDiagnostics } from './profile.js';
 import { performance } from 'node:perf_hooks';
@@ -94,7 +105,7 @@ import {
   type GroundingReport,
   type VerifyAnchorsOptions,
 } from './grounding.js';
-import { projectRoot } from './project.js';
+import { checkoutRoot } from './project.js';
 
 export type ValidateErrorCode =
   'PREFLIGHT_NOT_FOUND' | 'PREFLIGHT_WRONG_TYPE' | 'LINEAGE_REJECTED' | 'ACTION_KEY_MISMATCH';
@@ -336,6 +347,7 @@ export class Audrey extends EventEmitter {
   autoReflect: boolean;
 
   private _migrationPending: boolean;
+  private _migrationPromise: Promise<void> | null = null;
   private _autoConsolidateTimer: ReturnType<typeof setInterval> | null;
   private _closed: boolean;
   private _postEncodeQueue: Promise<void>;
@@ -348,6 +360,7 @@ export class Audrey extends EventEmitter {
 
   constructor({
     dataDir = './audrey-data',
+    sharedStore,
     agent = 'default',
     embedding = { provider: 'mock', dimensions: 64 },
     llm,
@@ -376,6 +389,7 @@ export class Audrey extends EventEmitter {
     this.embeddingProvider = createEmbeddingProvider(embedding);
     const { db, migrated } = createDatabase(dataDir, {
       dimensions: this.embeddingProvider.dimensions,
+      sharedStore,
     });
     this.db = db;
     this._migrationPending = migrated;
@@ -441,9 +455,15 @@ export class Audrey extends EventEmitter {
 
   async _ensureMigrated(): Promise<void> {
     if (!this._migrationPending) return;
-    const counts = await reembedAll(this.db, this.embeddingProvider);
-    this._migrationPending = false;
-    this.emit('migration', counts);
+    this._migrationPromise ??= reembedAll(this.db, this.embeddingProvider)
+      .then(counts => {
+        this._migrationPending = false;
+        this.emit('migration', counts);
+      })
+      .finally(() => {
+        this._migrationPromise = null;
+      });
+    await this._migrationPromise;
   }
 
   startEmbeddingWarmup(text = 'warmup'): Promise<void> {
@@ -576,9 +596,9 @@ export class Audrey extends EventEmitter {
       recordAnchors(this.db, {
         memoryId: id,
         memoryType: 'episodic',
-        agent: this.agent,
+        agent: requireAgent(params.agent, this.agent),
         content: params.content,
-        projectRoot: projectRoot(cwd),
+        projectRoot: checkoutRoot(cwd),
       });
     });
 
@@ -736,7 +756,7 @@ export class Audrey extends EventEmitter {
         });
     const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
     if (redactionSummary?.redacted) this.emit('redaction', { id, ...redactionSummary });
-    this.emit('encode', { id, ...params });
+    this.emit('encode', { id, ...params, ...sanitizedFields });
     // The background pipeline (grounding, validation, the contradiction
     // prompt sent to the cloud LLM) must only ever see what the row stores.
     // Handing it the raw params would leak a secret redaction just scrubbed.
@@ -758,7 +778,12 @@ export class Audrey extends EventEmitter {
   async reflect(turns: { role: string; content: string }[]): Promise<ReflectResult> {
     if (!this.llmProvider) return { encoded: 0, memories: [], skipped: 'no llm provider' };
 
-    const prompt = buildReflectionPrompt(turns);
+    const prompt = buildReflectionPrompt(
+      turns.map(turn => ({
+        role: turn.role,
+        content: redact(turn.content).text,
+      })),
+    );
     let raw: string;
     try {
       if (typeof this.llmProvider.complete === 'function') {
@@ -1624,9 +1649,41 @@ export class Audrey extends EventEmitter {
         const candidate = candidates[i]!;
         const doc = docs[i]!;
         const absolutePath = join(projectDir, doc.relativePath);
+        if (!isContainedIn(projectDir, absolutePath)) {
+          throw new Error(
+            'promote: refusing to write a rule outside the project through a symlink',
+          );
+        }
         mkdirSync(dirname(absolutePath), { recursive: true });
+        if (!isContainedIn(projectDir, absolutePath)) {
+          throw new Error('promote: rule destination changed outside the project');
+        }
+        try {
+          if (lstatSync(absolutePath).isSymbolicLink()) {
+            throw new Error('promote: refusing to replace a symlink at the rule destination');
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
         const overwritten = existsSync(absolutePath);
-        writeFileSync(absolutePath, doc.body, 'utf-8');
+        // Atomic replacement never follows a leaf symlink that appears after
+        // the check, and leaves an existing rule intact if writing fails.
+        const temporary = `${absolutePath}.${randomUUID()}.tmp`;
+        try {
+          const fd = openSync(temporary, 'wx', 0o600);
+          try {
+            writeFileSync(fd, doc.body, 'utf8');
+            fsyncSync(fd);
+          } finally {
+            closeSync(fd);
+          }
+          if (!isContainedIn(projectDir, dirname(absolutePath))) {
+            throw new Error('promote: rule directory changed outside the project');
+          }
+          renameSync(temporary, absolutePath);
+        } finally {
+          rmSync(temporary, { force: true });
+        }
 
         insertEvent(this.db, {
           eventType: 'Promotion',

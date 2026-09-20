@@ -1,6 +1,6 @@
 import Database from './sqlite.js';
 import type { EmbeddingProvider, ReembedCounts } from './types.js';
-import { dropVec0Tables, createVec0Tables } from './db.js';
+import { dropVec0Tables, createVec0Tables, refreshVectorRow } from './db.js';
 
 interface EpisodeMigrateRow {
   id: string;
@@ -55,11 +55,6 @@ export async function reembedAll(
   embeddingProvider: EmbeddingProvider,
   { dropAndRecreate = false }: { dropAndRecreate?: boolean } = {},
 ): Promise<ReembedCounts> {
-  if (dropAndRecreate) {
-    dropVec0Tables(db);
-    createVec0Tables(db, embeddingProvider.dimensions);
-  }
-
   const episodes = db
     .prepare('SELECT id, agent, content, source, consolidated, superseded_by FROM episodes')
     .all() as EpisodeMigrateRow[];
@@ -86,58 +81,59 @@ export async function reembedAll(
     'procedures',
   );
 
-  const updateEpLegacy = db.prepare('UPDATE episodes SET embedding = ? WHERE id = ?');
-  const deleteVecEp = db.prepare('DELETE FROM vec_episodes WHERE id = ?');
-  const insertVecEp = db.prepare(
-    'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
-  );
-
-  const updateSemLegacy = db.prepare('UPDATE semantics SET embedding = ? WHERE id = ?');
-  const deleteVecSem = db.prepare('DELETE FROM vec_semantics WHERE id = ?');
-  const insertVecSem = db.prepare(
-    'INSERT INTO vec_semantics(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
-  );
-
-  const updateProcLegacy = db.prepare('UPDATE procedures SET embedding = ? WHERE id = ?');
-  const deleteVecProc = db.prepare('DELETE FROM vec_procedures WHERE id = ?');
-  const insertVecProc = db.prepare(
-    'INSERT INTO vec_procedures(id, agent, embedding, state) VALUES (?, ?, ?, ?)',
-  );
-
-  // Every row gets a fresh embedding column, so a later restore of a
-  // superseded row has a vector of the right dimension to reinstate. Only
-  // live rows go back into the vec0 tables: a dead vector would take a KNN
-  // candidate slot and read as an unhealthy index to memoryStatus().
+  // Embedding can be slow. Recheck row existence and content under the writer
+  // lock before committing, then derive index metadata from the current row.
   const writeTx = db.transaction(() => {
-    for (let i = 0; i < episodes.length; i++) {
-      const buf = embeddingProvider.vectorToBuffer(episodeVectors[i]!);
-      updateEpLegacy.run(buf, episodes[i]!.id);
-      deleteVecEp.run(episodes[i]!.id);
-      if (episodes[i]!.superseded_by) continue;
-      insertVecEp.run(
-        episodes[i]!.id,
-        episodes[i]!.agent,
-        buf,
-        episodes[i]!.source,
-        BigInt(episodes[i]!.consolidated ?? 0),
+    const stored = db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get() as
+      { value: string } | undefined;
+    if (!dropAndRecreate && stored && Number(stored.value) !== embeddingProvider.dimensions) {
+      throw new Error(
+        'Embedding dimensions changed during re-embedding; retry with the current provider',
       );
     }
-    for (let i = 0; i < semantics.length; i++) {
-      const buf = embeddingProvider.vectorToBuffer(semanticVectors[i]!);
-      updateSemLegacy.run(buf, semantics[i]!.id);
-      deleteVecSem.run(semantics[i]!.id);
-      if (semantics[i]!.state === 'superseded') continue;
-      insertVecSem.run(semantics[i]!.id, semantics[i]!.agent, buf, semantics[i]!.state);
+    const batches = [
+      { table: 'episodes' as const, rows: episodes, vectors: episodeVectors },
+      { table: 'semantics' as const, rows: semantics, vectors: semanticVectors },
+      { table: 'procedures' as const, rows: procedures, vectors: procedureVectors },
+    ];
+    if (dropAndRecreate) {
+      // Refuse to drop an index when a concurrent writer added or edited rows
+      // that this embedding batch did not cover.
+      for (const { table, rows } of batches) {
+        const snapshot = new Map(rows.map(row => [row.id, row.content]));
+        const current = db.prepare(`SELECT id, content FROM ${table}`).all() as Array<{
+          id: string;
+          content: string;
+        }>;
+        if (current.some(row => snapshot.get(row.id) !== row.content)) {
+          throw new Error('Memories changed during re-embedding; retry before replacing the index');
+        }
+      }
+      dropVec0Tables(db);
+      createVec0Tables(db, embeddingProvider.dimensions);
+      db.prepare("UPDATE audrey_config SET value = ? WHERE key = 'dimensions'").run(
+        String(embeddingProvider.dimensions),
+      );
     }
-    for (let i = 0; i < procedures.length; i++) {
-      const buf = embeddingProvider.vectorToBuffer(procedureVectors[i]!);
-      updateProcLegacy.run(buf, procedures[i]!.id);
-      deleteVecProc.run(procedures[i]!.id);
-      if (procedures[i]!.state === 'superseded') continue;
-      insertVecProc.run(procedures[i]!.id, procedures[i]!.agent, buf, procedures[i]!.state);
+    for (const { table, rows, vectors } of batches) {
+      const update = db.prepare(
+        `UPDATE ${table} SET embedding = ?, embedding_model = COALESCE(?, embedding_model), embedding_version = COALESCE(?, embedding_version) WHERE id = ? AND content = ?`,
+      );
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i]!;
+        const buffer = embeddingProvider.vectorToBuffer(vectors[i]!);
+        const changed = update.run(
+          buffer,
+          embeddingProvider.modelName ?? null,
+          embeddingProvider.modelVersion ?? null,
+          row.id,
+          row.content,
+        ).changes;
+        if (changed) refreshVectorRow(db, table, row.id);
+      }
     }
   });
-  writeTx();
+  writeTx.immediate();
 
   return { episodes: episodes.length, semantics: semantics.length, procedures: procedures.length };
 }

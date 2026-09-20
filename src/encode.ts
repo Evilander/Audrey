@@ -18,6 +18,8 @@ export interface SanitizedEncodeFields {
   content: string;
   context: Record<string, string>;
   affect: Partial<Affect>;
+  tags?: string[];
+  causal?: CausalParams;
 }
 
 export interface EncodeEpisodeOptions {
@@ -103,7 +105,24 @@ export async function encodeEpisode(
     redactedAffect = { ...affect, label: labelResult.text };
   }
 
-  const mergedHits = mergeRedactionHits(contentResult.redactions, contextHits, affectHits);
+  const tagResults = tags?.map(tag => redact(tag));
+  const redactedTags = tagResults?.map(result => result.text);
+  const triggerResult = causal?.trigger ? redact(causal.trigger) : undefined;
+  const consequenceResult = causal?.consequence ? redact(causal.consequence) : undefined;
+  const redactedCausal = causal
+    ? {
+        trigger: triggerResult?.text,
+        consequence: consequenceResult?.text,
+      }
+    : undefined;
+  const mergedHits = mergeRedactionHits(
+    contentResult.redactions,
+    contextHits,
+    affectHits,
+    ...(tagResults?.map(result => result.redactions) ?? []),
+    triggerResult?.redactions ?? [],
+    consequenceResult?.redactions ?? [],
+  );
   const redactionSummary: RedactionSummary = {
     redacted: mergedHits.length > 0,
     classes: mergedHits.map(hit => hit.class),
@@ -114,6 +133,8 @@ export async function encodeEpisode(
     content: redactedContent,
     context: redactedContext,
     affect: redactedAffect,
+    tags: redactedTags,
+    causal: redactedCausal,
   });
 
   const reliability = sourceReliability(source);
@@ -154,9 +175,9 @@ export async function encodeEpisode(
       effectiveSalience,
       JSON.stringify(redactedContext),
       JSON.stringify(redactedAffect),
-      tags ? JSON.stringify(tags) : null,
-      causal?.trigger || null,
-      causal?.consequence || null,
+      redactedTags ? JSON.stringify(redactedTags) : null,
+      redactedCausal?.trigger || null,
+      redactedCausal?.consequence || null,
       now,
       embeddingProvider.modelName,
       embeddingProvider.modelVersion,
@@ -166,7 +187,7 @@ export async function encodeEpisode(
     db.prepare(
       'INSERT INTO vec_episodes(id, agent, embedding, source, consolidated) VALUES (?, ?, ?, ?, ?)',
     ).run(id, ownerAgent, embeddingBuffer, source, BigInt(0));
-    insertFTSEpisode(db, id, redactedContent, tags ?? null);
+    insertFTSEpisode(db, id, redactedContent, redactedTags ?? null);
     if (supersedes) {
       db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ?').run(id, supersedes);
     }

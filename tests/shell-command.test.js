@@ -46,7 +46,6 @@ const READ_ONLY = [
   'npm ls --depth=0',
   'npm view audrey version',
   'npm audit --omit=dev',
-  'npm pack --dry-run',
   'npx --version',
   'tsc --noEmit',
   "sed 's/a/b/g' file",
@@ -119,6 +118,7 @@ const READ_ONLY = [
 ];
 
 const SIDE_EFFECT = [
+  'npm pack --dry-run',
   'rm -rf dist',
   'git push origin master',
   'git commit -m "x"',

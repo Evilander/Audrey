@@ -20,6 +20,13 @@ interface SimilarityRow {
 
 function deleteAnchors(db: Database, memoryId: string): void {
   db.prepare('DELETE FROM memory_anchors WHERE memory_id = ?').run(memoryId);
+  db.prepare('DELETE FROM causal_links WHERE cause_id = ? OR effect_id = ?').run(
+    memoryId,
+    memoryId,
+  );
+  db.prepare(
+    'DELETE FROM contradictions WHERE claim_a_id = ? OR claim_b_id = ? OR reopen_evidence_id = ?',
+  ).run(memoryId, memoryId, memoryId);
 }
 
 /**
@@ -119,6 +126,7 @@ export function forgetMemory(
         // Cascade before deleting the episode so its id is still resolvable.
         const cascaded = purgeDerivedFromEpisode(db, id);
         db.prepare('DELETE FROM vec_episodes WHERE id = ?').run(id);
+        db.prepare('UPDATE episodes SET supersedes = NULL WHERE supersedes = ?').run(id);
         db.prepare('DELETE FROM episodes WHERE id = ?').run(id);
         deleteFTSEpisode(db, id);
         deleteAnchors(db, id);
@@ -172,7 +180,7 @@ export function forgetMemory(
     throw new Error(`Memory not found: ${id}`);
   });
 
-  return performForget();
+  return performForget.immediate();
 }
 
 export const READ_ONLY_PROBE_RETIREMENT_KEY = 'read_only_probe_failures_retired_at';
@@ -251,6 +259,7 @@ export function purgeMemories(db: Database): PurgeResult {
       semantics += cascaded.semantics;
       procedures += cascaded.procedures;
       db.prepare('DELETE FROM vec_episodes WHERE id = ?').run(row.id);
+      db.prepare('UPDATE episodes SET supersedes = NULL WHERE supersedes = ?').run(row.id);
       db.prepare('DELETE FROM episodes WHERE id = ?').run(row.id);
       deleteFTSEpisode(db, row.id);
       deleteAnchors(db, row.id);
@@ -272,7 +281,7 @@ export function purgeMemories(db: Database): PurgeResult {
     }
   });
 
-  purgeAll();
+  purgeAll.immediate();
 
   return { episodes, semantics, procedures };
 }
