@@ -1,3 +1,5 @@
+import { isAbsolute } from 'node:path';
+import { extractAnchorCandidates } from './grounding.js';
 import Database from './sqlite.js';
 import { z } from 'zod';
 import type { EmbeddingProvider } from './types.js';
@@ -146,7 +148,57 @@ const exportedContradictionSchema = z.object({
   created_at: isoLikeStringSchema,
 });
 
+const rollbackDataSchema = z.object({
+  version: z.literal(1),
+  changes: z
+    .array(
+      z.object({
+        id: idSchema,
+        type: z.enum(['semantic', 'procedural']),
+        created: z.boolean(),
+        addedEvidence: stringArraySchema,
+        previousReinforcedAt: isoLikeStringSchema.nullable().optional(),
+        writtenReinforcedAt: isoLikeStringSchema.nullable().optional(),
+      }),
+    )
+    .max(MAX_IMPORT_ROWS_PER_SECTION),
+});
+
+const memoryAnchorSchema = z
+  .object({
+    id: idSchema,
+    memory_id: idSchema,
+    memory_type: z.enum(['episodic', 'semantic', 'procedural']),
+    agent: z.string().min(1).max(128),
+    project_root: z
+      .string()
+      .min(1)
+      .max(4096)
+      .refine(
+        value => !value.includes('\0') && (isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value)),
+        'anchor root must be absolute',
+      ),
+    kind: z.enum(['path', 'npm_script']),
+    value: z.string().min(1).max(4096),
+    state: z.enum(['intact', 'broken']),
+    created_at: isoLikeStringSchema,
+    last_verified_at: isoLikeStringSchema.nullable().optional(),
+    last_checked_at: isoLikeStringSchema.nullable().optional(),
+    broken_at: isoLikeStringSchema.nullable().optional(),
+  })
+  .refine(
+    anchor =>
+      anchor.kind === 'npm_script'
+        ? /^[a-zA-Z][\w:.-]{0,63}$/.test(anchor.value)
+        : !isAbsolute(anchor.value) &&
+          !/^[A-Za-z]:/.test(anchor.value) &&
+          !anchor.value.includes('\0') &&
+          !anchor.value.split(/[\\/]/).some(part => ['..', '.git', 'node_modules'].includes(part)),
+    'unsafe anchor value',
+  );
+
 const exportedConsolidationRunSchema = z.object({
+  rollback_data: rollbackDataSchema.nullable().optional(),
   id: idSchema,
   checkpoint_cursor: optionalTextSchema,
   input_episode_ids: stringArraySchema.optional(),
@@ -197,6 +249,8 @@ const exportedMemoryEventSchema = z.object({
 });
 
 export const importSnapshotSchema = z.object({
+  formatVersion: z.union([z.literal(1), z.literal(2)]).optional(),
+  memoryAnchors: z.array(memoryAnchorSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
   version: z.string().min(1).max(64),
   exportedAt: isoLikeStringSchema.optional(),
   episodes: z.array(exportedEpisodeSchema).max(MAX_IMPORT_ROWS_PER_SECTION),
@@ -253,6 +307,7 @@ function isDatabaseEmpty(db: Database): boolean {
     'consolidation_runs',
     'consolidation_metrics',
     'memory_events',
+    'memory_anchors',
   ];
 
   return tables.every(
@@ -375,6 +430,7 @@ export async function importMemories(
   const consolidationRuns = snapshot.consolidationRuns || [];
   const consolidationMetrics = snapshot.consolidationMetrics || [];
   const memoryEvents = snapshot.memoryEvents || [];
+  const memoryAnchors = snapshot.memoryAnchors || [];
 
   const episodeVectors =
     episodes.length > 0 ? await embeddingProvider.embedBatch(episodes.map(ep => ep.content)) : [];
@@ -432,8 +488,8 @@ export async function importMemories(
 
   const insertConsolidationRun = db.prepare(`
     INSERT INTO consolidation_runs (id, checkpoint_cursor, input_episode_ids, output_memory_ids,
-      confidence_deltas, consolidation_model, consolidation_prompt_hash, started_at, completed_at, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      confidence_deltas, consolidation_model, consolidation_prompt_hash, started_at, completed_at, status, rollback_data)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertConsolidationMetric = db.prepare(`
@@ -569,6 +625,41 @@ export async function importMemories(
       insertFTSProcedure(db, proc.id, proc.content);
     }
 
+    const insertAnchor = db.prepare(`INSERT INTO memory_anchors
+      (id, memory_id, memory_type, agent, project_root, kind, value, state, created_at, last_verified_at, last_checked_at, broken_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    for (const anchor of memoryAnchors) {
+      const table = { episodic: 'episodes', semantic: 'semantics', procedural: 'procedures' }[
+        anchor.memory_type
+      ];
+      const owner = db
+        .prepare(`SELECT agent, content FROM ${table} WHERE id = ?`)
+        .get(anchor.memory_id) as { agent: string; content: string } | undefined;
+      if (
+        !owner ||
+        owner.agent !== anchor.agent ||
+        !extractAnchorCandidates(owner.content).some(
+          candidate => candidate.kind === anchor.kind && candidate.value === anchor.value,
+        )
+      ) {
+        throw new Error('Grounding anchor does not match its memory and owner');
+      }
+      insertAnchor.run(
+        anchor.id,
+        anchor.memory_id,
+        anchor.memory_type,
+        owner.agent,
+        anchor.project_root,
+        anchor.kind,
+        anchor.value,
+        anchor.state,
+        anchor.created_at,
+        anchor.last_verified_at ?? null,
+        anchor.last_checked_at ?? null,
+        anchor.broken_at ?? null,
+      );
+    }
+
     for (const link of causalLinks) {
       insertCausalLink.run(
         link.id,
@@ -610,6 +701,7 @@ export async function importMemories(
         run.started_at ?? null,
         run.completed_at ?? null,
         run.status,
+        jsonOrNull(run.rollback_data),
       );
     }
 
@@ -657,5 +749,5 @@ export async function importMemories(
     }
   });
 
-  writeImport();
+  writeImport.immediate();
 }

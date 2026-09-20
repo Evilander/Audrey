@@ -81,6 +81,7 @@ interface ProcedureExportRow {
 }
 
 interface ConsolidationRunExportRow {
+  rollback_data: string | null;
   id: string;
   checkpoint_cursor: string | null;
   input_episode_ids: string | null;
@@ -123,7 +124,7 @@ interface ConfigRow {
   value: string;
 }
 
-export function exportMemories(db: Database): object {
+function readSnapshot(db: Database): object {
   const episodes = (
     db
       .prepare(
@@ -170,12 +171,13 @@ export function exportMemories(db: Database): object {
   const consolidationRuns = (
     db
       .prepare(
-        'SELECT id, checkpoint_cursor, input_episode_ids, output_memory_ids, confidence_deltas, consolidation_model, consolidation_prompt_hash, started_at, completed_at, status FROM consolidation_runs',
+        'SELECT id, checkpoint_cursor, input_episode_ids, output_memory_ids, confidence_deltas, rollback_data, consolidation_model, consolidation_prompt_hash, started_at, completed_at, status FROM consolidation_runs',
       )
       .all() as ConsolidationRunExportRow[]
   ).map(run => ({
     ...run,
     confidence_deltas: safeJsonParse(run.confidence_deltas, null),
+    rollback_data: safeJsonParse(run.rollback_data, null),
     input_episode_ids: safeJsonParse(run.input_episode_ids, []),
     output_memory_ids: safeJsonParse(run.output_memory_ids, []),
   }));
@@ -203,6 +205,8 @@ export function exportMemories(db: Database): object {
 
   return {
     version: pkg.version,
+    formatVersion: 2,
+    memoryAnchors: db.prepare('SELECT * FROM memory_anchors').all(),
     exportedAt: new Date().toISOString(),
     episodes,
     semantics,
@@ -214,4 +218,9 @@ export function exportMemories(db: Database): object {
     memoryEvents,
     config,
   };
+}
+
+/** All sections belong to the same SQLite read snapshot. */
+export function exportMemories(db: Database): object {
+  return db.transaction(() => readSnapshot(db))();
 }

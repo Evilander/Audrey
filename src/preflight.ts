@@ -1,3 +1,4 @@
+import { memoryIdBelongsToProject } from './project-memory.js';
 import type { Audrey } from './audrey.js';
 import { guardActionKey } from './action-key.js';
 import {
@@ -24,6 +25,8 @@ export type PreflightWarningType =
   | 'memory_health';
 
 export interface PreflightOptions {
+  /** Restrict all memory evidence before evaluating Guard. */
+  projectNamespace?: string;
   tool?: string;
   actionDigest?: string;
   sessionId?: string;
@@ -276,6 +279,7 @@ export async function buildPreflight(
     ...(options.cwd ? { cwd: options.cwd } : {}),
     ...(options.actionSignatures ? { actionSignatures: options.actionSignatures } : {}),
     recall: { scope, agent },
+    projectNamespace: options.projectNamespace,
   });
 
   const warnings: PreflightWarning[] = [];
@@ -333,7 +337,12 @@ export async function buildPreflight(
         agent,
       });
       const trustedResults = taggedMustFollow
-        .filter(result => !existingMustFollowIds.has(result.id))
+        .filter(result => !existingMustFollowIds.has(result.id) && result.grounding !== 'broken')
+        .filter(
+          result =>
+            !options.projectNamespace ||
+            memoryIdBelongsToProject(audrey, result.id, options.projectNamespace, new Set(), agent),
+        )
         .map(result => ({ result, trust: controlTrustForResult(audrey, result) }))
         .filter(candidate => candidate.trust !== 'untrusted');
       for (const { result, trust } of trustedResults.slice(0, 5)) {

@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { EmbeddingConfig, EmbeddingProvider } from './types.js';
 import { describeHttpError, requireApiKey } from './utils.js';
 
@@ -196,6 +198,9 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
         // affect other consumers in the same process). AUDREY_ONNX_VERBOSE=1 opts out.
         const verbose = process.env.AUDREY_ONNX_VERBOSE === '1';
         const sessionOptions = verbose ? undefined : { logSeverityLevel: 3 };
+        const cacheDir =
+          process.env.AUDREY_MODEL_CACHE_DIR ||
+          join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'audrey', 'models');
         // Transformers 4 expands "gpu" to both DirectML and WebGPU on Windows,
         // but ONNX Runtime cannot combine DirectML with another GPU provider.
         const device = this.device === 'gpu' && process.platform === 'win32' ? 'dml' : this.device;
@@ -203,6 +208,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
           this._pipeline = (await pipeline('feature-extraction', this.model, {
             dtype: 'fp32',
             device,
+            cache_dir: cacheDir,
             ...(sessionOptions ? { session_options: sessionOptions } : {}),
           })) as FeatureExtractionPipeline;
           this._actualDevice = device;
@@ -210,11 +216,17 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
           this._pipeline = (await pipeline('feature-extraction', this.model, {
             dtype: 'fp32',
             device: 'cpu',
+            cache_dir: cacheDir,
             ...(sessionOptions ? { session_options: sessionOptions } : {}),
           })) as FeatureExtractionPipeline;
           this._actualDevice = 'cpu';
         }
-      })();
+      })().catch(error => {
+        this._readyPromise = null;
+        this._pipeline = null;
+        this._actualDevice = null;
+        throw error;
+      });
     }
     return this._readyPromise;
   }

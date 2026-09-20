@@ -384,6 +384,8 @@ export interface AffectConfig {
 }
 
 export interface AudreyConfig {
+  /** Preserve operator-managed permissions for an intentionally shared store. */
+  sharedStore?: boolean;
   dataDir?: string;
   agent?: string;
   embedding?: EmbeddingConfig;
@@ -544,6 +546,7 @@ export interface ConsolidationRunRow {
   input_episode_ids: string; // JSON string
   output_memory_ids: string; // JSON string
   confidence_deltas: string | null; // JSON string
+  rollback_data?: string | null; // JSON undo journal
   consolidation_model: string | null;
   consolidation_prompt_hash: string | null;
   started_at: string;

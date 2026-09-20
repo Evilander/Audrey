@@ -101,6 +101,17 @@ export function projectNamespace(cwd: string): string {
   return `project:${sha256(stableRoot)}`;
 }
 
+/** Physical checkout root, kept separate from the shared worktree identity. */
+export function checkoutRoot(cwd: string): string {
+  let current = canonicalDirectory(cwd);
+  while (true) {
+    if (existsSync(join(current, '.git'))) return current;
+    const parent = dirname(current);
+    if (parent === current) return canonicalDirectory(cwd);
+    current = parent;
+  }
+}
+
 /**
  * Namespace lookups walk the filesystem (realpath + .git discovery), so batch
  * callers should reuse one cache per operation instead of recomputing for

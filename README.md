@@ -101,7 +101,7 @@ That is the output of `audrey demo --scenario repeated-failure`, which runs the 
 
 When Guard does speak, it names the memory it is speaking from, and a remembered failure is matched to the proposed command by what it runs (`npm run deploy` against `npm run deploy`), not by how similar two strings look to an embedding.
 
-The line between looking and doing is drawn fail-closed and was tested adversarially before release: five independent review passes ran the classifier's "read-only" verdicts against real tools and found thirteen ways to hide a write inside a command that looked harmless (`node --check -r ./x.js`, `GIT_EXTERNAL_DIFF=./x git diff`, `sort -ofile`, a backslash-newline hiding `$(`, `jobs -x`). Every one is closed and is a test case, and the fifth pass found none left. Two limits remain by design: a git configuration that already names an external program runs on any read, and a file whose name is a flag can change what a pure reader does with a glob. Both require a prior write that Guard did see.
+Commands with execution-capable options or lifecycle scripts are guarded, including `git ls-remote --upload-pack=...`, `npm pack --dry-run`, and `ss -K`. The classifier is a convenience for ordinary inspection commands, not an operating-system sandbox. Repository configuration, shell expansion, and programs invoked by a reader can change what a command does. Use host permissions or a sandbox when enforcement is required.
 
 ## What Audrey remembers
 
@@ -148,7 +148,7 @@ Most of this runs on its own once Autopilot is installed. You do not invoke reca
 | **Autopilot** | Always, after one install | The whole point. Memory arrives before the agent acts instead of after you notice it went wrong. | `audrey install --host auto`, restart the host, approve hooks once |
 | **Guard** | Automatic, before any edit, write, or shell command that can have side effects | Checks the exact action fingerprint against prior failures. Not "something like this broke once" — this exact command, still broken. Read-only commands (`grep`, `ls`, `git status`) are not guarded, and their non-zero exits are not remembered as failures. | Runs at `PreToolUse`. Manually: `audrey guard --tool Bash --strict` |
 | **Grounding** | After deleting or renaming things a memory might mention | Confidence tells you a memory is well-sourced. Grounding tells you it is still true. A note about a script you deleted is confident and wrong. | `audrey ground`, or let the maintenance sweep do it |
-| **Session briefing** | Automatic at session start | Small, scoped packet instead of pasting context every time. Each memory injects once per session, not every prompt. | `SessionStart` hook. Preview with `audrey greeting` |
+| **Session briefing** | Automatic at session start | Small, scoped packet instead of pasting context every time. Unchanged memories inject once per session; changes to content or standing are sent again. | `SessionStart` hook. Preview with `audrey greeting` |
 | **Explicit capture** | When you say "remember that…" or "I prefer…" | Deliberate memories are worth more than inferred ones, and phrasing it that way is enough. | Just type it. Autopilot picks up those sentence shapes |
 | **Consolidation** | Automatic when idle; manually before a long break | Repeated episodes become one principle. Otherwise the store is a pile of near-duplicates and recall gets noisy. | `audrey dream` |
 | **Contradictions** | When two memories disagree | Neither one silently wins. Both stay visible and labeled until something resolves them. | Surfaced in packets; `memory_resolve_truth` to settle one |
@@ -188,7 +188,7 @@ The default store is SQLite, FTS5, and `sqlite-vec`. Local embeddings are the de
 
 ### A safer shared store
 
-Agent-scoped recall now continues through validation, contradiction detection, interference, affect, failure lookup, capsules, greetings, Guard, and REST request routing. Hidden retrieval candidates do not reinforce themselves; only memories actually surfaced to the caller receive retrieval bookkeeping (usage count and last-reinforced timestamp for semantic and procedural memories). Explicit validation feedback (`memory_validate` / `/v1/validate`) separately adjusts salience based on how a memory actually performed, not merely on being recalled.
+Agent-scoped recall continues through validation, contradiction detection, interference, affect, failure lookup, capsules, greetings, Guard, and REST request routing. Recall updates retrieval bookkeeping for its returned results (usage count and last-reinforced timestamp for semantic and procedural memories). Capsule and Guard filtering may further narrow those results. Explicit validation feedback (`memory_validate` / `/v1/validate`) separately adjusts salience based on how a memory actually performed, not merely on being recalled.
 
 Vector candidates are partitioned by agent before nearest-neighbor ranking, so one busy agent cannot crowd another out of a bounded search. For hard tenant boundaries, still use a distinct `AUDREY_DATA_DIR` per tenant or security domain.
 
@@ -404,6 +404,8 @@ The server also sends host instructions explaining the Guard receipt loop when l
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `AUDREY_MODEL_CACHE_DIR` | `$XDG_CACHE_HOME/audrey/models` or `~/.cache/audrey/models` | Writable per-user cache for local model files |
+| `AUDREY_SHARED_STORE` | `0` | Set `1` to retain operator-managed permissions for an intentionally shared store |
 | `AUDREY_DATA_DIR` | `~/.audrey/data` | SQLite store; use a distinct directory per tenant/security boundary |
 | `AUDREY_AGENT` | host-specific | Logical memory owner used for scoped operations |
 | `AUDREY_EMBEDDING_PROVIDER` | `local` | `local`, `gemini`, `openai`, or `mock` |
@@ -413,9 +415,10 @@ The server also sends host instructions explaining the Guard receipt loop when l
 | `AUDREY_CONTEXT_BUDGET_CHARS` | `4000` | Maximum default capsule size |
 | `AUDREY_AUTOPILOT_SCOPE` | `agent` | `agent` or explicit cross-agent `shared` recall for hooks |
 | `AUDREY_PACKET_FORMAT` | `compact` | Injected packet style: `compact` line format or `verbose` key=value |
-| `AUDREY_PACKET_DELTA` | `1` | Inject each memory once per session; `0` resends full packets every prompt |
+| `AUDREY_PACKET_DELTA` | `1` | Inject each unchanged memory version once per session; `0` resends full packets every prompt |
 | `AUDREY_HOOK_FAIL_CLOSED` | `0` | Deny guarded actions when Audrey itself fails |
 | `AUDREY_API_KEY` | unset | Bearer token for REST access |
+| `AUDREY_ALLOW_NO_AUTH` | `0` | Set `1` to permit unauthenticated non-loopback REST access |
 | `AUDREY_HOST` | `127.0.0.1` | REST bind address |
 | `AUDREY_PORT` | `7437` | REST port |
 | `AUDREY_ENABLE_ADMIN_TOOLS` | `0` | Enable export, import, forget, and promote operations |
@@ -425,6 +428,14 @@ The server also sends host instructions explaining the Guard receipt loop when l
 | `AUDREY_PRAGMA_DEFAULTS` | `1` | Set `0` to disable SQLite performance tuning |
 
 Provider secrets are never embedded in generated hook commands. `--include-secrets` applies only to MCP registration; prefer host environment injection or a secret manager.
+
+New local stores use private directory and database permissions on filesystems that support POSIX modes. Existing database and WAL files are restricted on open. Windows and mounted volumes need appropriate operating-system ACLs. Set `AUDREY_SHARED_STORE=1` (SDK: `sharedStore: true`) only when you manage shared access yourself.
+
+Local models download into the per-user cache on first use. Allow that first run to finish before relying on hooks offline. A failed initialization can be retried in the same process. For a system package installed by root, run the initial model load as the desktop user so the cache remains writable.
+
+Snapshot format 2 preserves grounding anchors, their last known state, and consolidation undo journals; older snapshots remain importable. Worktrees share a repository identity for recall, while grounding checks the checkout where an anchor was recorded. Rollback preserves earlier knowledge when undoing a merge. Legacy merges without an undo journal are refused when they cannot be reversed safely.
+
+The REST API requires JSON request bodies and rejects cross-origin browser requests. Unauthenticated requests require a loopback host unless `AUDREY_ALLOW_NO_AUTH=1` is explicitly set. Configure `AUDREY_API_KEY` for network deployments.
 
 ### Production checklist
 

@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Audrey } from './audrey.js';
-import type { MemoryCapsule, CapsuleEntry } from './capsule.js';
+import { capsuleEntryKey, type MemoryCapsule, type CapsuleEntry } from './capsule.js';
+import { scopeCapsuleToProject, contextBelongsToProject } from './project-memory.js';
 import { MemoryController, type ControllerGuardResult } from './controller.js';
 import { reconcileVectorIndex } from './db.js';
 import { deleteEventsBefore } from './events.js';
-import { projectNamespace, projectRoot } from './project.js';
+import { projectNamespace, checkoutRoot } from './project.js';
 import { redact } from './redact.js';
 import { profileShellCommand } from './shell-command.js';
 import { TRUST_CONTEXT_KEY, USER_VERIFIED_TRUST } from './trust.js';
@@ -77,13 +78,6 @@ const SIDE_EFFECT_TOOLS = new Set([
 // hooks.ts's AUDREY_MCP_TOOL_PREFIX (itself built from SERVER_NAME) rather
 // than re-deriving the pattern independently, so the two can never drift.
 const AUDREY_TOOL_PREFIX = AUDREY_MCP_TOOL_PREFIX.toLowerCase();
-// 'preference'/'prefers'/'user-preference' are content-classification tags,
-// not scope signals — a project-local memory can be tagged 'preference' for
-// reasons that have nothing to do with cross-project sharing. Only the
-// explicit 'global-preference' tag (paired by autopilot's own capture path,
-// or the autopilotScope: 'global' context marker checked separately in
-// contextBelongsToProject) may bypass project isolation.
-const GLOBAL_PREFERENCE_TAGS = new Set(['global-preference']);
 const RETRY_INTENT_TTL_MS = 30 * 60 * 1000;
 const MAINTENANCE_LEASE_MS = 5 * 60 * 1000;
 const EVENT_RETENTION_LEASE_MS = 5 * 60 * 1000;
@@ -218,11 +212,26 @@ interface ActionSummary {
   signatures: string[];
 }
 
+function canonicalInput(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalInput);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, item]) => [key, canonicalInput(item)]),
+    );
+  }
+  return value;
+}
+
 function summarizeAction(payload: JsonRecord): ActionSummary {
   const tool = toolName(payload);
   const input = toolInput(payload);
   const files = filesFromInput(input);
-  const serialized = JSON.stringify(input);
+  const identityInput = text(input.command)
+    ? Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'description'))
+    : input;
+  const serialized = JSON.stringify(canonicalInput(identityInput));
   const rawActionHash = sha256(`${tool}\n${serialized}`);
   const identity = `input_chars=${serialized.length}`;
   const command = text(input.command);
@@ -530,155 +539,6 @@ async function captureExplicitMemories(
   return ids;
 }
 
-function stringList(value: string | null | undefined): string[] {
-  if (!value) return [];
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === 'string')
-      : [];
-  } catch {
-    return value
-      .split(',')
-      .map(item => item.trim())
-      .filter(Boolean);
-  }
-}
-
-function hasGlobalPreferenceTag(tags: readonly string[] | undefined): boolean {
-  return Boolean(tags?.some(tag => GLOBAL_PREFERENCE_TAGS.has(tag.toLowerCase())));
-}
-
-function contextBelongsToProject(context: JsonRecord, namespace: string): boolean {
-  if (text(context.autopilotScope) === 'global') return true;
-  const storedNamespace = text(context.projectNamespace);
-  if (storedNamespace) return storedNamespace === namespace;
-  const cwd = text(context.cwd);
-  return cwd ? projectNamespace(cwd) === namespace : false;
-}
-
-function memoryIdBelongsToProject(
-  audrey: Audrey,
-  memoryId: string,
-  namespace: string,
-  visited = new Set<string>(),
-): boolean {
-  if (visited.has(memoryId)) return false;
-  visited.add(memoryId);
-
-  const episode = audrey.db
-    .prepare('SELECT context, tags FROM episodes WHERE id = ? AND agent = ?')
-    .get(memoryId, audrey.agent) as { context: string | null; tags: string | null } | undefined;
-  if (episode) {
-    if (hasGlobalPreferenceTag(stringList(episode.tags))) return true;
-    return contextBelongsToProject(parsedRecord(episode.context), namespace);
-  }
-
-  const event = audrey.db
-    .prepare(
-      'SELECT cwd FROM memory_events WHERE id = ? AND (actor_agent IS NULL OR actor_agent = ?)',
-    )
-    .get(memoryId, audrey.agent) as { cwd: string | null } | undefined;
-  if (event) return Boolean(event.cwd && projectNamespace(event.cwd) === namespace);
-
-  for (const table of ['semantics', 'procedures'] as const) {
-    const derived = audrey.db
-      .prepare(`SELECT evidence_episode_ids FROM ${table} WHERE id = ? AND agent = ?`)
-      .get(memoryId, audrey.agent) as { evidence_episode_ids: string | null } | undefined;
-    if (!derived) continue;
-    const evidenceIds = stringList(derived.evidence_episode_ids);
-    return (
-      evidenceIds.length > 0 &&
-      evidenceIds.every(id => memoryIdBelongsToProject(audrey, id, namespace, new Set(visited)))
-    );
-  }
-
-  const contradiction = audrey.db
-    .prepare('SELECT claim_a_id, claim_b_id FROM contradictions WHERE id = ?')
-    .get(memoryId) as { claim_a_id: string; claim_b_id: string } | undefined;
-  return Boolean(
-    contradiction &&
-    [contradiction.claim_a_id, contradiction.claim_b_id].every(id =>
-      memoryIdBelongsToProject(audrey, id, namespace, new Set(visited)),
-    ),
-  );
-}
-
-function failureEntryBelongsToProject(
-  audrey: Audrey,
-  entry: CapsuleEntry,
-  namespace: string,
-): boolean {
-  if (!entry.created_at) return false;
-  const rows = audrey.db
-    .prepare(
-      `
-    SELECT cwd FROM memory_events
-    WHERE created_at = ? AND actor_agent = ? AND outcome = 'failed'
-  `,
-    )
-    .all(entry.created_at, audrey.agent) as Array<{ cwd: string | null }>;
-  return rows.some(row => Boolean(row.cwd && projectNamespace(row.cwd) === namespace));
-}
-
-function entryBelongsToProject(audrey: Audrey, entry: CapsuleEntry, namespace: string): boolean {
-  if (hasGlobalPreferenceTag(entry.tags)) return true;
-  if (entry.memory_type === 'tool_failure') {
-    return failureEntryBelongsToProject(audrey, entry, namespace);
-  }
-  return memoryIdBelongsToProject(audrey, entry.memory_id, namespace);
-}
-
-interface ScopedCapsule {
-  capsule: MemoryCapsule;
-  evidenceIds: Set<string>;
-  removedEntries: number;
-}
-
-function scopeCapsuleToProject(
-  audrey: Audrey,
-  capsule: MemoryCapsule,
-  namespace: string,
-): ScopedCapsule {
-  const sections: MemoryCapsule['sections'] = {
-    must_follow: [],
-    project_facts: [],
-    user_preferences: [],
-    procedures: [],
-    risks: [],
-    recent_changes: [],
-    contradictions: [],
-    uncertain_or_disputed: [],
-  };
-  const evidenceIds = new Set<string>();
-  let removedEntries = 0;
-  let usedChars = 0;
-
-  for (const [section] of CONTEXT_SECTIONS) {
-    for (const entry of capsule.sections[section]) {
-      if (!entryBelongsToProject(audrey, entry, namespace)) {
-        removedEntries += 1;
-        continue;
-      }
-      sections[section].push(entry);
-      evidenceIds.add(entry.memory_id);
-      for (const id of entry.evidence ?? []) evidenceIds.add(id);
-      usedChars += entry.content.length + (entry.recommended_action?.length ?? 0);
-    }
-  }
-
-  return {
-    capsule: {
-      ...capsule,
-      used_chars: usedChars,
-      sections,
-      evidence_ids: [...evidenceIds],
-    },
-    evidenceIds,
-    removedEntries,
-  };
-}
-
 /**
  * Session-delta injection. The host keeps the whole conversation in context,
  * so a memory injected at turn 1 is still visible at turn 40 — resending it
@@ -747,16 +607,6 @@ function clearInjectedIds(audrey: Audrey, host: AutopilotHost, payload: JsonReco
  * reclassified after injection reinjects with its new standing instead of
  * leaving the session holding the stale version.
  */
-function injectedEntryKey(entry: CapsuleEntry): string {
-  return entry.state ? `${entry.memory_id}@${entry.state}` : entry.memory_id;
-}
-
-/** Strips the `@state` suffix a tracked key may carry, back to a raw memory id. */
-function rawMemoryId(key: string): string {
-  const at = key.indexOf('@');
-  return at === -1 ? key : key.slice(0, at);
-}
-
 function filterInjectedEntries(
   capsule: MemoryCapsule,
   seen: Set<string>,
@@ -767,7 +617,7 @@ function filterInjectedEntries(
     [keyof MemoryCapsule['sections'], CapsuleEntry[]]
   >) {
     sections[section] = entries.filter(entry => {
-      const key = injectedEntryKey(entry);
+      const key = capsuleEntryKey(entry);
       if (seen.has(key)) return false;
       renderedKeys.push(key);
       return true;
@@ -777,7 +627,7 @@ function filterInjectedEntries(
 }
 
 function allEntryKeys(capsule: MemoryCapsule): string[] {
-  return Object.values(capsule.sections).flatMap(entries => entries.map(injectedEntryKey));
+  return Object.values(capsule.sections).flatMap(entries => entries.map(capsuleEntryKey));
 }
 
 function contextQuery(event: string, payload: JsonRecord): string {
@@ -923,7 +773,6 @@ async function contextForHook(
     injectedKey && event === 'UserPromptSubmit'
       ? loadInjectedIds(audrey, injectedKey, now)
       : new Set<string>();
-  const excludeIds = new Set([...seen].map(rawMemoryId));
 
   // cwd scopes tool-failure risks even under scope: 'shared' — semantic
   // knowledge is worth sharing across projects, but a failure streak in
@@ -933,7 +782,7 @@ async function contextForHook(
     mode: 'conservative',
     scope: options.scope ?? 'agent',
     cwd: text(payload.cwd) ?? process.cwd(),
-    ...(excludeIds.size > 0 ? { excludeIds } : {}),
+    ...(seen.size > 0 ? { excludeEntryKeys: seen } : {}),
     recall: {
       scope: options.scope ?? 'agent',
       context: {
@@ -950,10 +799,8 @@ async function contextForHook(
 
   if (injectedKey) {
     if (event === 'UserPromptSubmit') {
-      // excludeIds only carries raw memory ids (no state), so it cannot
-      // reproduce this tracker's id@state distinction on its own —
-      // filterInjectedEntries is the state-aware layer and stays as the
-      // safety net for whatever excludeIds does not fully dedupe.
+      // Keep the same version-aware identity through budget selection and
+      // final injection bookkeeping.
       const filtered = filterInjectedEntries(capsule, seen);
       capsule = filtered.capsule;
       if (filtered.renderedKeys.length > 0) {
@@ -988,103 +835,6 @@ function guardExplanation(result: ControllerGuardResult): string {
   if (result.evidenceIds.length > 0)
     lines.push(`Evidence: ${result.evidenceIds.slice(0, 6).join(', ')}`);
   return lines.join('\n');
-}
-
-function projectScopedGuardResult(
-  audrey: Audrey,
-  result: ControllerGuardResult,
-  namespace: string,
-): ControllerGuardResult {
-  if (!result.capsule) return result;
-  const scoped = scopeCapsuleToProject(audrey, result.capsule, namespace);
-  if (scoped.removedEntries === 0) return result;
-
-  const evidenceIds = result.evidenceIds.filter(
-    id => scoped.evidenceIds.has(id) || memoryIdBelongsToProject(audrey, id, namespace),
-  );
-  const hasMemoryHealthFailure = result.recommendedActions.some(action =>
-    /memory index|reembed/i.test(action),
-  );
-  const hasProjectRisk =
-    scoped.capsule.sections.must_follow.length > 0 ||
-    scoped.capsule.sections.risks.length > 0 ||
-    scoped.capsule.sections.contradictions.length > 0 ||
-    scoped.capsule.sections.uncertain_or_disputed.length > 0;
-  const hasProjectFailure = evidenceIds.some(id => {
-    const event = audrey.db
-      .prepare(
-        `
-      SELECT cwd FROM memory_events
-      WHERE id = ? AND actor_agent = ? AND outcome = 'failed'
-    `,
-      )
-      .get(id, audrey.agent) as { cwd: string | null } | undefined;
-    return Boolean(event?.cwd && projectNamespace(event.cwd) === namespace);
-  });
-  const reflexes = result.reflexes.filter(
-    reflex =>
-      reflex.source === 'memory_health' ||
-      Boolean(reflex.evidence_id && evidenceIds.includes(reflex.evidence_id)),
-  );
-  const warnings = result.warnings.filter(
-    warning =>
-      warning.type === 'memory_health' ||
-      !warning.evidence_id ||
-      evidenceIds.includes(warning.evidence_id),
-  );
-  if (
-    result.decision !== 'allow' &&
-    !hasProjectRisk &&
-    !hasProjectFailure &&
-    !hasMemoryHealthFailure
-  ) {
-    return {
-      ...result,
-      decision: 'allow',
-      riskScore: 0,
-      summary: 'Allowed: memory signals from other projects were excluded by Autopilot isolation.',
-      warnings: [],
-      evidenceIds: [],
-      recommendedActions: [],
-      capsule: scoped.capsule,
-      reflexes: [],
-    };
-  }
-  const recommendedActions: string[] = [];
-  if (hasProjectFailure) {
-    recommendedActions.push(
-      'Review the project-scoped prior failure before retrying the same action.',
-    );
-  }
-  if (scoped.capsule.sections.must_follow.length > 0) {
-    recommendedActions.push(
-      'Review and apply the project-scoped verified-rule evidence before acting.',
-    );
-  }
-  if (scoped.capsule.sections.risks.length > 0) {
-    recommendedActions.push('Mitigate the project-scoped risk evidence before acting.');
-  }
-  if (scoped.capsule.sections.contradictions.length > 0) {
-    recommendedActions.push(
-      'Resolve the project-scoped contradiction before relying on either claim.',
-    );
-  }
-  if (scoped.capsule.sections.uncertain_or_disputed.length > 0) {
-    recommendedActions.push('Verify the project-scoped uncertain evidence before relying on it.');
-  }
-  if (hasMemoryHealthFailure) {
-    recommendedActions.push(
-      'Repair Audrey memory health before relying on recall-sensitive decisions.',
-    );
-  }
-  return {
-    ...result,
-    warnings,
-    evidenceIds,
-    recommendedActions,
-    capsule: scoped.capsule,
-    reflexes,
-  };
 }
 
 function updateReceiptCorrelation(
@@ -1148,21 +898,23 @@ async function guardBeforeHook(
   if (action.readOnly) return { event: 'PreToolUse', output: {} };
   const controller = new MemoryController(audrey);
   const retryAcknowledged = hasRetryIntent(audrey, payload, options);
-  const unscopedResult = await controller.beforeAction({
-    action: action.action,
-    command: action.command,
-    actionDigest: action.rawActionHash,
-    tool,
-    cwd: text(payload.cwd) ?? process.cwd(),
-    files: action.files,
-    sessionId: sessionId(payload),
-    signatures: action.signatures,
-    acknowledgePriorFailure: retryAcknowledged,
-  });
-  const result =
-    options.scope === 'shared'
-      ? unscopedResult
-      : projectScopedGuardResult(audrey, unscopedResult, payloadProjectNamespace(payload));
+  const result = await controller.beforeAction(
+    {
+      action: action.action,
+      command: action.command,
+      actionDigest: action.rawActionHash,
+      tool,
+      cwd: text(payload.cwd) ?? process.cwd(),
+      files: action.files,
+      sessionId: sessionId(payload),
+      signatures: action.signatures,
+      acknowledgePriorFailure: retryAcknowledged,
+    },
+    {
+      scope: options.scope ?? 'agent',
+      projectNamespace: options.scope === 'shared' ? undefined : payloadProjectNamespace(payload),
+    },
+  );
   if (retryAcknowledged && /prior failure acknowledged/i.test(result.summary)) {
     consumeRetryIntent(audrey, payload, options.host);
   }
@@ -1537,13 +1289,14 @@ function runGroundingSweep(
 ): void {
   const intervalMs = (options.maintenanceIntervalHours ?? 24) * 60 * 60 * 1000;
   const now = options.now ?? new Date();
-  const lastKey = `autopilot_last_grounding:${audrey.agent}`;
+  const root = checkoutRoot(cwd ?? process.cwd());
+  const lastKey = `autopilot_last_grounding:${sha256(`${audrey.agent}\n${root}`)}`;
   const last = audrey.db.prepare('SELECT value FROM audrey_config WHERE key = ?').get(lastKey) as
     { value: string } | undefined;
   if (last && now.getTime() - Date.parse(last.value) < intervalMs) return;
 
   try {
-    const report = audrey.ground({ projectRoot: projectRoot(cwd ?? process.cwd()), now });
+    const report = audrey.ground({ projectRoot: root, now });
     audrey.db
       .prepare(
         `INSERT INTO audrey_config (key, value) VALUES (?, ?)

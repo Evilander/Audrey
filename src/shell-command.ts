@@ -953,8 +953,17 @@ function gitArgs(args: string[]): string[] | undefined {
 }
 
 function gitIsReadOnly(sub: string, rest: string[]): boolean {
-  // `--output=<path>` makes log, diff, show and their kind write a file.
-  if (rest.some(arg => /^--output(?:=|$)/.test(arg))) return false;
+  // Output and program-selection options defeat the read-only subcommand
+  // allowlist. Include Git's accepted long-option abbreviations.
+  if (
+    rest.some(arg =>
+      ['--output', '--upload-pack', '--exec', '--ext-diff', '--textconv'].some(option => {
+        const name = arg.split('=')[0]!;
+        return name.startsWith('--') && name.length > 3 && option.startsWith(name);
+      }),
+    )
+  )
+    return false;
   if (GIT_READ_ONLY.has(sub)) return true;
   switch (sub) {
     case 'grep':
@@ -1028,7 +1037,8 @@ function npmProfile(verb: string, args: string[]): VerbProfile {
     };
   }
   if (sub === 'audit') return { readOnly: !args.includes('fix'), signature: `${verb} audit` };
-  if (sub === 'pack') return { readOnly: args.includes('--dry-run'), signature: `${verb} pack` };
+  // A dry run still executes package lifecycle scripts.
+  if (sub === 'pack') return { readOnly: false, signature: `${verb} pack` };
   if (sub === 'version') {
     return { readOnly: positional(args).length === 1, signature: `${verb} version` };
   }
@@ -1397,6 +1407,11 @@ function profileVerb(verb: string, args: string[]): VerbProfile {
       };
     case 'hostname':
       return { readOnly: positional(args).length === 0, signature: 'hostname' };
+    case 'ss':
+      return {
+        readOnly: !usesShortFlag(args, 'K') && !args.some(arg => arg === '--kill'),
+        signature: 'ss',
+      };
     case 'env':
       return { readOnly: args.every(isFlag), signature: 'env' };
     case 'git': {
