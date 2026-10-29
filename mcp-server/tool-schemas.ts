@@ -62,7 +62,7 @@ export const memoryEncodeToolSchema = {
 
 export const memoryRecallToolSchema = {
   query: z.string().describe('Search query to match against memories'),
-  limit: z.number().min(1).max(50).optional().describe('Max results (default 10)'),
+  limit: z.number().int().min(1).max(50).optional().describe('Max results (default 10)'),
   types: z.array(z.enum(VALID_TYPES)).optional().describe('Memory types to search'),
   min_confidence: z.number().min(0).max(1).optional().describe('Minimum confidence threshold'),
   tags: z.array(z.string()).optional().describe('Only return episodic memories with these tags'),
@@ -215,6 +215,31 @@ const { record_event: _preflightRecordEvent, ...memoryGuardBeforeFields } =
   memoryPreflightToolSchema;
 export const memoryGuardBeforeToolSchema = {
   ...memoryGuardBeforeFields,
+  success_checks: z
+    .array(
+      z
+        .object({
+          id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/),
+          pointer: z
+            .string()
+            .max(512)
+            .describe(
+              'JSON Pointer into the output supplied to memory_guard_after; empty selects the output.',
+            ),
+          equals: z.union([z.string().max(4096), z.number().finite(), z.boolean(), z.null()]),
+          parseJson: z
+            .boolean()
+            .optional()
+            .describe('Parse the selected string as JSON before comparing its scalar value.'),
+        })
+        .strict(),
+    )
+    .min(1)
+    .max(16)
+    .optional()
+    .describe(
+      'Required result comparisons fixed before execution. A mismatch records failed; an unavailable check prevents a succeeded outcome. Pass the actual output to memory_guard_after.',
+    ),
   session_id: z
     .string()
     .optional()

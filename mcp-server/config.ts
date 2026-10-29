@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AudreyConfig, EmbeddingConfig, LLMConfig } from '../src/types.js';
 
-export const VERSION = '2.0.0';
+export const VERSION = '2.1.0';
 export const SERVER_NAME = 'audrey-memory';
 export const DEFAULT_AGENT = 'local-agent';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
@@ -28,7 +28,7 @@ interface McpEnvOptions {
 }
 
 const VALID_EMBEDDING_PROVIDERS = new Set(['mock', 'local', 'gemini', 'openai']);
-const VALID_LLM_PROVIDERS = new Set(['mock', 'anthropic', 'openai']);
+const VALID_LLM_PROVIDERS = new Set(['mock', 'anthropic', 'openai', 'chatgpt']);
 
 function assertValidProvider(provider: string, validProviders: Set<string>, envVar: string): void {
   if (!validProviders.has(provider)) {
@@ -106,6 +106,20 @@ export function resolveLLMProvider(
 
   assertValidProvider(explicit, VALID_LLM_PROVIDERS, 'AUDREY_LLM_PROVIDER');
   const provider = explicit as LLMConfig['provider'];
+  const effort = env['AUDREY_LLM_REASONING_EFFORT']?.trim() || 'medium';
+  if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) {
+    throw new Error(`Unsupported AUDREY_LLM_REASONING_EFFORT value: ${effort}`);
+  }
+  const reasoningEffort = effort as LLMConfig['reasoningEffort'];
+  if (provider === 'chatgpt') {
+    return {
+      provider,
+      model: model || 'gpt-6.1-sol',
+      reasoningEffort,
+      ...(env['AUDREY_CHATGPT_AUTH_DIR'] ? { authDir: env['AUDREY_CHATGPT_AUTH_DIR'] } : {}),
+      ...(env['AUDREY_CHATGPT_ACCOUNT'] ? { chatgptAccount: env['AUDREY_CHATGPT_ACCOUNT'] } : {}),
+    };
+  }
   if (provider === 'anthropic') {
     const apiKey = env['ANTHROPIC_API_KEY'];
     if (requireApiKey && !apiKey) {
@@ -118,7 +132,12 @@ export function resolveLLMProvider(
     if (requireApiKey && !apiKey) {
       throw new Error('AUDREY_LLM_PROVIDER=openai requires OPENAI_API_KEY to be set.');
     }
-    return { provider: 'openai', apiKey, ...withModel };
+    return {
+      provider: 'openai',
+      apiKey,
+      ...(env['AUDREY_LLM_REASONING_EFFORT'] ? { reasoningEffort } : {}),
+      ...withModel,
+    };
   }
   return { provider: 'mock' };
 }
@@ -189,6 +208,11 @@ export function buildAudreyMcpEnv(
   if (llm) {
     addEnv('AUDREY_LLM_PROVIDER', llm.provider);
     if (llm.model) addEnv('AUDREY_LLM_MODEL', llm.model);
+    if (llm.reasoningEffort) addEnv('AUDREY_LLM_REASONING_EFFORT', llm.reasoningEffort);
+    if (llm.provider === 'chatgpt') {
+      addEnv('AUDREY_CHATGPT_AUTH_DIR', llm.authDir);
+      addEnv('AUDREY_CHATGPT_ACCOUNT', llm.chatgptAccount);
+    }
     if (llm.provider === 'anthropic') {
       if (includeSecrets) addEnv('ANTHROPIC_API_KEY', llm.apiKey);
     } else if (llm.provider === 'openai') {
@@ -206,6 +230,9 @@ const AUTOPILOT_RUNTIME_FLAGS: Record<string, string> = {
   AUDREY_DEVICE: '--device',
   AUDREY_LLM_PROVIDER: '--llm-provider',
   AUDREY_LLM_MODEL: '--llm-model',
+  AUDREY_LLM_REASONING_EFFORT: '--llm-reasoning-effort',
+  AUDREY_CHATGPT_AUTH_DIR: '--chatgpt-auth-dir',
+  AUDREY_CHATGPT_ACCOUNT: '--chatgpt-account',
 };
 
 export function buildAutopilotRuntimeArgs(

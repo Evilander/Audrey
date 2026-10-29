@@ -25,6 +25,8 @@ export {
   AnthropicLLMProvider,
   OpenAILLMProvider,
 } from './llm.js';
+export { ChatGPTLLMProvider } from './chatgpt-llm.js';
+export { ChatGPTAuth } from './chatgpt-auth.js';
 export { createDatabase, closeDatabase, readStoredDimensions } from './db.js';
 export { recall, recallStream } from './recall.js';
 export { addCausalLink, getCausalChain, articulateCausalLink } from './causal.js';
@@ -66,6 +68,12 @@ export type {
   ReflexResponseType,
 } from './reflexes.js';
 export { beforeAction, afterAction, MemoryController } from './controller.js';
+export type {
+  SuccessCheck,
+  SuccessValue,
+  SuccessCheckResult,
+  SuccessVerification,
+} from './success-checks.js';
 export type {
   AgentAction,
   ControllerGuardDecision,

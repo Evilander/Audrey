@@ -12,21 +12,16 @@ const REQUIRED_FILES = [
   'README.md',
   'LICENSE',
   'package.json',
+  'docs/paper/arxiv-metadata.json',
   'docs/paper/arxiv-compile-report.schema.json',
   'docs/paper/output/arxiv/main.tex',
   'docs/paper/output/arxiv/references.bib',
   'docs/paper/output/arxiv/arxiv-manifest.json',
   'docs/paper/output/arxiv-compile-report.json',
   'docs/paper/audrey-paper-v1.md',
-  'docs/paper/browser-launch-plan.json',
-  'docs/paper/browser-launch-plan.schema.json',
-  'docs/paper/browser-launch-results.json',
-  'docs/paper/browser-launch-results.schema.json',
   'docs/paper/claim-register.json',
-  'docs/paper/publication-pack.json',
   'docs/paper/evidence-ledger.md',
   'docs/paper/references.bib',
-  'docs/paper/SUBMISSION_README.md',
   'benchmarks/output/guardbench-summary.json',
   'benchmarks/output/guardbench-raw.json',
   'benchmarks/output/external/guardbench-external-evidence.json',
@@ -172,8 +167,6 @@ export function verifyPaperSubmissionBundle(options = {}) {
   }
   if (manifest.claimVerification?.ok !== true)
     failures.push('paper-submission-manifest.json: claimVerification is not ok');
-  if (manifest.publicationPackVerification?.ok !== true)
-    failures.push('paper-submission-manifest.json: publicationPackVerification is not ok');
   if (manifest.guardBenchSnapshot?.passed !== 10)
     failures.push('paper-submission-manifest.json: GuardBench passed count is not 10');
   if (manifest.guardBenchSnapshot?.scenarios !== 10)

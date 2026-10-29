@@ -305,6 +305,22 @@ describe('Audrey Autopilot', () => {
     expect(query).not.toContain(tail);
   });
 
+  it('deduplicates live explicit memories but recaptures a forgotten preference', async () => {
+    const prompt = payload('UserPromptSubmit', { prompt: 'I prefer pnpm for package management.' });
+    const first = await runAutopilotHook(audrey, prompt, { host: 'codex' });
+    const repeated = await runAutopilotHook(audrey, prompt, { host: 'codex' });
+    expect(repeated.capturedMemoryIds).toEqual(first.capturedMemoryIds);
+
+    audrey.forget(first.capturedMemoryIds[0]);
+    const recaptured = await runAutopilotHook(audrey, prompt, { host: 'codex' });
+    expect(recaptured.capturedMemoryIds).toHaveLength(1);
+    expect(recaptured.capturedMemoryIds[0]).not.toBe(first.capturedMemoryIds[0]);
+    const live = audrey.db
+      .prepare('SELECT id FROM episodes WHERE content = ? AND superseded_by IS NULL')
+      .all('User prefers pnpm for package management.');
+    expect(live).toEqual([{ id: recaptured.capturedMemoryIds[0] }]);
+  });
+
   it('bounds large write preflight and fingerprints the raw action separately', async () => {
     const capsule = vi.spyOn(audrey, 'capsule');
     const tail = 'WRITE_TAIL_MUST_NOT_REACH_RETRIEVAL';

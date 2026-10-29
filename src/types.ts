@@ -349,9 +349,12 @@ export interface EmbeddingConfig {
 }
 
 export interface LLMConfig {
-  provider: 'mock' | 'anthropic' | 'openai';
+  provider: 'mock' | 'anthropic' | 'openai' | 'chatgpt';
   apiKey?: string;
   model?: string;
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  authDir?: string;
+  chatgptAccount?: string;
   maxTokens?: number;
   timeout?: number;
   responses?: Record<string, unknown>;

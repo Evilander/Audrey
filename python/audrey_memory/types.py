@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
 
 class AudreyModel(BaseModel):
@@ -31,14 +31,39 @@ class ContradictionStatus(AudreyModel):
 
 
 class StatusResponse(AudreyModel):
-    episodic: int | None = None
-    semantic: int | None = None
-    procedural: int | None = None
-    causalLinks: int | None = None
-    contradictions: ContradictionStatus | None = None
-    dormant: int | None = None
-    lastConsolidation: str | None = None
-    totalConsolidationRuns: int | None = None
+    episodes: int
+    semantics: int
+    procedures: int
+    healthy: bool
+    vec_episodes: int = 0
+    vec_semantics: int = 0
+    vec_procedures: int = 0
+    searchable_episodes: int = 0
+    searchable_semantics: int = 0
+    searchable_procedures: int = 0
+    dimensions: int | None = None
+    schema_version: int | None = None
+    device: str | None = None
+    reembed_recommended: bool = False
+    pending_consolidation_count: int = 0
+    embedding_warm: bool = False
+    warmup_duration_ms: float | None = None
+    default_retrieval_mode: str | None = None
+    recall_degraded: bool = False
+    last_recall_check_at: str | None = None
+    last_recall_errors: list[dict[str, Any]] = Field(default_factory=list)
+
+    @property
+    def episodic(self) -> int:
+        return self.episodes
+
+    @property
+    def semantic(self) -> int:
+        return self.semantics
+
+    @property
+    def procedural(self) -> int:
+        return self.procedures
 
 
 class AnalyticsRow(AudreyModel):
@@ -60,7 +85,7 @@ class EncodeRequest(AudreyModel):
     source: str
     salience: float | None = Field(default=None, ge=0, le=1)
     tags: list[str] | None = None
-    context: dict[str, Any] | None = None
+    context: dict[StrictStr, StrictStr] | None = None
     affect: Affect | None = None
     causal: dict[str, Any] | None = None
     supersedes: str | None = None
@@ -75,7 +100,7 @@ class EncodeResponse(AudreyModel):
 class RecallRequest(AudreyModel):
     query: str
     limit: int | None = Field(default=None, ge=1, le=50)
-    context: dict[str, Any] | None = None
+    context: dict[StrictStr, StrictStr] | None = None
     mood: dict[str, Any] | None = None
     types: list[str] | None = None
     scope: str | None = None

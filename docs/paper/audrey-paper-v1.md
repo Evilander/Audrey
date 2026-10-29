@@ -650,25 +650,13 @@ The paper also ships `docs/paper/claim-register.json` and `npm run
 paper:claims` so public claims are checked against required prose, forbidden
 overclaim phrases, evidence files, GuardBench outputs, and the pending external
 score boundary before submission or social posting (Ledger: E82).
-`docs/paper/publication-pack.json` and `npm run paper:publication-pack` extend
-that gate to launch copy for arXiv, Hacker News, Reddit, X, and LinkedIn,
-checking character limits, required entries, claim IDs, forbidden overclaims,
-pending Mem0/Zep boundary language, and secret leakage before browser-based
-posting (Ledger: E83).
 `docs/paper/output/submission-bundle/` and `npm run paper:bundle` then package
-the paper sources, claim register, publication pack, GuardBench outputs,
+the paper sources, claim register, GuardBench outputs,
 schemas, README/package metadata, and a SHA-256 manifest into one browser-ready
 submission directory. `npm run paper:bundle:verify` checks the required files,
-manifest hashes, GuardBench snapshot, claim verification, and publication-pack
-verification before upload (Ledger: E84).
-`docs/paper/browser-launch-plan.json` and `npm run paper:launch-plan` map the
-verified launch copy to arXiv, Hacker News, Reddit, X, and LinkedIn browser
-targets with current source URLs, login/captcha expectations, manual platform
-rule checks, artifact references, and post-submit URL capture. This keeps the
-future browser session explicit about what must remain human-operated and which
-claims are still pending live Mem0/Zep evidence (Ledger: E85).
+manifest hashes, GuardBench snapshot, and claim verification before upload (Ledger: E84).
 `docs/paper/output/arxiv/` and `npm run paper:arxiv` produce a deterministic
-TeX source package from the paper Markdown and arXiv publication-pack entries.
+TeX source package from the paper Markdown and `docs/paper/arxiv-metadata.json`.
 `npm run paper:arxiv:verify` checks the manifest, file hashes, bibliography
 count, converted citations, missing bibliography IDs, seeded-secret redaction,
 and local absolute-path leakage before the browser upload step (Ledger: E86).
@@ -678,22 +666,11 @@ a local bundle proxy, stores source hashes in
 `docs/paper/output/arxiv-compile-report.json`, and keeps missing TeX tooling as
 an explicit pending blocker for strict readiness rather than a hidden host
 assumption (Ledger: E97).
-`docs/paper/browser-launch-results.json` and `npm run paper:launch-results`
-record the post-submit state for the same arXiv, Hacker News, Reddit, X, and
-LinkedIn targets. The normal verifier allows pending rows only when each row
-has an explicit blocker; `npm run paper:launch-results:strict` fails until
-every target has a submitted, operator-verified public URL and completed
-post-submit checks (Ledger: E87).
 The publication artifact verifier and bundle verifiers also run a local
 absolute-path sweep. Saved public artifacts normalize repo-local paths to
 relative slash paths, replace the host Node executable with `node`, and fail
 if Windows drive paths, extended paths, or file URLs remain in the public
 artifact set (Ledger: E88).
-The browser-launch gates also encode the X URL reserve explicitly. The first
-X post in `publication-pack.json` carries a 24-character reserved URL budget,
-matching X's current t.co URL counting rule plus a separator, and
-`paper:launch-results` rejects submitted artifact-url targets unless the
-result records the final public `artifactUrl` (Ledger: E89).
 The release-readiness verifier now maps the 1.0 objective to concrete
 artifacts and blockers. `npm run release:readiness` is pending-aware for local
 iteration, while `npm run release:readiness:strict` fails until version

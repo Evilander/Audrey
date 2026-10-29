@@ -15,7 +15,7 @@
  */
 
 import type Database from './sqlite.js';
-import { recentFailures, type FailurePattern } from './events.js';
+import { recentFailures, promotedMemoryIds, type FailurePattern } from './events.js';
 
 export type PromotionTarget = 'claude-rules' | 'agents-md' | 'playbook' | 'hook' | 'checklist';
 
@@ -69,35 +69,6 @@ interface ProceduralRow {
   created_at: string;
   last_reinforced_at: string | null;
   trigger_conditions: string | null;
-}
-
-interface EventRow {
-  metadata: string | null;
-}
-
-function loadPromotedMemoryIds(db: Database, target: PromotionTarget, agent?: string): Set<string> {
-  const rows = db
-    .prepare(
-      `SELECT metadata FROM memory_events
-     WHERE event_type = 'Promotion' AND tool_name = ?
-       ${agent ? 'AND actor_agent = ?' : ''}`,
-    )
-    .all(target, ...(agent ? [agent] : [])) as EventRow[];
-
-  const ids = new Set<string>();
-  for (const row of rows) {
-    if (!row.metadata) continue;
-    try {
-      const parsed = JSON.parse(row.metadata) as Record<string, unknown>;
-      const memoryIds = parsed.memory_ids;
-      if (Array.isArray(memoryIds)) {
-        for (const id of memoryIds) ids.add(String(id));
-      }
-    } catch {
-      // skip malformed metadata
-    }
-  }
-  return ids;
 }
 
 function matchesFailure(memoryContent: string, failure: FailurePattern): number {
@@ -163,7 +134,7 @@ export function findPromotionCandidates(
   const minEvidence = options.minEvidence ?? 2;
   const limit = options.limit ?? 20;
   const target: PromotionTarget = options.target ?? 'claude-rules';
-  const alreadyPromoted = loadPromotedMemoryIds(db, target, options.agent);
+  const alreadyPromoted = promotedMemoryIds(db, { target, actorAgent: options.agent });
 
   const failures = recentFailures(db, {
     since: options.since ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),

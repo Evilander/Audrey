@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "audrey-arxiv-metadata",
+  "title": "Audrey arXiv paper metadata",
+  "description": "Title and abstract used to build the arXiv LaTeX source package from docs/paper/audrey-paper-v1.md.",
+  "type": "object",
+  "required": ["schemaVersion", "suite", "title", "abstract"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "type": "string", "pattern": "^[0-9]+\.[0-9]+\.[0-9]+$" },
+    "suite": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "abstract": { "type": "string", "minLength": 1, "maxLength": 20000 }
+  }
+}

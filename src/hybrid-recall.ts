@@ -17,63 +17,35 @@
  * at the vector hit's best possible score — and a document both retrievers
  * surface combines both terms, so it outranks either one alone.
  *
- * This module does NOT re-implement confidence scoring — vector candidates
- * arrive already scored; FTS-only candidates get an enrichment pass that
- * loads the underlying row and computes a reduced "base confidence" from
- * source reliability / support ratio. That's intentionally simpler than the
- * full KNN confidence pipeline for v1; the demo gets what it needs and the
- * capsule's categorization layer does the heavy interpretive lifting.
+ * Vector and keyword candidates share the same confidence and provenance
+ * scoring; only their relevance signals differ.
  */
 
 import Database from './sqlite.js';
-import type { MemoryType, RecallResult, RetrievalMode } from './types.js';
+import type {
+  EpisodeRow,
+  SemanticRow,
+  ProceduralRow,
+  MemoryType,
+  RecallResult,
+  RetrievalMode,
+} from './types.js';
 import {
   searchFTSEpisodes,
   searchFTSSemantics,
   searchFTSProcedures,
   sanitizeFTSQuery,
 } from './fts.js';
-import { sourceReliability } from './confidence.js';
+import {
+  scoreEpisodicRow,
+  scoreSemanticRow,
+  scoreProceduralRow,
+  type RecallScoringOptions,
+} from './recall-scoring.js';
 
 const RRF_K = 60;
 const VECTOR_WEIGHT = 0.3;
 const FTS_WEIGHT = 0.7;
-
-interface EpisodeFTSRow {
-  id: string;
-  content: string;
-  source: string;
-  source_reliability: number;
-  created_at: string;
-  superseded_by: string | null;
-  state: string | null;
-  private: number;
-  tags: string | null;
-  agent: string;
-}
-
-interface SemanticFTSRow {
-  id: string;
-  content: string;
-  state: string;
-  evidence_count: number;
-  supporting_count: number;
-  contradicting_count: number;
-  created_at: string;
-  private: number;
-  agent: string;
-}
-
-interface ProceduralFTSRow {
-  id: string;
-  content: string;
-  state: string;
-  success_count: number;
-  failure_count: number;
-  created_at: string;
-  private: number;
-  agent: string;
-}
 
 export function ftsIdsByType(
   db: Database,
@@ -81,6 +53,7 @@ export function ftsIdsByType(
   types: MemoryType[],
   limit: number,
   agentFilter: string | undefined = undefined,
+  includeDormant: boolean = false,
 ): Map<MemoryType, string[]> {
   const sanitized = sanitizeFTSQuery(query);
   const out = new Map<MemoryType, string[]>();
@@ -93,14 +66,14 @@ export function ftsIdsByType(
     );
   }
   if (types.includes('semantic')) {
-    const hits = searchFTSSemantics(db, sanitized, limit, agentFilter ?? null);
+    const hits = searchFTSSemantics(db, sanitized, limit, agentFilter ?? null, includeDormant);
     out.set(
       'semantic',
       hits.map(h => h.id),
     );
   }
   if (types.includes('procedural')) {
-    const hits = searchFTSProcedures(db, sanitized, limit, agentFilter ?? null);
+    const hits = searchFTSProcedures(db, sanitized, limit, agentFilter ?? null, includeDormant);
     out.set(
       'procedural',
       hits.map(h => h.id),
@@ -115,30 +88,22 @@ function loadFtsOnlyEpisode(
   includePrivate: boolean,
   filters: FuseFilters | undefined,
   agentFilter?: string,
+  scoring: RecallScoringOptions = {},
 ): RecallResult | null {
   const row = db
     .prepare(
       `
-    SELECT id, content, source, agent, source_reliability, created_at, superseded_by, "private", tags
+    SELECT *
     FROM episodes WHERE id = ?
   `,
     )
-    .get(id) as EpisodeFTSRow | undefined;
+    .get(id) as EpisodeRow | undefined;
   if (!row) return null;
   if (agentFilter && row.agent !== agentFilter) return null;
   if (row.superseded_by) return null;
   if (!includePrivate && row.private) return null;
   if (filters && !passesFilters(row, filters)) return null;
-  return {
-    id: row.id,
-    content: row.content,
-    type: 'episodic',
-    confidence: row.source_reliability ?? sourceReliability(row.source),
-    score: 0,
-    source: row.source,
-    agent: row.agent ?? 'default',
-    createdAt: row.created_at,
-  };
+  return scoreEpisodicRow(row, 0, scoring);
 }
 
 function loadFtsOnlySemantic(
@@ -148,15 +113,16 @@ function loadFtsOnlySemantic(
   includeDormant: boolean,
   filters: FuseFilters | undefined,
   agentFilter?: string,
+  scoring: RecallScoringOptions = {},
 ): RecallResult | null {
   const row = db
     .prepare(
       `
-    SELECT id, content, agent, state, evidence_count, supporting_count, contradicting_count, created_at, "private"
+    SELECT *
     FROM semantics WHERE id = ?
   `,
     )
-    .get(id) as SemanticFTSRow | undefined;
+    .get(id) as SemanticRow | undefined;
   if (!row) return null;
   if (agentFilter && row.agent !== agentFilter) return null;
   if (!includePrivate && row.private) return null;
@@ -165,19 +131,7 @@ function loadFtsOnlySemantic(
     : ['active', 'context_dependent'];
   if (!allowed.includes(row.state)) return null;
   if (filters && !passesDateFilters(row.created_at, filters)) return null;
-  const denom = Math.max(1, row.evidence_count ?? 0);
-  const confidence = Math.min(1, (row.supporting_count ?? 0) / denom);
-  return {
-    id: row.id,
-    content: row.content,
-    type: 'semantic',
-    confidence,
-    score: 0,
-    source: 'consolidation',
-    agent: row.agent ?? 'default',
-    state: row.state as never,
-    createdAt: row.created_at,
-  };
+  return scoreSemanticRow(row, 0, scoring);
 }
 
 function loadFtsOnlyProcedural(
@@ -187,15 +141,16 @@ function loadFtsOnlyProcedural(
   includeDormant: boolean,
   filters: FuseFilters | undefined,
   agentFilter?: string,
+  scoring: RecallScoringOptions = {},
 ): RecallResult | null {
   const row = db
     .prepare(
       `
-    SELECT id, content, agent, state, success_count, failure_count, created_at, "private"
+    SELECT *
     FROM procedures WHERE id = ?
   `,
     )
-    .get(id) as ProceduralFTSRow | undefined;
+    .get(id) as ProceduralRow | undefined;
   if (!row) return null;
   if (agentFilter && row.agent !== agentFilter) return null;
   if (!includePrivate && row.private) return null;
@@ -204,19 +159,7 @@ function loadFtsOnlyProcedural(
     : ['active', 'context_dependent'];
   if (!allowed.includes(row.state)) return null;
   if (filters && !passesDateFilters(row.created_at, filters)) return null;
-  const denom = Math.max(1, (row.success_count ?? 0) + (row.failure_count ?? 0));
-  const confidence = Math.min(1, (row.success_count ?? 0) / denom);
-  return {
-    id: row.id,
-    content: row.content,
-    type: 'procedural',
-    confidence,
-    score: 0,
-    source: 'consolidation',
-    agent: row.agent ?? 'default',
-    state: row.state as never,
-    createdAt: row.created_at,
-  };
+  return scoreProceduralRow(row, 0, scoring);
 }
 
 export interface FuseFilters {
@@ -238,7 +181,7 @@ function matchesTagFilters(rowTags: string[], requiredTags: string[] | undefined
   return requiredTags.every(tag => rowTags.includes(tag));
 }
 
-function passesFilters(row: EpisodeFTSRow, filters: FuseFilters): boolean {
+function passesFilters(row: EpisodeRow, filters: FuseFilters): boolean {
   if (!passesDateFilters(row.created_at, filters)) return false;
   if (filters.sources?.length && !filters.sources.includes(row.source)) return false;
   if (filters.tags?.length) {
@@ -254,7 +197,7 @@ function passesFilters(row: EpisodeFTSRow, filters: FuseFilters): boolean {
   return true;
 }
 
-export interface FuseInput {
+export interface FuseInput extends RecallScoringOptions {
   vectorResults: RecallResult[];
   ftsIds: Map<MemoryType, string[]>;
   mode: RetrievalMode;
@@ -270,6 +213,11 @@ export function fuseResults(db: Database, input: FuseInput): RecallResult[] {
   const includePrivate = input.includePrivate ?? false;
   const includeDormant = input.includeDormant ?? false;
   const minConfidence = input.minConfidence ?? 0;
+  const scoring: RecallScoringOptions = {
+    now: input.now ?? new Date(),
+    confidenceConfig: input.confidenceConfig,
+    includeProvenance: input.includeProvenance,
+  };
 
   if (mode === 'vector') return vectorResults;
 
@@ -303,7 +251,14 @@ export function fuseResults(db: Database, input: FuseInput): RecallResult[] {
     let result: RecallResult | null = existing ?? null;
     if (!result) {
       if (ranks.type === 'episodic')
-        result = loadFtsOnlyEpisode(db, id, includePrivate, input.filters, input.agentFilter);
+        result = loadFtsOnlyEpisode(
+          db,
+          id,
+          includePrivate,
+          input.filters,
+          input.agentFilter,
+          scoring,
+        );
       else if (ranks.type === 'semantic')
         result = loadFtsOnlySemantic(
           db,
@@ -312,6 +267,7 @@ export function fuseResults(db: Database, input: FuseInput): RecallResult[] {
           includeDormant,
           input.filters,
           input.agentFilter,
+          scoring,
         );
       else if (ranks.type === 'procedural')
         result = loadFtsOnlyProcedural(
@@ -321,10 +277,11 @@ export function fuseResults(db: Database, input: FuseInput): RecallResult[] {
           includeDormant,
           input.filters,
           input.agentFilter,
+          scoring,
         );
       if (!result) continue;
-      if (result.confidence < minConfidence) continue;
     }
+    if (result.confidence < minConfidence) continue;
 
     const frank = ranks.frank;
 

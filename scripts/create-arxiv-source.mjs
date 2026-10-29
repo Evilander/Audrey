@@ -7,7 +7,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_OUT_DIR = 'docs/paper/output/arxiv';
 const SOURCE_MARKDOWN = 'docs/paper/audrey-paper-v1.md';
 const SOURCE_BIB = 'docs/paper/references.bib';
-const PUBLICATION_PACK = 'docs/paper/publication-pack.json';
+const ARXIV_METADATA = 'docs/paper/arxiv-metadata.json';
 const MANIFEST_FILE = 'arxiv-manifest.json';
 const SEEDED_SECRET = 'sk-guardbench-secret-0000000000000000000000000000';
 
@@ -199,18 +199,20 @@ function markdownToLatex(markdown) {
   };
 }
 
-function publicationEntry(pack, id) {
-  const entry = pack.entries.find(row => row.id === id);
-  if (!entry) throw new Error(`Missing publication-pack entry: ${id}`);
-  return entry.text;
+function metadataField(metadata, field) {
+  const value = metadata[field];
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`Missing arXiv metadata field: ${field}`);
+  }
+  return value;
 }
 
 function buildLatex() {
-  const pack = readJson(PUBLICATION_PACK);
+  const metadata = readJson(ARXIV_METADATA);
   const markdown = sanitizePublicText(readText(SOURCE_MARKDOWN));
   const converted = markdownToLatex(markdown);
-  const title = publicationEntry(pack, 'arxiv-title');
-  const abstract = sanitizePublicText(publicationEntry(pack, 'arxiv-abstract'));
+  const title = metadataField(metadata, 'title');
+  const abstract = sanitizePublicText(metadataField(metadata, 'abstract'));
 
   const tex = `\\documentclass[11pt]{article}
 \\usepackage[margin=1in]{geometry}
@@ -298,7 +300,7 @@ export function writeArxivSourcePackage(options = {}) {
       'Main file: main.tex',
       'Bibliography: references.bib',
       '',
-      'Generated from docs/paper/audrey-paper-v1.md and docs/paper/publication-pack.json.',
+      'Generated from docs/paper/audrey-paper-v1.md and docs/paper/arxiv-metadata.json.',
       'This host did not require a local TeX compiler to generate the source package.',
       'Before final arXiv upload, compile with a TeX toolchain and preview the PDF in arXiv.',
       '',
@@ -316,17 +318,15 @@ export function writeArxivSourcePackage(options = {}) {
     suite: 'Audrey arXiv source package',
     generatedAt: new Date().toISOString(),
     sourceMarkdown: SOURCE_MARKDOWN,
-    publicationPack: PUBLICATION_PACK,
+    arxivMetadata: ARXIV_METADATA,
     sourceHashes: {
       sourceMarkdown: sha256File(fromRoot(SOURCE_MARKDOWN)),
-      publicationPack: sha256File(fromRoot(PUBLICATION_PACK)),
+      arxivMetadata: sha256File(fromRoot(ARXIV_METADATA)),
       referencesBib: sha256File(fromRoot(SOURCE_BIB)),
     },
     files,
     tex: {
       mainFile: 'main.tex',
-      titleEntry: 'arxiv-title',
-      abstractEntry: 'arxiv-abstract',
       citationCount: built.citationCount,
       bibEntryCount: countBibEntries(bib),
       codeBlocks: built.codeBlocks,

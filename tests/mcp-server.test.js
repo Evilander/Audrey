@@ -58,6 +58,7 @@ import {
   registerHostPrompts,
   registerHostResources,
   registerShutdownHandlers,
+  registerHttpShutdownHandlers,
   registerDreamTool,
   runDemoCommand,
   runDoctorCommand,
@@ -153,6 +154,31 @@ describe('CLI surface', () => {
     expect(r.stdout).toContain('guard-after');
     expect(r.stdout).toContain('npm install -g audrey');
   });
+
+  it.each([['dream'], ['reembed'], ['serve'], ['reflect'], ['guard-after'], ['auth', 'status']])(
+    '%s --help exits without opening a memory store',
+    (...command) => {
+      const root = mkdtempSync(join(tmpdir(), 'audrey-cli-help-'));
+      const dataDir = join(root, 'unused-store');
+      try {
+        const result = spawnSync(process.execPath, [cli, ...command, '--help'], {
+          encoding: 'utf8',
+          timeout: 5000,
+          env: {
+            ...process.env,
+            AUDREY_DATA_DIR: dataDir,
+            AUDREY_EMBEDDING_PROVIDER: 'mock',
+            AUDREY_LLM_PROVIDER: 'mock',
+          },
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain('Usage: audrey');
+        expect(existsSync(dataDir)).toBe(false);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('--version prints version and exits 0', () => {
     const r = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8', timeout: 10000 });
@@ -1571,6 +1597,49 @@ describe('MCP lifecycle hardening', () => {
   });
 });
 
+describe('HTTP signal shutdown', () => {
+  it('waits for server close and coalesces repeated signals', async () => {
+    const fakeProcess = new EventEmitter();
+    fakeProcess.exit = vi.fn();
+    let finish;
+    const server = {
+      close: vi.fn(
+        () =>
+          new Promise(resolve => {
+            finish = resolve;
+          }),
+      ),
+    };
+    const shutdown = registerHttpShutdownHandlers(fakeProcess, server, vi.fn());
+    fakeProcess.emit('SIGTERM');
+    fakeProcess.emit('SIGINT');
+    expect(server.close).toHaveBeenCalledOnce();
+    expect(fakeProcess.exit).not.toHaveBeenCalled();
+    finish();
+    await shutdown();
+    expect(fakeProcess.exit).toHaveBeenCalledExactlyOnceWith(0);
+  });
+
+  it('forces a failed exit when close never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const fakeProcess = new EventEmitter();
+      fakeProcess.exit = vi.fn();
+      registerHttpShutdownHandlers(
+        fakeProcess,
+        { close: () => new Promise(() => {}) },
+        vi.fn(),
+        20,
+      );
+      fakeProcess.emit('SIGTERM');
+      await vi.advanceTimersByTimeAsync(21);
+      expect(fakeProcess.exit).toHaveBeenCalledWith(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('MCP status automation', () => {
   afterEach(() => {
     process.exitCode = undefined;
@@ -1674,7 +1743,10 @@ describe('MCP doctor automation', () => {
     const report = buildDoctorReport({
       dataDir: './missing-audrey-dir',
       claudeJsonPath: './missing-claude-config.json',
-      env: { CODEX_HOME: resolve(TEST_DIR, 'missing-codex-home') },
+      env: {
+        CODEX_HOME: resolve(TEST_DIR, 'missing-codex-home'),
+        CLAUDE_CONFIG_DIR: resolve(TEST_DIR, 'missing-claude-home'),
+      },
       nodeVersion: '22.16.0',
     });
     const text = formatDoctorReport(report);

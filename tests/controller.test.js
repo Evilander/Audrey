@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { spawn } from 'node:child_process';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Audrey, MemoryController } from '../dist/src/index.js';
 import { TRUST_CONTEXT_KEY, USER_VERIFIED_TRUST } from '../dist/src/trust.js';
 
@@ -587,6 +589,174 @@ describe('Audrey Guard controller', () => {
     expect(
       audrey.listEvents({ eventType: 'PostToolUseFailure', toolName: 'npm test' }),
     ).toHaveLength(0);
+  });
+
+  it.each([
+    ['npm run deploy:Prod', 'npm run deploy:prod'],
+    ["printf '%s' 'a  b'", "printf '%s' 'a b'"],
+  ])('keeps the failure for %s separate from %s', async (failedAction, otherAction) => {
+    const options = { tool: 'Bash', includeCapsule: false };
+    const failed = await audrey.beforeAction(failedAction, options);
+    audrey.afterAction({ receiptId: failed.receipt_id, outcome: 'failed' });
+
+    const other = await audrey.beforeAction(otherAction, options);
+    expect(other.decision).not.toBe('block');
+    audrey.afterAction({ receiptId: other.receipt_id, outcome: 'succeeded' });
+
+    const repeated = await audrey.beforeAction(failedAction, options);
+    expect(repeated.decision).toBe('block');
+    expect(repeated.summary).toMatch(/this exact .* action failed before/i);
+  });
+
+  it('rolls back the outcome and feedback together when validation fails', async () => {
+    const memoryId = await audrey.encode({
+      content: 'Never deploy Audrey without package tarball inspection.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'release'],
+      salience: 0.5,
+    });
+    const before = await audrey.beforeAction('deploy Audrey release', {
+      tool: 'deploy',
+      includeCapsule: false,
+    });
+    expect(before.evidence_ids).toContain(memoryId);
+    const snapshot = () =>
+      audrey.db.prepare('SELECT salience, usage_count FROM episodes WHERE id = ?').get(memoryId);
+    const initial = snapshot();
+    const validate = audrey.validate.bind(audrey);
+    const notifications = [];
+    const observe = event => {
+      expect(audrey.db.inTransaction).toBe(false);
+      notifications.push(event);
+    };
+    audrey.on('tool-observed', observe);
+    audrey.on('validate', observe);
+    const failingValidation = vi.spyOn(audrey, 'validate').mockImplementation((...args) => {
+      validate(...args);
+      throw new Error('injected feedback failure');
+    });
+    const input = {
+      receiptId: before.receipt_id,
+      outcome: 'blocked',
+      evidenceFeedback: { [memoryId]: 'helpful' },
+    };
+    try {
+      expect(() => audrey.afterAction(input)).toThrow('injected feedback failure');
+      expect(snapshot()).toEqual(initial);
+      expect(notifications).toEqual([]);
+      expect(
+        audrey.db
+          .prepare('SELECT id FROM memory_events WHERE receipt_id = ?')
+          .all(before.receipt_id),
+      ).toEqual([]);
+    } finally {
+      failingValidation.mockRestore();
+    }
+    expect(audrey.afterAction(input).validated_evidence[0].validated).toBe(true);
+    expect(snapshot().usage_count).toBe(initial.usage_count + 1);
+    expect(notifications).toHaveLength(2);
+  });
+
+  it('serializes cross-process receipt completion and applies feedback once', async () => {
+    const memoryId = await audrey.encode({
+      content: 'Never deploy Audrey without package tarball inspection.',
+      source: 'direct-observation',
+      tags: ['must-follow', 'release'],
+      salience: 0.5,
+    });
+    const before = await audrey.beforeAction('deploy Audrey release', {
+      tool: 'deploy',
+      includeCapsule: false,
+    });
+    expect(before.evidence_ids).toContain(memoryId);
+    const initialUsage = audrey.db
+      .prepare('SELECT usage_count FROM episodes WHERE id = ?')
+      .get(memoryId).usage_count;
+    const children = [];
+    let readyCount = 0;
+    const race = index =>
+      new Promise((resolveResult, reject) => {
+        const script = `
+        import { Audrey } from ${JSON.stringify(new URL('../dist/src/index.js', import.meta.url).href)};
+        import { existsSync, writeFileSync } from 'node:fs';
+        const audrey = new Audrey(${JSON.stringify({
+          dataDir: resolve(TEST_DIR),
+          agent: 'controller-test',
+          embedding: { provider: 'mock', dimensions: 8 },
+        })});
+        const prepare = audrey.db.prepare.bind(audrey.db);
+        audrey.db.prepare = sql => {
+          const statement = prepare(sql);
+          if (sql.includes("event_type IN ('PostToolUse', 'PostToolUseFailure')") && sql.includes('receipt_id = ?')) {
+            const get = statement.get;
+            statement.get = (...args) => {
+              const row = get(...args);
+              if (!row) {
+                writeFileSync(${JSON.stringify(resolve(TEST_DIR, `race-${index}`))}, 'checked');
+                const deadline = Date.now() + 1000;
+                const pause = new Int32Array(new SharedArrayBuffer(4));
+                while (!existsSync(${JSON.stringify(resolve(TEST_DIR, `race-${1 - index}`))}) && Date.now() < deadline) {
+                  Atomics.wait(pause, 0, 0, 5);
+                }
+              }
+              return row;
+            };
+          }
+          return statement;
+        };
+        process.once('message', () => {
+          try {
+            audrey.afterAction(${JSON.stringify({
+              receiptId: before.receipt_id,
+              outcome: 'blocked',
+              evidenceFeedback: { [memoryId]: 'helpful' },
+            })});
+            process.send({ accepted: true });
+          } catch (error) { process.send({ accepted: false, error: error.message }); }
+          finally { audrey.close(); process.disconnect(); }
+        });
+        process.send({ ready: true });
+      `;
+        const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+          stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+          timeout: 8000,
+        });
+        children.push(child);
+        let result;
+        let stderr = '';
+        child.stderr.on('data', chunk => {
+          stderr += chunk;
+        });
+        child.on('message', message => {
+          if (message.ready) {
+            readyCount++;
+            if (readyCount === 2) children.forEach(worker => worker.send('go'));
+          } else result = message;
+        });
+        child.once('error', reject);
+        child.once('exit', code => {
+          if (code === 0 && result) resolveResult(result);
+          else reject(new Error(`receipt worker exited ${code}: ${stderr}`));
+        });
+      });
+    try {
+      const results = await Promise.all([race(0), race(1)]);
+      expect(results.filter(result => result.accepted)).toHaveLength(1);
+      expect(results.find(result => !result.accepted).error).toMatch(/already has an outcome/i);
+      expect(
+        audrey.db
+          .prepare('SELECT id FROM memory_events WHERE receipt_id = ?')
+          .all(before.receipt_id),
+      ).toHaveLength(1);
+      expect(
+        audrey.db.prepare('SELECT usage_count FROM episodes WHERE id = ?').get(memoryId)
+          .usage_count,
+      ).toBe(initialUsage + 1);
+    } finally {
+      children.forEach(child => {
+        if (child.exitCode === null) child.kill();
+      });
+    }
   });
 
   it('afterAction records failed outcomes as PostToolUseFailure and default outcomes as PostToolUse', async () => {

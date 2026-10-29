@@ -22,6 +22,73 @@ describe('validateMemory', () => {
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
   });
 
+  it('selects the nearest live owned semantic despite stale vector state and retired neighbors', async () => {
+    const now = new Date().toISOString();
+    const query = [1, 0, 0, 0, 0, 0, 0, 0];
+    const insert = (id, agent, state, vectorState, similarity) => {
+      const buffer = embedding.vectorToBuffer([
+        similarity,
+        Math.sqrt(1 - similarity ** 2),
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+      ]);
+      db.prepare(
+        `INSERT INTO semantics(id,content,agent,embedding,state,created_at,evidence_episode_ids) VALUES (?,?,?,?,?,?,'[]')`,
+      ).run(id, id, agent, buffer, state, now);
+      db.prepare('INSERT INTO vec_semantics(id,agent,embedding,state) VALUES (?,?,?,?)').run(
+        id,
+        agent,
+        buffer,
+        vectorState,
+      );
+    };
+    insert('other-owner', 'other', 'active', 'active', 1);
+    for (let i = 0; i < 40; i++) insert(`retired-${i}`, 'owner', 'disputed', 'active', 1);
+    insert('context-live', 'owner', 'context_dependent', 'disputed', 0.9);
+    insert('lower-live', 'owner', 'active', 'active', 0.7);
+    const result = await validateMemory(
+      db,
+      embedding,
+      { id: 'episode', content: 'query', source: 'tool-result', agent: 'owner' },
+      { embeddingVector: query },
+    );
+    expect(result.action).toBe('reinforced');
+    expect(result.semanticId).toBe('context-live');
+    expect(result.similarity).toBeCloseTo(0.9, 6);
+    expect(
+      db.prepare("SELECT supporting_count FROM semantics WHERE id='other-owner'").get()
+        .supporting_count,
+    ).toBe(0);
+    expect(
+      db.prepare("SELECT supporting_count FROM semantics WHERE id='lower-live'").get()
+        .supporting_count,
+    ).toBe(0);
+  });
+
+  it('keeps the similarity threshold when indexed candidates are below it', async () => {
+    const buffer = embedding.vectorToBuffer([0.5, Math.sqrt(0.75), 0, 0, 0, 0, 0, 0]);
+    db.prepare(
+      `INSERT INTO semantics(id,content,agent,embedding,state,created_at) VALUES ('below','below','owner',?,'active',?)`,
+    ).run(buffer, new Date().toISOString());
+    db.prepare(
+      `INSERT INTO vec_semantics(id,agent,embedding,state) VALUES ('below','owner',?,'active')`,
+    ).run(buffer);
+    const result = await validateMemory(
+      db,
+      embedding,
+      { id: 'episode', content: 'query', source: 'tool-result', agent: 'owner' },
+      { embeddingVector: [1, 0, 0, 0, 0, 0, 0, 0] },
+    );
+    expect(result.action).toBe('none');
+    expect(
+      db.prepare("SELECT supporting_count FROM semantics WHERE id='below'").get().supporting_count,
+    ).toBe(0);
+  });
+
   it('reinforces existing semantic memory when similar episode is added', async () => {
     // Insert a semantic memory
     const vec = await embedding.embed('Stripe rate limit is 100 req/s');
