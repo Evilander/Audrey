@@ -350,7 +350,8 @@ export function inferAutopilotOutcome(
     outcome === 'succeeded' ||
     outcome === 'failed' ||
     outcome === 'blocked' ||
-    outcome === 'skipped'
+    outcome === 'skipped' ||
+    outcome === 'unknown'
   ) {
     return outcome;
   }
@@ -491,7 +492,9 @@ function existingCandidateId(
   namespace: string,
 ): string | undefined {
   const rows = audrey.db
-    .prepare('SELECT id, context FROM episodes WHERE agent = ? AND content = ?')
+    .prepare(
+      'SELECT id, context FROM episodes WHERE agent = ? AND content = ? AND superseded_by IS NULL',
+    )
     .all(audrey.agent, candidate.content) as Array<{ id: string; context: string | null }>;
   return rows.find(row => {
     const context = parsedRecord(row.context);
@@ -1087,7 +1090,20 @@ async function learnFailure(
   host: AutopilotHost,
   receiptId: string,
 ): Promise<string | undefined> {
-  const summary = errorSummary(payload);
+  // Result verification can fail even when the tool reports no error. Read
+  // the persisted outcome so first delivery and duplicate hooks learn the
+  // same verified failure, including retries after an interrupted encode.
+  const recorded = audrey.db
+    .prepare(
+      `SELECT error_summary FROM memory_events
+       WHERE receipt_id = ? AND actor_agent = ?
+         AND event_type = 'PostToolUseFailure' AND outcome = 'failed'
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(receiptId, audrey.agent) as { error_summary: string | null } | undefined;
+  const summary = recorded?.error_summary
+    ? safeMemoryText(recorded.error_summary, 1600)
+    : errorSummary(payload);
   if (!summary) return undefined;
   const action = summarizeAction(payload);
   // A read-only probe's non-zero exit is its answer ("no match", "no such
@@ -1131,7 +1147,7 @@ async function guardAfterHook(
   payload: JsonRecord,
   options: AutopilotHookOptions,
 ): Promise<AutopilotHookResult> {
-  const outcome = inferAutopilotOutcome(payload, event, options.host);
+  let outcome = inferAutopilotOutcome(payload, event, options.host);
   const existing = existingAutopilotOutcome(audrey, payload, options.host);
   if (existing) {
     const learnedFailureId =
@@ -1161,7 +1177,7 @@ async function guardAfterHook(
       ...(action.readOnly ? { read_only: true } : {}),
     };
     if (receiptId) {
-      audrey.afterAction({
+      const recorded = audrey.afterAction({
         receiptId,
         tool: toolName(payload),
         sessionId: sessionId(payload),
@@ -1173,6 +1189,7 @@ async function guardAfterHook(
         files: action.files,
         metadata,
       });
+      outcome = recorded.outcome;
     } else {
       const controller = new MemoryController(audrey);
       await controller.afterAction({

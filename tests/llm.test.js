@@ -164,6 +164,26 @@ describe('OpenAILLMProvider', () => {
     );
   });
 
+  it('sends reasoning_effort only when it is configured', async () => {
+    const body = async (options = {}) => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ choices: [{ message: { content: 'ok' } }] }),
+      });
+      const llm = new OpenAILLMProvider({ apiKey: 'test-key', model: 'gpt-6.1-sol', ...options });
+      await llm.complete([{ role: 'user', content: 'Test.' }]);
+      return JSON.parse(global.fetch.mock.calls[0][1].body);
+    };
+    const unset = await body();
+    expect(unset.max_completion_tokens).toBe(4096);
+    expect(unset).not.toHaveProperty('reasoning_effort');
+    const configured = await body({ reasoningEffort: 'high' });
+    expect(configured.reasoning_effort).toBe('high');
+    const chat = await body({ model: 'gpt-4o' });
+    expect(chat).not.toHaveProperty('reasoning_effort');
+    expect(chat.max_tokens).toBe(1024);
+  });
+
   it('throws on API error', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,

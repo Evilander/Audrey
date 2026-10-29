@@ -4,20 +4,20 @@
   "title": "Audrey arXiv Source Manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "suite", "generatedAt", "sourceMarkdown", "publicationPack", "sourceHashes", "files", "tex"],
+  "required": ["schemaVersion", "suite", "generatedAt", "sourceMarkdown", "arxivMetadata", "sourceHashes", "files", "tex"],
   "properties": {
     "schemaVersion": { "const": "1.0.0" },
     "suite": { "const": "Audrey arXiv source package" },
     "generatedAt": { "type": "string", "minLength": 1 },
     "sourceMarkdown": { "type": "string", "minLength": 1 },
-    "publicationPack": { "type": "string", "minLength": 1 },
+    "arxivMetadata": { "type": "string", "minLength": 1 },
     "sourceHashes": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sourceMarkdown", "publicationPack", "referencesBib"],
+      "required": ["sourceMarkdown", "arxivMetadata", "referencesBib"],
       "properties": {
         "sourceMarkdown": { "$ref": "#/$defs/sha256" },
-        "publicationPack": { "$ref": "#/$defs/sha256" },
+        "arxivMetadata": { "$ref": "#/$defs/sha256" },
         "referencesBib": { "$ref": "#/$defs/sha256" }
       }
     },
@@ -29,11 +29,9 @@
     "tex": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mainFile", "titleEntry", "abstractEntry", "citationCount", "bibEntryCount", "codeBlocks", "tableBlocks"],
+      "required": ["mainFile", "citationCount", "bibEntryCount", "codeBlocks", "tableBlocks"],
       "properties": {
         "mainFile": { "const": "main.tex" },
-        "titleEntry": { "const": "arxiv-title" },
-        "abstractEntry": { "const": "arxiv-abstract" },
         "citationCount": { "type": "integer", "minimum": 1 },
         "bibEntryCount": { "type": "integer", "minimum": 1 },
         "codeBlocks": { "type": "integer", "minimum": 0 },

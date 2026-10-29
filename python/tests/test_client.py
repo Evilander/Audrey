@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 
 import httpx
+from pydantic import ValidationError
 
 PYTHON_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PYTHON_ROOT.parent
@@ -29,6 +30,36 @@ def _free_port() -> int:
 
 
 class AudreyClientUnitTests(unittest.TestCase):
+    def test_status_models_counts_and_health_from_status_endpoint(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/v1/status")
+            return httpx.Response(200, json={
+                "episodes": 1, "semantics": 2, "procedures": 3, "healthy": True,
+                "vec_episodes": 1, "dimensions": 8, "recall_degraded": False,
+            })
+
+        with Audrey(base_url="http://audrey.test", transport=httpx.MockTransport(handler)) as client:
+            status = client.status()
+        self.assertEqual((status.episodes, status.semantics, status.procedures), (1, 2, 3))
+        self.assertEqual(status.episodic, status.episodes)
+        self.assertTrue(status.healthy)
+        self.assertEqual(status.dimensions, 8)
+
+    def test_context_rejects_non_strings_before_sending(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(200, json={"id": "memory"})
+
+        with Audrey(base_url="http://audrey.test", transport=httpx.MockTransport(handler)) as client:
+            for value in (0, False, 1, None):
+                with self.subTest(value=value), self.assertRaises(ValidationError):
+                    client.encode("Context fixture", source="told-by-user", context={"retry": value})
+            client.encode("String context", source="told-by-user", context={"project": "billing"})
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(json.loads(requests[0].content)["context"], {"project": "billing"})
+
     def test_sync_client_sends_auth_and_agent_headers(self) -> None:
         seen: dict[str, object] = {}
 
@@ -99,6 +130,19 @@ class AudreyClientUnitTests(unittest.TestCase):
 
 
 class AudreyAsyncClientUnitTests(unittest.IsolatedAsyncioTestCase):
+    async def test_status_models_counts_and_health_from_status_endpoint(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/v1/status")
+            return httpx.Response(200, json={
+                "episodes": 1, "semantics": 0, "procedures": 0, "healthy": True,
+            })
+
+        async with AsyncAudrey(base_url="http://audrey.test", transport=httpx.MockTransport(handler)) as client:
+            status = await client.status()
+        self.assertEqual(status.episodes, 1)
+        self.assertEqual(status.episodic, 1)
+        self.assertTrue(status.healthy)
+
     async def test_async_restore_accepts_the_server_imported_response(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.url.path, "/v1/import")
@@ -241,6 +285,11 @@ class AudreyClientIntegrationTests(unittest.TestCase):
             self.assertTrue(memory_id)
 
             client.mark_used(memory_id)
+
+            status = client.status()
+            self.assertGreaterEqual(status.episodes, 1)
+            self.assertEqual(status.episodic, status.episodes)
+            self.assertTrue(status.healthy)
 
             results = client.recall("stripe rate limits", limit=5, scope="agent")
             self.assertGreaterEqual(len(results), 1)

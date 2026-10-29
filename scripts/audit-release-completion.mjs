@@ -6,7 +6,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyExternalGuardBenchEvidence } from '../benchmarks/verify-external-evidence.mjs';
-import { verifyBrowserLaunchResults } from './verify-browser-launch-results.mjs';
 import { verifyReleaseReadiness } from './verify-release-readiness.mjs';
 
 const ROOT = process.cwd();
@@ -166,7 +165,6 @@ export async function auditReleaseCompletion(options = {}) {
     targetVersion: version,
     allowPending: false,
   });
-  const browserResults = await verifyBrowserLaunchResults();
   const externalEvidence = await verifyExternalGuardBenchEvidence({
     allowPending: true,
     write: false,
@@ -296,23 +294,6 @@ export async function auditReleaseCompletion(options = {}) {
       statusFromGaps(paperGaps, paperVerify.ok && paperBundleVerify.ok),
       [commandEvidence(paperVerify), commandEvidence(paperBundleVerify)],
       paperGaps,
-    ),
-  );
-
-  const publicationGaps = [];
-  if (!browserResults.ok) publicationGaps.push(...browserResults.failures);
-  if (!browserResults.ready) publicationGaps.push(...browserResults.blockers);
-  checklist.push(
-    checklistItem(
-      'paper-publication',
-      'Paper is publicly submitted/published across the launch targets recorded by the browser launch ledger.',
-      statusFromGaps(publicationGaps, browserResults.ok),
-      [
-        `browser results ok=${browserResults.ok}`,
-        `browser results ready=${browserResults.ready}`,
-        `submitted=${browserResults.targets.filter(target => target.status === 'submitted').length}/${browserResults.targets.length}`,
-      ],
-      publicationGaps,
     ),
   );
 

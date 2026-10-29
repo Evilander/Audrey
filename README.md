@@ -15,19 +15,19 @@
   </p>
 </div>
 
-## Your agent should remember the work, not just the chat
+## Memory before action
 
 You fix the deploy command on Monday. On Thursday, a fresh session tries the broken version again.
 
-You explain that this repository never commits generated files. The next agent helpfully commits them.
+Audrey brings relevant project memory into the next session, checks supported tool calls before they run, and links their reported outcomes to the check that preceded them. A Guard decision carries evidence IDs you can inspect. Grounding can flag memories that reference deleted files or package scripts.
 
-You discover a subtle migration rule, write it down somewhere, and still have to remember to paste it into every new conversation.
+Try the SQLite-backed demo before configuring a host:
 
-That is the gap Audrey closes.
+```bash
+npm exec --yes --package=audrey -- audrey demo --scenario repeated-failure
+```
 
-Audrey sits beside the agent and participates in the work automatically. At the start of a session it brings back a small, relevant memory packet. When you submit a prompt, it recalls project facts, preferences, procedures, and recent risks. Before a side-effectful tool runs, Audrey checks the proposed action against prior evidence. Afterward, it links the outcome back to the exact check that preceded it.
-
-The model does not have to remember that a memory tool exists. That is the point.
+The demo simulates a failed deploy, passes read-only inspection commands through the hook, and checks a proposed retry. It does not execute a deployment or change host configuration. After npm fetches the package, the demo needs no API key, model download, or network call.
 
 ## Meet Audrey Autopilot
 
@@ -60,7 +60,9 @@ Autopilot then closes the loop:
 | A tool failure is reported | Forms a durable, sanitized failure memory for the next attempt |
 | The turn stops or context compacts | Runs lightweight, due-only consolidation without holding the conversation open |
 
-Each hook event carries a host-declared timeout (30 seconds for the `PreToolUse` Guard check); Audrey races its own internal embedding/LLM timeout a few seconds ahead of that deadline so it can exit cleanly instead of losing the race to the host's kill. Infrastructure failures are fail-open by default: if Audrey itself errors or runs out of time, the tool call proceeds unguarded rather than freezing the session. Set `AUDREY_HOOK_FAIL_CLOSED=1` to deny the action instead when the `PreToolUse` check fails this way; other lifecycle hooks (session start, prompt recall, post-tool bookkeeping) have no "deny" to fall back to and always degrade open regardless of this setting.
+An outcome reflects the tool's reported status. A zero exit code can still produce stale or incorrect output. Custom integrations can declare [required result checks](docs/SUCCESS_CHECKS.md) in `beforeAction` and supply the actual output to `afterAction`. Guard then records a mismatch as failed and an unverifiable reported success as unknown. Audrey does not generate application-specific checks or infer the expected values.
+
+Each hook event carries a host-declared timeout (30 seconds for the `PreToolUse` Guard check). Audrey caps individual hosted embedding/LLM requests below that deadline; this is not a deadline for the entire hook, and local model initialization has no equivalent internal timeout. Errors caught by Audrey fail open by default: the hook emits no decision. Set `AUDREY_HOOK_FAIL_CLOSED=1` to deny a `PreToolUse` action on a caught error. If the host terminates the process first, the host determines what happens. Other lifecycle hooks have no deny path and always degrade open on caught errors.
 
 ## A small story about a failed deploy
 
@@ -71,21 +73,17 @@ $ npm run deploy
 Error: deployment target is missing
 ```
 
-Audrey keeps a redacted trace and the exact action fingerprint. If another session proposes the same action before the problem is fixed, Guard returns a denial with evidence. Change the command or fix the target and Audrey lets the work continue. Once that exact action succeeds, the old failure no longer blocks it.
+Audrey keeps a redacted trace and an action fingerprint. If another session under the same agent identity proposes that action, Guard can deny the retry with evidence. A later recorded success for that fingerprint clears the exact-failure block. If the failed action declared result checks, recovery must pass the same checks. The default exact-failure window is seven days; other memory warnings are evaluated separately.
 
-This is more useful than “the vector search found a vaguely similar error.” Audrey creates a receipt before the action, records what happened after it, and preserves the lineage between the two.
+Fixing a file or deployment target does not itself clear the block. For a deliberate retry, the Guard API accepts `acknowledgePriorFailure: true` (MCP/REST: `acknowledge_prior_failure`; CLI: `--acknowledge-prior-failure`). Autopilot also recognizes retry language in the current user prompt. Acknowledgement lowers the exact-failure block to a warning and preserves its evidence; it does not bypass separate policy warnings.
 
-Try the complete loop without an API key or network call:
-
-```bash
-audrey demo --scenario repeated-failure
-```
+Guard does not yet evaluate whether a natural-language prerequisite has been satisfied. A trusted must-follow memory can keep blocking even after its suggested repair succeeds. Review the cited rule when that happens; changing a command's spelling is not proof that its underlying problem is fixed.
 
 ## Looking is not doing
 
-Between the failed deploy and the retry, an agent runs a lot of commands that cannot change anything: `grep` for the error, `git status`, `cat` on a config file, `ls` on a directory that turns out not to exist. A memory system that treats every one of those as a risk, or remembers `grep` finding nothing as a "failure", becomes a smoke alarm that goes off when you make toast. People stop listening, and then it is worth nothing on the day the toaster is on fire.
+Inspection commands such as `grep`, `git status`, and `cat` normally need no memory check. A non-zero exit from `grep` can simply mean there was no match.
 
-Audrey reads the command the way an engineer would. A command whose every part is positively recognised as read-only (`grep`, `git log`, `npm view`, `docker ps`, `sed -n '1,40p'`, and their kind, with no command substitution, no redirect except to `/dev/null`, no `sudo` or `xargs`, no environment assignment that could change what the verb resolves to) never reaches the Guard at all. Its exit code is recorded but never counted as a lesson. Everything else is guarded exactly as before, and anything Audrey cannot positively recognise is treated as doing.
+A command whose every part is positively recognised as read-only skips Guard. The classifier rejects command substitution, redirects other than `/dev/null`, `sudo`, `xargs`, and environment assignments that could change command resolution. Inspection outcomes can be recorded, but are excluded from failure learning. Unrecognised commands remain guarded.
 
 ```text
 $ grep -rn "prisma" src/          Guard: silent
@@ -97,7 +95,7 @@ Audrey Guard: BLOCKED
 - must_follow (high): Before running npm run deploy, run npm run db:generate because Prisma client must be generated first.
 ```
 
-That is the output of `audrey demo --scenario repeated-failure`, which runs the whole sequence with no API key and no network.
+This excerpt illustrates the output of `audrey demo --scenario repeated-failure`.
 
 When Guard does speak, it names the memory it is speaking from, and a remembered failure is matched to the proposed command by what it runs (`npm run deploy` against `npm run deploy`), not by how similar two strings look to an embedding.
 
@@ -116,11 +114,13 @@ Audrey treats memory as more than a pile of text chunks.
 
 Every context packet includes memory IDs, confidence, provenance where available, and a reason for inclusion. Uncertain or disputed memories are labeled as such. Retrieved content is wrapped with a simple rule: memory is evidence, not authority; current system and user instructions always win.
 
-## When a memory stops being true
+## Checking memories against the repository
 
 Age is not the only way a memory goes wrong. A note saying "ship with `npm run deploy:prod`" is perfectly recent, well sourced, and completely wrong the day that script is deleted. Worse, every recall reinforces it, because retrieval counts as evidence that a memory is useful. A confidently stated, well-supported, false instruction is more damaging than no memory at all.
 
-So Audrey checks. When a memory is written, it records the claims inside it that can be verified against the project — repository-relative paths and package script names — and keeps only the ones that resolve at that moment. That last part is what makes the signal worth anything: a claim that never resolved is a guess about a typo, while a claim that resolved once and no longer does is the world moving out from under a memory that still asserts it.
+Audrey checks a narrow, useful part of this problem: whether referenced repository paths and package script names still exist. When a memory is written with project context, it records only anchors that resolve at that moment. A missing anchor can then distinguish a later repository change from a reference that never resolved.
+
+Existence does not establish correctness. A script can keep its name while changing behavior, and an intact file can contain obsolete instructions. Grounding does not execute scripts, prove a fix, or verify arbitrary claims in prose.
 
 ```bash
 audrey ground
@@ -139,25 +139,25 @@ Repair is symmetric. Restore the file or the script and the next check clears th
 
 Memories with no checkable claims are left unlabeled. Silence is not a clean bill of health, and presenting it as one would be the same mistake pointed the other way.
 
-## Everything it does, and when you'd actually use it
+## Daily use
 
 Most of this runs on its own once Autopilot is installed. You do not invoke recall, and you do not invoke Guard. The table is here for the parts you would reach for deliberately, and so the automatic parts are legible rather than magic.
 
 | What | When you want it | Why it helps | How |
 |---|---|---|---|
 | **Autopilot** | Always, after one install | The whole point. Memory arrives before the agent acts instead of after you notice it went wrong. | `audrey install --host auto`, restart the host, approve hooks once |
-| **Guard** | Automatic, before any edit, write, or shell command that can have side effects | Checks the exact action fingerprint against prior failures. Not "something like this broke once" — this exact command, still broken. Read-only commands (`grep`, `ls`, `git status`) are not guarded, and their non-zero exits are not remembered as failures. | Runs at `PreToolUse`. Manually: `audrey guard --tool Bash --strict` |
-| **Grounding** | After deleting or renaming things a memory might mention | Confidence tells you a memory is well-sourced. Grounding tells you it is still true. A note about a script you deleted is confident and wrong. | `audrey ground`, or let the maintenance sweep do it |
+| **Guard** | Automatic, before supported edit, write, or shell tool calls | Checks action fingerprints against recorded failures and surfaces memory warnings. Recognised read-only commands skip the check. Repairing the repository alone does not clear a prior failure. | Runs at `PreToolUse`. Manually: `audrey guard --tool Bash --strict` |
+| **Grounding** | After deleting or renaming things a memory might mention | Flags previously observed paths or package script names that no longer exist. | `audrey ground`, or let the maintenance sweep do it |
 | **Session briefing** | Automatic at session start | Small, scoped packet instead of pasting context every time. Unchanged memories inject once per session; changes to content or standing are sent again. | `SessionStart` hook. Preview with `audrey greeting` |
 | **Explicit capture** | When you say "remember that…" or "I prefer…" | Deliberate memories are worth more than inferred ones, and phrasing it that way is enough. | Just type it. Autopilot picks up those sentence shapes |
 | **Consolidation** | Automatic when idle; manually before a long break | Repeated episodes become one principle. Otherwise the store is a pile of near-duplicates and recall gets noisy. | `audrey dream` |
 | **Contradictions** | When two memories disagree | Neither one silently wins. Both stay visible and labeled until something resolves them. | Surfaced in packets; `memory_resolve_truth` to settle one |
-| **Decay** | Automatic | Low-value memories fade. Reinforced ones stick around. Runs in the same sweep as consolidation. | Part of `audrey dream` |
+| **Decay** | Confidence ages during recall; run maintenance to mark dormant memories | Age lowers confidence. Explicit decay can move weak memories out of active retrieval. Autopilot consolidation does not run this dormancy pass. | `audrey dream` or `memory_decay` |
 | **Promote** | When a pattern deserves to be a repo rule | Moves a learned habit out of memory and into a file your team can read and review. | `audrey promote --dry-run` first |
-| **Impact** | When you want to know whether any of this is working | Shows which memories were used and whether they helped. Answers "is this earning its keep". | `audrey impact --window 30` |
+| **Impact** | When reviewing memory feedback | Reports explicit used/helpful/wrong feedback and frequently validated memories. It does not measure time saved or independently establish that a blocked action would have failed. | `audrey impact --window 30` |
 | **Snapshot** | Backups, or moving to a new machine | Full store in one JSON file. Import treats it as untrusted: redacted and stripped of trust markers on the way in. | `AUDREY_ENABLE_ADMIN_TOOLS=1`, then `memory_export` / `memory_import` |
 | **Doctor** | Packets stopped arriving | The two real causes are a drifted hook entrypoint and starved consolidation. Doctor names which one. | `audrey doctor` |
-| **Demo** | Before trusting any of this | Runs the whole loop with no API key and no network. Nothing to configure to see it work. | `audrey demo --scenario repeated-failure` |
+| **Demo** | Before configuring a host | Exercises a simulated failure and blocked retry in temporary SQLite storage, with no API key or network call. | `audrey demo --scenario repeated-failure` |
 | **REST sidecar** | Custom agents that are not Codex or Claude Code | Same memory runtime, same evidence contract, over HTTP. Python and JS clients included. | `audrey serve` with `AUDREY_API_KEY` set |
 
 ## What Audrey deliberately does not do
@@ -176,7 +176,7 @@ Guard checks memory at the point where it can change an action, not after the da
 
 ### Continuity across agent sessions
 
-Audrey is not tied to one model vendor. Codex and Claude Code use the same memory runtime and the same evidence contract. MCP, REST, JavaScript, and Python clients make the core usable in custom agents too.
+Codex and Claude Code use the same memory runtime and evidence contract. Generated configurations use separate `codex` and `claude-code` agent identities, so they do not automatically recall each other's memories. Cross-agent Autopilot recall requires the explicit `AUDREY_AUTOPILOT_SCOPE=shared` setting in the host runtime environment; this broadens recall across the store. MCP, REST, JavaScript, and Python clients make the core usable in custom agents too.
 
 ### Evidence a human can inspect
 
@@ -188,29 +188,13 @@ The default store is SQLite, FTS5, and `sqlite-vec`. Local embeddings are the de
 
 ### A safer shared store
 
-Agent-scoped recall continues through validation, contradiction detection, interference, affect, failure lookup, capsules, greetings, Guard, and REST request routing. Recall updates retrieval bookkeeping for its returned results (usage count and last-reinforced timestamp for semantic and procedural memories). Capsule and Guard filtering may further narrow those results. Explicit validation feedback (`memory_validate` / `/v1/validate`) separately adjusts salience based on how a memory actually performed, not merely on being recalled.
+Agent-scoped recall continues through validation, contradiction detection, interference, affect, failure lookup, capsules, greetings, Guard, and REST request routing. Recall updates retrieval count and last-reinforced timestamp for returned semantic and procedural memories. Capsule and Guard filtering may further narrow those results. Explicit validation feedback (`memory_validate` / `/v1/validate`) separately updates usage and salience from a caller's used/helpful/wrong assessment.
 
 Vector candidates are partitioned by agent before nearest-neighbor ranking, so one busy agent cannot crowd another out of a bounded search. For hard tenant boundaries, still use a distinct `AUDREY_DATA_DIR` per tenant or security domain.
-
-## See it before installing anything
-
-```bash
-npm exec --yes --package=audrey -- audrey demo --scenario repeated-failure
-```
-
-That command runs from the npm cache, exercises the full SQLite-backed Guard loop, and leaves host configuration unchanged.
 
 <div align="center">
   <img src="docs/assets/audrey-feature-grid.jpg" alt="Audrey memory continuity, recall, evidence, local storage, and memory-before-action" width="760">
 </div>
-
-## Where we want to take it
-
-The ambition is a temporal evidence graph for agents: immutable observations, explicit validity windows, source trust, evolving claims, scoped procedures, and outcome-calibrated policy. The defensible part is not storing more text. It is knowing what was believed, why, in which context, for how long, and whether acting on it helped.
-
-Near-term work includes durable background cognition jobs, tenant namespaces bound to credentials, memory quarantine and taint propagation, public long-horizon evaluations, encrypted backup options, and a persistent local daemon that removes per-hook model startup entirely.
-
-If that is the kind of agent infrastructure you want to build, open an issue or start with the demo. Audrey is MIT licensed, and the product boundary is intentionally inspectable.
 
 ---
 
@@ -258,7 +242,7 @@ Claude Code scope mapping follows the host’s terminology:
 
 Codex supports project `.codex/hooks.json` and user `~/.codex/hooks.json`; it has no local hook scope. Audrey preserves unrelated hooks, replaces older Audrey-owned handlers, writes a private timestamped backup, and is idempotent on repeat installation. Project-adjacent backup names match `*.audrey-*.bak`; keep that pattern ignored because a host config can contain unrelated credentials.
 
-Audrey respects `CLAUDE_CONFIG_DIR` and `CODEX_HOME`. Generated hooks pin the stable Node executable, Audrey entrypoint, data directory, agent identity, and non-secret provider choices used at install time. With local embeddings, an Autopilot install performs one warmup so the first real hook is not also the first model load; set `AUDREY_DISABLE_WARMUP=1` to skip it.
+Audrey respects `CLAUDE_CONFIG_DIR` and `CODEX_HOME`. Generated hooks pin the stable Node executable, Audrey entrypoint, data directory, agent identity, and non-secret provider choices used at install time. With local embeddings, an Autopilot install warms the model cache; set `AUDREY_DISABLE_WARMUP=1` to skip it. Each hook still runs in a new process and initializes an embedding pipeline when needed, so cached model files do not eliminate startup latency.
 
 Generate MCP configuration without applying it:
 
@@ -297,7 +281,7 @@ Codex hook interception is a guardrail, not a complete shell-policy boundary. Th
 ### JavaScript API
 
 ```js
-import { Audrey, MemoryController } from 'audrey';
+import { Audrey } from 'audrey';
 
 const memory = new Audrey({
   dataDir: './audrey-data',
@@ -317,15 +301,19 @@ const capsule = await memory.capsule('increase Stripe throughput', {
   budgetChars: 3000,
 });
 
-const guard = new MemoryController(memory);
-const before = await guard.beforeAction({
-  action: 'deploy the billing worker',
+const before = await memory.beforeAction('npm run deploy:billing', {
   tool: 'Bash',
-  command: 'npm run deploy:billing',
   cwd: process.cwd(),
+  strict: true,
 });
 
-console.log(before.decision, before.evidenceIds);
+console.log(before.decision, before.evidence_ids, before.receipt_id);
+// Only execute an authorized action when before.ok_to_proceed is true.
+// After execution, close this receipt with memory.afterAction({
+//   receiptId: before.receipt_id, outcome: 'succeeded' | 'failed' | 'unknown',
+//   errorSummary: '...' // when available
+// });
+// Report the observed outcome; creating a receipt does not execute the action.
 await memory.closeAsync();
 ```
 
@@ -376,7 +364,7 @@ episode
   ├─ agent-scoped interference / resonance / validation
   ├─ reinforcement or contradiction evidence
   ├─ sleep-time consolidation into semantic or procedural memory
-  └─ grounding checks that stored claims still hold in the project
+  └─ grounding rechecks recorded paths and package-script names
 
 query
   ├─ bounded vector candidates
@@ -409,8 +397,11 @@ The server also sends host instructions explaining the Guard receipt loop when l
 | `AUDREY_DATA_DIR` | `~/.audrey/data` | SQLite store; use a distinct directory per tenant/security boundary |
 | `AUDREY_AGENT` | host-specific | Logical memory owner used for scoped operations |
 | `AUDREY_EMBEDDING_PROVIDER` | `local` | `local`, `gemini`, `openai`, or `mock` |
-| `AUDREY_LLM_PROVIDER` | unset | `anthropic`, `openai`, or `mock` for reflection/consolidation; unset (or `auto`) uses local heuristics only, never an ambient `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` |
+| `AUDREY_LLM_PROVIDER` | unset | `anthropic`, `openai` (API billing), `chatgpt` (subscription), or `mock` for reflection/consolidation; unset (or `auto`) uses local heuristics only, never an ambient API key |
 | `AUDREY_LLM_MODEL` | provider default | Explicit LLM model override |
+| `AUDREY_LLM_REASONING_EFFORT` | `medium` | OpenAI reasoning effort: `low`, `medium`, `high`, `xhigh`, or `max` |
+| `AUDREY_CHATGPT_AUTH_DIR` | `~/.audrey/auth` | Protected local subscription credential directory |
+| `AUDREY_CHATGPT_ACCOUNT` | active account | Saved subscription registration to use |
 | `AUDREY_DEVICE` | `gpu` | Local embedding device; falls back to CPU |
 | `AUDREY_CONTEXT_BUDGET_CHARS` | `4000` | Maximum default capsule size |
 | `AUDREY_AUTOPILOT_SCOPE` | `agent` | `agent` or explicit cross-agent `shared` recall for hooks |
@@ -428,6 +419,10 @@ The server also sends host instructions explaining the Guard receipt loop when l
 | `AUDREY_PRAGMA_DEFAULTS` | `1` | Set `0` to disable SQLite performance tuning |
 
 Provider secrets are never embedded in generated hook commands. `--include-secrets` applies only to MCP registration; prefer host environment injection or a secret manager.
+
+OpenAI API billing uses `AUDREY_LLM_PROVIDER=openai` and `OPENAI_API_KEY`. To use a ChatGPT subscription for reflection and consolidation, run `audrey auth login`, then set `AUDREY_LLM_PROVIDER=chatgpt`, `AUDREY_LLM_MODEL=gpt-6.1-sol`, and `AUDREY_LLM_REASONING_EFFORT=medium`. Reinstall the host configuration after changing provider settings. Subscription requests require account permission and an available model; failures never switch to API billing. Embeddings remain a separate provider and default to local execution. See [OpenAI's subscription documentation](https://developers.openai.com/siwc/token-sharing-open-source).
+
+Use `audrey auth accounts` to list saved registrations, `audrey auth select --account <ID>` to switch, and `audrey auth logout` to sign out. Tokens stay in protected local storage outside the memory database. `audrey auth status` reports connection state without exposing tokens.
 
 New local stores use private directory and database permissions on filesystems that support POSIX modes. Existing database and WAL files are restricted on open. Windows and mounted volumes need appropriate operating-system ACLs. Set `AUDREY_SHARED_STORE=1` (SDK: `sharedStore: true`) only when you manage shared access yourself.
 
@@ -471,7 +466,7 @@ GuardBench currently contains ten local, deterministic pre-action scenarios cove
 Latest local result in this checkout: 10/10 scenarios passed, 100% prevention rate, 0% false-block rate, 0 raw secret leaks, 0 published artifact leaks, and 3.805ms / 13.445ms p50/p95 Guard latency under the mock-provider methodology.
 <!-- guardbench-summary:end -->
 
-`benchmarks/perf-snapshot.js` measures encode and hybrid-recall p50/p95/p99 at configurable corpus sizes with machine and provider provenance. Run it on the hardware and embedding provider you plan to operate; hosted-provider latency is dominated by its network round trip.
+`benchmarks/perf-snapshot.js` measures encode and hybrid-recall p50/p95/p99 at configurable corpus sizes with machine provenance. It currently uses mock 64-dimensional embeddings; it has no provider-selection flag and does not measure hook process startup. Measure complete hook invocations separately with your intended provider, cache state, corpus, and hardware before using these numbers to estimate interactive latency.
 
 The longer-term public evaluation target includes [LongMemEval](https://arxiv.org/abs/2410.10813), [MemoryAgentBench](https://arxiv.org/abs/2507.05257), and adversarial memory-poisoning cases. Relevant design directions include bitemporal knowledge graphs in [Zep/Graphiti](https://arxiv.org/abs/2501.13956), evolving memory organization in [A-MEM](https://arxiv.org/abs/2502.12110), and sleep-time agent compute in [Sleep-time Compute](https://arxiv.org/abs/2504.13171).
 
@@ -501,8 +496,6 @@ npm run bench:guard:external:evidence:strict
 
 npm run paper:arxiv:compile
 npm run paper:arxiv:compile:strict
-npm run paper:launch-results
-npm run paper:launch-results:strict
 
 npm run release:cut:plan
 npm run release:cut:apply
@@ -513,6 +506,6 @@ npm run python:release:check
 
 Live Zep runs require `ZEP_API_KEY`; `ZEP_GUARDBENCH_INGEST_DELAY_MS` tunes ingestion settling time. The external dry-run matrix proves adapter shape without credentials, while external evidence verification distinguishes pending runs from verified live evidence.
 
-Publication packaging performs an absolute-path sweep, reserves an X URL reserve in social copy, and checks submitted artifact-url targets. Release readiness separately reports source-control state, live remote-head verification, npm registry/auth readiness, and PyPI publish readiness.
+Publication packaging verifies artifact hashes, source bundles, and path redaction. Release readiness separately reports source-control state, live remote-head verification, npm registry/auth readiness, and PyPI publish readiness. Pass `-- --target-version <version>` to the readiness commands when checking a release; the script's legacy default is `1.1.1`.
 
 MIT licensed. Built for agents that should get better at the work without becoming less accountable.

@@ -307,8 +307,6 @@ interface Segment {
   consumer: boolean;
 }
 
-const DISCARD_TARGETS = new Set(['/dev/null', 'nul', 'nul:']);
-
 function splitSegments(tokens: Token[]): { segments: Segment[]; substitution: boolean } {
   const result: Segment[] = [];
   let current: Segment = { words: [], writes: false, consumer: false };
@@ -332,7 +330,9 @@ function splitSegments(tokens: Token[]): { segments: Segment[]; substitution: bo
       settleRedirect();
       pendingRedirect = token.op;
     } else if (pendingRedirect) {
-      if (pendingRedirect.includes('>') && !DISCARD_TARGETS.has(token.word.text.toLowerCase())) {
+      // This parser models shell commands, including Bash on Windows. DOS
+      // device names and differently cased paths can be ordinary output files.
+      if (pendingRedirect.includes('>') && token.word.text !== '/dev/null') {
         current.writes = true;
       }
       pendingRedirect = undefined;
@@ -995,8 +995,13 @@ function gitIsReadOnly(sub: string, rest: string[]): boolean {
         return false;
       }
       return positional(rest).length === 0 || rest.some(arg => GIT_BRANCH_LIST_FLAGS.has(arg));
-    case 'remote':
-      return rest.length === 0 || rest[0] === '-v' || rest[0] === 'show' || rest[0] === 'get-url';
+    case 'remote': {
+      // Verbose is a global option, not a read-only operation: it may precede
+      // `add`, `remove`, `set-url`, or any other mutating subcommand.
+      const args = [...rest];
+      while (args[0] === '-v' || args[0] === '--verbose') args.shift();
+      return args.length === 0 || args[0] === 'show' || args[0] === 'get-url';
+    }
     case 'tag':
       if (usesShortFlag(rest, 'df') || rest.some(arg => arg === '--delete' || arg === '--force')) {
         return false;

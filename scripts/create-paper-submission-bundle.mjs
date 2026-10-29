@@ -3,7 +3,6 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyPaperClaims } from './verify-paper-claims.mjs';
-import { verifyPublicationPack } from './verify-publication-pack.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_OUT_DIR = 'docs/paper/output/submission-bundle';
@@ -11,7 +10,6 @@ const PAPER_FILES = [
   'README.md',
   'LICENSE',
   'package.json',
-  'docs/AUDREY_PAPER_OUTLINE.md',
   'docs/paper/00-master.md',
   'docs/paper/01-introduction.md',
   'docs/paper/02-related-work.md',
@@ -24,20 +22,15 @@ const PAPER_FILES = [
   'docs/paper/09-conclusion.md',
   'docs/paper/appendix-a-demo-transcript.md',
   'docs/paper/arxiv-compile-report.schema.json',
+  'docs/paper/arxiv-metadata.json',
+  'docs/paper/arxiv-metadata.schema.json',
   'docs/paper/arxiv-source.schema.json',
   'docs/paper/audrey-paper-v1.md',
-  'docs/paper/browser-launch-plan.json',
-  'docs/paper/browser-launch-plan.schema.json',
-  'docs/paper/browser-launch-results.json',
-  'docs/paper/browser-launch-results.schema.json',
   'docs/paper/claim-register.json',
   'docs/paper/claim-register.schema.json',
   'docs/paper/evidence-ledger.md',
   'docs/paper/paper-submission-bundle.schema.json',
-  'docs/paper/publication-pack.json',
-  'docs/paper/publication-pack.schema.json',
   'docs/paper/references.bib',
-  'docs/paper/SUBMISSION_README.md',
   'docs/paper/output/arxiv/main.tex',
   'docs/paper/output/arxiv/references.bib',
   'docs/paper/output/arxiv/README-arxiv.txt',
@@ -136,15 +129,9 @@ function copyIntoBundle(source, outDir) {
 export async function writePaperSubmissionBundle(options = {}) {
   const outDir = fromRoot(options.outDir ?? DEFAULT_OUT_DIR);
   const claimVerification = await verifyPaperClaims();
-  const publicationPackVerification = await verifyPublicationPack();
   if (!claimVerification.ok) {
     throw new Error(
       `Cannot create paper submission bundle with invalid claims: ${claimVerification.failures.join('; ')}`,
-    );
-  }
-  if (!publicationPackVerification.ok) {
-    throw new Error(
-      `Cannot create paper submission bundle with invalid publication pack: ${publicationPackVerification.failures.join('; ')}`,
     );
   }
 
@@ -164,10 +151,6 @@ export async function writePaperSubmissionBundle(options = {}) {
     claimVerification: {
       ok: claimVerification.ok,
       count: claimVerification.claims.length,
-    },
-    publicationPackVerification: {
-      ok: publicationPackVerification.ok,
-      count: publicationPackVerification.entries.length,
     },
     guardBenchSnapshot: {
       passed: guardSummary.passed,

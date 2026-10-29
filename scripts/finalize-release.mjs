@@ -281,7 +281,9 @@ function buildPlan(args) {
   const commands = [];
   const blockers = [];
 
-  commands.push('node scripts/verify-release-readiness.mjs --allow-pending --json');
+  commands.push(
+    `node scripts/verify-release-readiness.mjs --version ${args.version} --allow-pending --json`,
+  );
   if (args.commit) commands.push('git add --all', `git commit -m "${commitMessage}"`);
   if (args.tag) commands.push(`git tag -a ${tagName} -m "Audrey ${args.version}"`);
   if (args.push) commands.push(`git push origin HEAD:master --follow-tags`);
@@ -328,7 +330,13 @@ function buildPlan(args) {
 function runReadiness(plan) {
   const readiness = run(
     'node',
-    ['scripts/verify-release-readiness.mjs', '--allow-pending', '--json'],
+    [
+      'scripts/verify-release-readiness.mjs',
+      '--version',
+      plan.version,
+      '--allow-pending',
+      '--json',
+    ],
     { timeout: 180_000 },
   );
   plan.results.push(readiness);

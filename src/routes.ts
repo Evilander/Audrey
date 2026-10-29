@@ -5,10 +5,12 @@ import type { Audrey, PromoteOptions } from './audrey.js';
 import type { EventOutcome } from './events.js';
 import type { PromotionTarget } from './promote.js';
 import type { PreflightOptions } from './preflight.js';
+import type { SuccessCheck } from './success-checks.js';
 import { stripReservedTrustKeys } from './trust.js';
 import { redact } from './redact.js';
 import type {
   Affect,
+  CausalParams,
   ConsolidationOptions,
   HalfLives,
   MemoryType,
@@ -21,6 +23,32 @@ import { VERSION } from '../mcp-server/config.js';
 import { requireAgent, resolveMemoryScope } from './utils.js';
 
 class SharedScopeAuthorizationError extends Error {}
+class RequestBodyError extends Error {}
+
+async function optionalJsonBody<T extends object>(c: Context): Promise<T> {
+  const text = await c.req.text();
+  if (!text.trim()) return {} as T;
+  try {
+    const body: unknown = JSON.parse(text);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error();
+    return body as T;
+  } catch {
+    throw new RequestBodyError('Request body must be a valid JSON object');
+  }
+}
+
+function sanitizeContext(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.values(value).some(item => typeof item !== 'string')
+  ) {
+    throw new Error('context must be an object containing only string values');
+  }
+  return stripReservedTrustKeys(value as Record<string, string>);
+}
 
 // Allowlist of recall option keys safe to accept from untrusted HTTP callers.
 // Spreading the request body directly into recall() lets a caller flip
@@ -80,8 +108,7 @@ function sanitizeRecallOptions(raw: unknown): RecallOptions {
       // Strip the trust marker before it reaches recall's context-match scoring —
       // otherwise an HTTP caller could plant it on the query side the same way
       // /v1/encode could plant it on stored memories.
-      if (value && typeof value === 'object')
-        opts.context = stripReservedTrustKeys(value as Record<string, string>);
+      opts.context = sanitizeContext(value);
     } else if (key === 'mood') {
       if (value && typeof value === 'object') opts.mood = value as RecallOptions['mood'];
     } else if (key === 'retrieval') {
@@ -113,6 +140,8 @@ type RouteBody = {
   context?: Record<string, string>;
   affect?: Affect;
   private?: boolean;
+  causal?: CausalParams;
+  supersedes?: string;
   action?: string;
   query?: string;
   tool?: string;
@@ -140,6 +169,8 @@ type RouteBody = {
   recordEvent?: boolean;
   acknowledge_prior_failure?: boolean;
   acknowledgePriorFailure?: boolean;
+  success_checks?: SuccessCheck[];
+  successChecks?: SuccessCheck[];
   include_preflight?: boolean;
   includePreflight?: boolean;
   receipt_id?: string;
@@ -352,28 +383,31 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // API key middleware - only if apiKey is configured.
-  // Pad the expected value and incoming Authorization header to a fixed
-  // capacity buffer before timingSafeEqual so the comparison runs in constant
-  // time regardless of header length. The previous (length, then compare)
-  // shape leaked the expected key length via response timing on local
-  // untrusted callers. Capacity is generous enough (1 KiB) to swallow any
-  // realistic Bearer header without truncating, while still small enough to
-  // keep the compare cheap.
+  // Both sides are compared over one fixed-size buffer so the time taken does
+  // not depend on where the key differs or how long it is. A header longer
+  // than the buffer cannot match and is refused outright; the earlier 1 KiB
+  // buffer silently compared only the first 1 KiB of a longer header.
   if (options.apiKey) {
-    const COMPARE_CAPACITY = 1024;
-    const padToCapacity = (input: Buffer): Buffer => {
-      const out = Buffer.alloc(COMPARE_CAPACITY);
-      input.copy(out, 0, 0, Math.min(input.length, COMPARE_CAPACITY));
-      return out;
-    };
-    const expectedPadded = padToCapacity(Buffer.from(`Bearer ${options.apiKey}`, 'utf8'));
+    const COMPARE_CAPACITY = 4096;
+    const expected = Buffer.from(`Bearer ${options.apiKey}`, 'utf8');
+    if (expected.length > COMPARE_CAPACITY) {
+      throw new Error(`AUDREY_API_KEY must be shorter than ${COMPARE_CAPACITY} bytes`);
+    }
+    const expectedPadded = Buffer.alloc(COMPARE_CAPACITY);
+    expected.copy(expectedPadded);
     app.use('/v1/*', async (c, next) => {
       const auth = c.req.header('Authorization');
       if (!auth) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
-      const providedPadded = padToCapacity(Buffer.from(auth, 'utf8'));
-      if (!timingSafeEqual(providedPadded, expectedPadded)) {
+      const provided = Buffer.from(auth, 'utf8');
+      if (provided.length > COMPARE_CAPACITY) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+      const providedPadded = Buffer.alloc(COMPARE_CAPACITY);
+      provided.copy(providedPadded);
+      const sameBytes = timingSafeEqual(providedPadded, expectedPadded);
+      if (!sameBytes || provided.length !== expected.length) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
       await next();
@@ -384,6 +418,14 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   app.post('/v1/encode', async c => {
     try {
       const body = await c.req.json<RouteBody>();
+      // Retiring an episode is the same class of operation as forget, and the
+      // acting agent here is whatever the caller named, so it needs the gate.
+      if (body.supersedes !== undefined && !allowAdminTools) {
+        return c.json(
+          { error: 'supersedes requires AUDREY_ENABLE_ADMIN_TOOLS=1 on this server, like forget.' },
+          403,
+        );
+      }
       const id = await audrey.encode({
         content: body.content as string,
         source: body.source as SourceType,
@@ -393,9 +435,11 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         // Strip the trust marker so an HTTP caller cannot self-certify a memory
         // as genuine user-stated direction — only Autopilot's real
         // user-prompt capture may set it.
-        context: stripReservedTrustKeys(body.context),
+        context: sanitizeContext(body.context),
         affect: body.affect,
         private: body.private,
+        causal: body.causal,
+        supersedes: body.supersedes,
       });
       return c.json({
         id,
@@ -438,10 +482,10 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       const body = await c.req.json<RouteBody>();
       const id = typeof body.id === 'string' ? body.id : null;
       if (!id) return c.json({ error: 'id is required' }, 400);
-      const outcome =
-        body.outcome === 'used' || body.outcome === 'helpful' || body.outcome === 'wrong'
-          ? body.outcome
-          : 'used';
+      const outcome = body.outcome === undefined ? 'used' : body.outcome;
+      if (outcome !== 'used' && outcome !== 'helpful' && outcome !== 'wrong') {
+        return c.json({ error: 'outcome must be used, helpful, or wrong' }, 400);
+      }
       const preflightEventId =
         typeof body.preflight_event_id === 'string'
           ? body.preflight_event_id
@@ -507,7 +551,11 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       }
 
       const scope = authorizedRestScope(body.scope, allowSharedScope);
+      if (body.cwd !== undefined && (typeof body.cwd !== 'string' || !body.cwd.trim())) {
+        return c.json({ error: 'cwd must be a non-empty string' }, 400);
+      }
       const result = await audrey.capsule(body.query, {
+        cwd: body.cwd,
         limit: body.limit,
         budgetChars: body.budget_chars ?? body.budgetChars,
         mode: body.mode,
@@ -588,6 +636,9 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         recordEvent: true,
         acknowledgePriorFailure:
           body.acknowledge_prior_failure ?? body.acknowledgePriorFailure ?? false,
+        successChecks: Object.hasOwn(body, 'success_checks')
+          ? body.success_checks
+          : body.successChecks,
       });
       return c.json(result);
     } catch (err: unknown) {
@@ -639,9 +690,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   // POST /v1/consolidate
   app.post('/v1/consolidate', async c => {
     try {
-      const body = await c.req
-        .json<Partial<ConsolidationOptions>>()
-        .catch((): Partial<ConsolidationOptions> => ({}));
+      const body = await optionalJsonBody<Partial<ConsolidationOptions>>(c);
       const result = await audrey.consolidate({
         ...body,
         agent: resolveActingAgent(c, body) ?? audrey.agent,
@@ -649,14 +698,14 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: message }, 500);
+      return c.json({ error: message }, err instanceof RequestBodyError ? 400 : 500);
     }
   });
 
   // POST /v1/dream
   app.post('/v1/dream', async c => {
     try {
-      const body = await c.req.json<DreamRequestBody>().catch((): DreamRequestBody => ({}));
+      const body = await optionalJsonBody<DreamRequestBody>(c);
       const result = await audrey.dream({
         ...body,
         agent: resolveActingAgent(c, body) ?? audrey.agent,
@@ -664,7 +713,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: message }, 500);
+      return c.json({ error: message }, err instanceof RequestBodyError ? 400 : 500);
     }
   });
 
@@ -758,6 +807,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
         return c.json(result);
       } else {
         const result = await audrey.forgetByQuery(body.query as string, {
+          agent: resolveActingAgent(c, body) ?? audrey.agent,
           minSimilarity: body.minSimilarity,
           purge: body.purge,
         });
@@ -800,7 +850,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   // POST /v1/decay
   app.post('/v1/decay', async c => {
     try {
-      const body = await c.req.json<DecayRequestBody>().catch((): DecayRequestBody => ({}));
+      const body = await optionalJsonBody<DecayRequestBody>(c);
       const result = audrey.decay({
         dormantThreshold: body.dormantThreshold,
         halfLives: body.halfLives,
@@ -809,7 +859,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: message }, 500);
+      return c.json({ error: message }, err instanceof RequestBodyError ? 400 : 500);
     }
   });
 
@@ -827,7 +877,9 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   app.post('/v1/reflect', async c => {
     try {
       const body = await c.req.json<RouteBody>();
-      const result = await audrey.reflect(body.turns as { role: string; content: string }[]);
+      const result = await audrey.reflect(body.turns as { role: string; content: string }[], {
+        agent: resolveActingAgent(c, body) ?? audrey.agent,
+      });
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -838,7 +890,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   // POST /v1/greeting
   app.post('/v1/greeting', async c => {
     try {
-      const body = await c.req.json<GreetingRequestBody>().catch((): GreetingRequestBody => ({}));
+      const body = await optionalJsonBody<GreetingRequestBody>(c);
       const result = await audrey.greeting({
         context: body.context,
         agent: resolveActingAgent(c, body) ?? audrey.agent,
@@ -846,7 +898,7 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: message }, 500);
+      return c.json({ error: message }, err instanceof RequestBodyError ? 400 : 500);
     }
   });
 

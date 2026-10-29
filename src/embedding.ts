@@ -177,6 +177,8 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
     this.modelVersion = '1.0.0';
     this.device = device ?? 'gpu';
     this.batchSize = batchSize ?? 64;
+    if (!Number.isSafeInteger(this.batchSize) || this.batchSize < 1)
+      throw new RangeError('Local embedding batchSize must be a positive integer.');
     this.pipelineFactory = pipelineFactory ?? null;
     this._pipeline = null;
     this._readyPromise = null;

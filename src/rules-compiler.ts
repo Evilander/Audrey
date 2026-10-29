@@ -9,6 +9,7 @@
  */
 
 import type { PromotionCandidate } from './promote.js';
+import { createHash } from 'node:crypto';
 
 export interface RuleDoc {
   title: string;
@@ -48,6 +49,32 @@ function slugifyTitle(title: string): string {
   const words = lowered.split(/[^a-z0-9]+/).filter(w => w && !STOP_WORDS.has(w));
   const slug = words.slice(0, 6).join('-');
   return slug.length > 0 ? slug : 'rule';
+}
+
+/** Old generated names are recognized for preservation, never used for new writes. */
+export function legacyClaudeRuleRelativePath(candidate: PromotionCandidate): string {
+  return `.claude/rules/${slugifyTitle(titleFor(candidate))}.md`;
+}
+
+/** Match the generated provenance header, not untrusted text in the evidence body. */
+export function claudeRuleHasProvenance(contents: string, candidate: PromotionCandidate): boolean {
+  const normalized = contents.replace(/\r\n/g, '\n');
+  if (!normalized.startsWith('---\n')) return false;
+  const end = normalized.indexOf('\n---\n', 4);
+  if (end === -1) return false;
+  const lines = normalized.slice(4, end).split('\n');
+  const start = lines.indexOf('audrey:');
+  if (start === -1) return false;
+  const audrey: string[] = [];
+  for (let i = start + 1; i < lines.length && lines[i]!.startsWith('  '); i++)
+    audrey.push(lines[i]!);
+  const idsIndex = audrey.indexOf('  memory_ids:');
+  return (
+    idsIndex !== -1 &&
+    audrey[idsIndex + 1] === `    - ${quoteString(candidate.memory_id)}` &&
+    audrey.includes(`  memory_type: ${quoteString(candidate.memory_type)}`) &&
+    audrey.includes(`  candidate_id: ${quoteString(candidate.candidate_id)}`)
+  );
 }
 
 function renderFrontmatter(meta: Record<string, unknown>): string {
@@ -120,7 +147,12 @@ function inlineExcerpt(value: string, maxLength = 240): string {
 
 export function renderClaudeRule(candidate: PromotionCandidate, promotedAt: string): RuleDoc {
   const title = titleFor(candidate);
-  const slug = slugifyTitle(title);
+  // Preserve the complete identity across separate calls and case-insensitive
+  // filesystems. Imported identifiers never become filesystem path fragments.
+  const identity = createHash('sha256')
+    .update(JSON.stringify([candidate.memory_type, candidate.memory_id]))
+    .digest('hex');
+  const slug = `audrey-${candidate.memory_type === 'procedural' ? 'proc' : 'sem'}-${identity}`;
   const relativePath = `.claude/rules/${slug}.md`;
 
   const frontmatter: Record<string, unknown> = {
@@ -179,7 +211,8 @@ export function renderClaudeRule(candidate: PromotionCandidate, promotedAt: stri
     '',
     `- Source memory: \`${candidate.memory_type}:${candidate.memory_id}\``,
     `- Promoted at: ${promotedAt}`,
-    `- Revocation: delete this file, or run \`audrey forget ${candidate.memory_id}\` to retract the underlying memory.`,
+    '- Revocation: delete this file to stop applying this generated rule.',
+    `- Memory retraction: separately use the \`memory_forget\` tool with \`id\` set to ${JSON.stringify(candidate.memory_id)}, or the JavaScript SDK \`audrey.forget(${JSON.stringify(candidate.memory_id)})\`. Retracting the memory does not delete this rule file.`,
     '',
   ];
 

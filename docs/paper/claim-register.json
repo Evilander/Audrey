@@ -47,14 +47,6 @@
         {
           "path": "docs/paper/audrey-paper-v1.md",
           "text": "this paper does not report external-system GuardBench scores"
-        },
-        {
-          "path": "docs/paper/SUBMISSION_README.md",
-          "text": "live Mem0 run is still pending"
-        },
-        {
-          "path": "docs/paper/SUBMISSION_README.md",
-          "text": "live Zep run is still pending"
         }
       ],
       "forbiddenText": [
@@ -117,10 +109,6 @@
         {
           "path": "README.md",
           "text": "0 published artifact leaks"
-        },
-        {
-          "path": "docs/paper/SUBMISSION_README.md",
-          "text": "runtime credential leaks"
         }
       ],
       "forbiddenText": [
