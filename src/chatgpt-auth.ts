@@ -205,6 +205,20 @@ async function rejectLinks(path: string, root: string, signal?: AbortSignal): Pr
   }
 }
 
+/** The first error line from PowerShell, unwrapped from CLIXML when it uses it. */
+function powershellErrorLine(stderr: string): string | undefined {
+  const clixml = stderr.match(/<S S="Error">([\s\S]*?)<\/S>/);
+  const line = (clixml ? clixml[1]! : stderr)
+    .replace(/_x000D_|_x000A_/g, '\n')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .trim()
+    .split('\n')[0];
+  return line ? line.slice(0, 300) : undefined;
+}
+
 async function protect(path: string, directory: boolean, signal?: AbortSignal): Promise<void> {
   checkAbort(signal);
   if (process.platform !== 'win32') {
@@ -213,8 +227,11 @@ async function protect(path: string, directory: boolean, signal?: AbortSignal): 
     return;
   }
   const encodedPath = Buffer.from(path, 'utf8').toString('base64');
+  // Start from the object's current descriptor: a freshly constructed
+  // FileSecurity makes Set-Acl write the audit section as well, which needs
+  // SeSecurityPrivilege and fails in any shell that is not elevated.
   // Pass paths as encoded data, never interpolate a shell command or account name.
-  const script = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=New-Object Security.AccessControl.${directory ? 'DirectorySecurity' : 'FileSecurity'}; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); $rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl',${directory ? "'ContainerInherit,ObjectInherit','None'," : ''}'Allow'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $target -AclObject $acl; $checked=Get-Acl -LiteralPath $target; if (!$checked.AreAccessRulesProtected -or $checked.Owner -ne $sid.Translate([Security.Principal.NTAccount]).Value) { throw 'Credential protection failed' }; foreach($entry in $checked.Access) { if ($entry.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value -or $entry.AccessControlType -ne 'Allow') { throw 'Credential protection failed' } }`;
+  const script = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=Get-Acl -LiteralPath $target; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); foreach($existing in @($acl.Access)) { [void]$acl.RemoveAccessRule($existing) }; $rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl',${directory ? "'ContainerInherit,ObjectInherit','None'," : ''}'Allow'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $target -AclObject $acl; $checked=Get-Acl -LiteralPath $target; if (!$checked.AreAccessRulesProtected -or $checked.Owner -ne $sid.Translate([Security.Principal.NTAccount]).Value) { throw 'Credential protection failed' }; foreach($entry in $checked.Access) { if ($entry.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value -or $entry.AccessControlType -ne 'Allow') { throw 'Credential protection failed' } }`;
   try {
     await runFile(
       'powershell.exe',
@@ -230,8 +247,9 @@ async function protect(path: string, directory: boolean, signal?: AbortSignal): 
     checkAbort(signal);
     // Surface PowerShell's own first line so the operator can see which
     // ACL step failed; it names the path and the cmdlet, never a token.
-    const stderr = record(error) && typeof error.stderr === 'string' ? error.stderr : '';
-    const detail = stderr.trim().split(/\r?\n/)[0]?.slice(0, 300);
+    const detail = powershellErrorLine(
+      record(error) && typeof error.stderr === 'string' ? error.stderr : '',
+    );
     throw new Error(
       `Could not protect ChatGPT credentials with an owner-only Windows ACL.${detail ? ` ${detail}` : ''}`,
       { cause: error },
