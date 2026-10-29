@@ -227,12 +227,14 @@ async function protect(path: string, directory: boolean, signal?: AbortSignal): 
     return;
   }
   const encodedPath = Buffer.from(path, 'utf8').toString('base64');
-  // Start from the object's current descriptor and persist it through
-  // SetAccessControl: Windows PowerShell's Set-Acl writes the audit section
-  // as well, which needs SeSecurityPrivilege and fails outside an elevated
-  // shell.
+  // Pure .NET, no cmdlets: Set-Acl writes the audit section too, which needs
+  // SeSecurityPrivilege outside an elevated shell, and a powershell.exe
+  // started from PowerShell 7 inherits a PSModulePath on which Get-Acl's
+  // module does not even load. The owner and access sections are all that
+  // change, and GetAccessControl/SetAccessControl write only those.
   // Pass paths as encoded data, never interpolate a shell command or account name.
-  const script = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=Get-Acl -LiteralPath $target; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); foreach($existing in @($acl.Access)) { [void]$acl.RemoveAccessRule($existing) }; $rule=New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl',${directory ? "'ContainerInherit,ObjectInherit','None'," : ''}'Allow'); $acl.AddAccessRule($rule); (Get-Item -LiteralPath $target -Force).SetAccessControl($acl); $checked=Get-Acl -LiteralPath $target; if (!$checked.AreAccessRulesProtected -or $checked.Owner -ne $sid.Translate([Security.Principal.NTAccount]).Value) { throw 'Credential protection failed' }; foreach($entry in $checked.Access) { if ($entry.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value -or $entry.AccessControlType -ne 'Allow') { throw 'Credential protection failed' } }`;
+  const api = directory ? 'IO.Directory' : 'IO.File';
+  const script = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=[${api}]::GetAccessControl($target); $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); foreach($existing in @($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))) { [void]$acl.RemoveAccessRule($existing) }; $rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl',${directory ? "'ContainerInherit,ObjectInherit','None'," : ''}'Allow'); $acl.AddAccessRule($rule); [${api}]::SetAccessControl($target,$acl); $checked=[${api}]::GetAccessControl($target); if (!$checked.AreAccessRulesProtected -or $checked.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'Credential protection failed' }; foreach($entry in $checked.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) { if ($entry.IdentityReference.Value -ne $sid.Value -or $entry.AccessControlType -ne 'Allow') { throw 'Credential protection failed' } }`;
   try {
     await runFile(
       'powershell.exe',
