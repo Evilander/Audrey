@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { ChatGPTLLMProvider, readChatGPTCompletion } from '../dist/src/chatgpt-llm.js';
 import {
   resolveLLMProvider,
@@ -66,6 +68,16 @@ describe('ChatGPT subscription provider', () => {
       stream: true,
       store: false,
     });
+  });
+
+  it('resolves the credential directory to an absolute path at configuration time', () => {
+    const authDir = value =>
+      resolveLLMProvider({ AUDREY_LLM_PROVIDER: 'chatgpt', AUDREY_CHATGPT_AUTH_DIR: value })
+        .authDir;
+    expect(authDir('~/.audrey-alt-auth')).toBe(join(homedir(), '.audrey-alt-auth'));
+    expect(authDir('relative-auth')).toBe(resolve('relative-auth'));
+    expect(authDir('C:/Users/local/auth')).toBe('C:/Users/local/auth');
+    expect(authDir('/var/lib/audrey/auth')).toBe('/var/lib/audrey/auth');
   });
 
   it('persists provider settings in MCP and hook configuration without credentials', () => {

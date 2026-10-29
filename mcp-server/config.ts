@@ -1,9 +1,9 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AudreyConfig, EmbeddingConfig, LLMConfig } from '../src/types.js';
 
-export const VERSION = '2.1.0';
+export const VERSION = '2.1.1';
 export const SERVER_NAME = 'audrey-memory';
 export const DEFAULT_AGENT = 'local-agent';
 export const DEFAULT_DATA_DIR = join(homedir(), '.audrey', 'data');
@@ -91,6 +91,13 @@ export function resolveEmbeddingProvider(
  * to be set for some unrelated tool. Choose a cloud provider explicitly with
  * AUDREY_LLM_PROVIDER=anthropic|openai.
  */
+/** A ~ prefix expands to the home directory; a relative path resolves now, not per hook. */
+function absoluteAuthDir(value: string): string {
+  const expanded = value.replace(/^~(?=$|[\\/])/, homedir());
+  // A Windows drive path is absolute even when this runs on another platform.
+  return isAbsolute(expanded) || /^[A-Za-z]:[\\/]/.test(expanded) ? expanded : resolve(expanded);
+}
+
 export function resolveLLMProvider(
   env: Record<string, string | undefined>,
   explicit: string | undefined = env['AUDREY_LLM_PROVIDER'],
@@ -116,7 +123,11 @@ export function resolveLLMProvider(
       provider,
       model: model || 'gpt-6.1-sol',
       reasoningEffort,
-      ...(env['AUDREY_CHATGPT_AUTH_DIR'] ? { authDir: env['AUDREY_CHATGPT_AUTH_DIR'] } : {}),
+      // Resolved here so hook commands carry an absolute path: each hook runs
+      // in its own working directory, and JSON host configs expand no ~.
+      ...(env['AUDREY_CHATGPT_AUTH_DIR']
+        ? { authDir: absoluteAuthDir(env['AUDREY_CHATGPT_AUTH_DIR']) }
+        : {}),
       ...(env['AUDREY_CHATGPT_ACCOUNT'] ? { chatgptAccount: env['AUDREY_CHATGPT_ACCOUNT'] } : {}),
     };
   }

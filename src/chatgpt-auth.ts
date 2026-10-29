@@ -15,6 +15,35 @@ const SCOPES = 'openid profile email offline_access resource.invoke chatgpt.toke
 const runFile = promisify(execFile);
 const PLAN_SCOPES = ['chatgpt.tokens.use.direct', 'resource.invoke'];
 const MAX_FILE_BYTES = 1024 * 1024;
+// OpenAI documents these refresh failures as terminal: clear the stored
+// tokens and sign in again rather than retrying a dead grant.
+const TERMINAL_GRANT_ERRORS = new Set([
+  'invalid_grant',
+  'invalid_refresh_token',
+  'token_expired',
+  'refresh_token_expired',
+  'refresh_token_invalidated',
+  'refresh_token_reused',
+]);
+// Windows PowerShell by its installed path, never by PATH lookup from a
+// hook whose working directory is the user's repository.
+const POWERSHELL = join(
+  process.env['SystemRoot'] ?? 'C:\\Windows',
+  'System32',
+  'WindowsPowerShell',
+  'v1.0',
+  'powershell.exe',
+);
+
+class GrantError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'GrantError';
+  }
+}
 // Longer than any legitimate lock hold (a refresh or three revocation attempts).
 const STALE_LOCK_MS = 120_000;
 
@@ -237,7 +266,7 @@ async function protect(path: string, directory: boolean, signal?: AbortSignal): 
   const script = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=[${api}]::GetAccessControl($target); $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); foreach($existing in @($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]))) { [void]$acl.RemoveAccessRule($existing) }; $rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,'FullControl',${directory ? "'ContainerInherit,ObjectInherit','None'," : ''}'Allow'); $acl.AddAccessRule($rule); [${api}]::SetAccessControl($target,$acl); $checked=[${api}]::GetAccessControl($target); if (!$checked.AreAccessRulesProtected -or $checked.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'Credential protection failed' }; foreach($entry in $checked.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) { if ($entry.IdentityReference.Value -ne $sid.Value -or $entry.AccessControlType -ne 'Allow') { throw 'Credential protection failed' } }`;
   try {
     await runFile(
-      'powershell.exe',
+      POWERSHELL,
       [
         '-NoProfile',
         '-NonInteractive',
@@ -267,7 +296,7 @@ async function launchBrowser(url: string): Promise<void> {
       const data = Buffer.from(url, 'utf8').toString('base64');
       const script = `$ErrorActionPreference='Stop'; Start-Process ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${data}')))`;
       await runFile(
-        'powershell.exe',
+        POWERSHELL,
         [
           '-NoProfile',
           '-NonInteractive',
@@ -301,7 +330,9 @@ export class ChatGPTAuth {
   private keys?: ReturnType<typeof createLocalJWKSet>;
 
   constructor(options: ChatGPTAuthOptions = {}) {
-    this.directory = resolve(options.directory ?? join(homedir(), '.audrey', 'auth'));
+    this.directory = resolve(
+      (options.directory ?? join(homedir(), '.audrey', 'auth')).replace(/^~(?=$|[\\/])/, homedir()),
+    );
     this.appName = options.appName ?? 'Audrey';
     if (!text(this.appName, 128)) throw new Error('ChatGPT app name is invalid.');
     this.request = options.fetch ?? globalThis.fetch;
@@ -402,6 +433,15 @@ export class ChatGPTAuth {
       await stage.handle.close();
       checkAbort(signal);
       await rename(stage.temporary, path);
+      if (process.platform !== 'win32') {
+        // The rename itself is only durable once the directory entry is.
+        const dir = await open(dirname(path), 'r');
+        try {
+          await dir.sync();
+        } finally {
+          await dir.close();
+        }
+      }
     } finally {
       await this.dispose(stage);
     }
@@ -429,13 +469,26 @@ export class ChatGPTAuth {
         await delay(50, signal);
       }
     }
+    const stamp = JSON.stringify({ pid: process.pid, startedAt: Date.now() });
     try {
       checkAbort(signal);
-      await handle.writeFile(JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+      await handle.writeFile(stamp);
       return await operation();
     } finally {
       await handle.close();
-      await unlink(path);
+      await this.releaseLock(path, stamp);
+    }
+  }
+
+  /**
+   * If another process judged this lock stale and replaced it, the file is
+   * theirs now; removing it would let a third writer in beside them.
+   */
+  private async releaseLock(path: string, stamp: string): Promise<void> {
+    try {
+      if ((await readFile(path, 'utf8')) === stamp) await unlink(path);
+    } catch (error) {
+      if (!isMissing(error)) throw error;
     }
   }
 
@@ -657,12 +710,18 @@ export class ChatGPTAuth {
       if (preserveRotation && response.ok) signal?.removeEventListener('abort', cancel);
       const body = await this.json(response, preserveRotation && response.ok ? undefined : signal);
       if (!response.ok) {
-        if (body.error === 'invalid_grant')
-          throw new Error(
-            'ChatGPT session expired or was revoked (invalid_grant). Run audrey auth login to sign in again.',
+        const code =
+          typeof body.error === 'string' && /^[a-z_]{1,64}$/.test(body.error)
+            ? body.error
+            : undefined;
+        if (code && TERMINAL_GRANT_ERRORS.has(code))
+          throw new GrantError(
+            code,
+            `ChatGPT session expired or was revoked (${code}). Run audrey auth login to sign in again.`,
           );
-        if (body.error === 'refresh_token_not_ready')
-          throw new Error(
+        if (code === 'refresh_token_not_ready')
+          throw new GrantError(
+            code,
             'ChatGPT refresh is not ready yet. Retry after the current access token expires.',
           );
         throw new Error(`ChatGPT token exchange failed (HTTP ${response.status}).`);
@@ -712,13 +771,18 @@ export class ChatGPTAuth {
       }
       earliestRefreshAt = body.earliest_refresh_at * 1000;
     }
+    const expiresAt = this.now() + body.expires_in * 1000;
+    // The field's unit is undocumented. A value past the token's own expiry
+    // would lock the account out until a manual login, so treat it as absent.
+    if (earliestRefreshAt !== undefined && earliestRefreshAt > expiresAt + 60_000)
+      earliestRefreshAt = undefined;
     return {
       scopes,
       tokens: {
         accessToken: body.access_token,
         idToken,
         ...(text(body.refresh_token) ? { refreshToken: body.refresh_token } : {}),
-        expiresAt: this.now() + body.expires_in * 1000,
+        expiresAt,
         ...(earliestRefreshAt !== undefined ? { earliestRefreshAt } : {}),
       },
     };
@@ -759,7 +823,13 @@ export class ChatGPTAuth {
         response.writeHead(400).end('Invalid sign-in callback.');
         return;
       }
-      const url = new URL(request.url, 'http://127.0.0.1');
+      let url: URL;
+      try {
+        url = new URL(request.url ?? '', 'http://127.0.0.1');
+      } catch {
+        response.writeHead(400).end('Bad request.');
+        return;
+      }
       if (url.pathname !== '/auth/callback') {
         response.writeHead(404).end('Not found.');
         return;
@@ -879,6 +949,25 @@ export class ChatGPTAuth {
   }
 
   async accessToken(accountId?: string, signal?: AbortSignal): Promise<string> {
+    // Most calls need no refresh. Answer them from the (atomically written)
+    // credential file without the writer lock, so concurrent hooks never
+    // queue behind one another just to read a token that is still valid.
+    const current = await this.read(signal);
+    const selected = current?.accounts.find(
+      item => item.accountId === (accountId ?? current.activeAccountId),
+    );
+    if (
+      selected?.tokens &&
+      PLAN_SCOPES.every(scope => selected.scopes.includes(scope)) &&
+      selected.tokens.expiresAt > this.now() + this.refreshLeeway
+    ) {
+      return selected.tokens.accessToken;
+    }
+    // Discovery and signing keys do not depend on the credentials; fetch
+    // them before taking the lock so a holder never spends a waiter's
+    // timeout on network calls that could have happened outside it.
+    await this.configuration(signal);
+    await this.signingKeys(signal);
     return this.locked(async () => {
       const store = await this.read(signal);
       const account = store?.accounts.find(
@@ -907,8 +996,8 @@ export class ChatGPTAuth {
         throw new Error('ChatGPT session cannot be renewed. Run audrey auth login.');
       }
       let body: Record<string, unknown>;
-      // Do expensive permission/key work before the server consumes a rotating grant.
-      await this.signingKeys(signal);
+      // Keys and discovery were fetched before the lock; stage the file now so
+      // nothing expensive remains between consuming the grant and saving it.
       const staged = await this.stage(signal);
       try {
         body = await this.exchange(
@@ -923,7 +1012,7 @@ export class ChatGPTAuth {
         );
       } catch (error) {
         await this.dispose(staged);
-        if (error instanceof Error && error.message.includes('(invalid_grant)')) {
+        if (error instanceof GrantError && TERMINAL_GRANT_ERRORS.has(error.code)) {
           delete account.tokens;
           account.revision = randomUUID();
           await this.save(store, signal);
@@ -976,7 +1065,9 @@ export class ChatGPTAuth {
         item => item.accountId === (accountId ?? store.activeAccountId),
       );
       if (!store || !account) return { revoked: true };
-      let revoked = !account.tokens?.refreshToken;
+      // Nothing to revoke only when no tokens exist; an access token with no
+      // refresh token stays valid until it expires and is reported as such.
+      let revoked = !account.tokens;
       if (account.tokens?.refreshToken) {
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
