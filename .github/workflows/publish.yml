@@ -158,6 +158,22 @@ jobs:
           echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
           tar xzf mcp-publisher.tar.gz mcp-publisher
 
+      - name: Wait for npm to list the release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.validate-release.outputs.version }}"
+          for attempt in $(seq 1 40); do
+            if npm view "audrey@${version}" version >/dev/null 2>&1; then
+              echo "npm lists audrey@${version}"
+              exit 0
+            fi
+            echo "audrey@${version} not visible yet (attempt ${attempt}); waiting 30s"
+            sleep 30
+          done
+          echo "npm did not list audrey@${version} within 20 minutes" >&2
+          exit 1
+
       - name: Sync server.json version to the release
         run: |
           set -euo pipefail
