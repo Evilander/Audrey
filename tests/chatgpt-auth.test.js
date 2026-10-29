@@ -749,7 +749,7 @@ describe('ChatGPT refresh and sign-out', () => {
     await f.auth.login();
     const path = join(f.directory, 'credentials.json');
     if (process.platform === 'win32') {
-      const source = `$acl=Get-Acl -LiteralPath '${path.replaceAll("'", "''")}'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; if (!$acl.AreAccessRulesProtected) { exit 2 }; foreach ($entry in $acl.Access) { if ($entry.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { exit 3 } }; Write-Output 'protected'`;
+      const source = `$acl=[IO.File]::GetAccessControl('${path.replaceAll("'", "''")}'); $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; if (!$acl.AreAccessRulesProtected) { exit 2 }; foreach ($entry in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) { if ($entry.IdentityReference.Value -ne $sid.Value) { exit 3 } }; [Console]::Out.Write('protected')`;
       const result = await execute(
         'powershell.exe',
         [
