@@ -293,6 +293,22 @@ describe('Guard receipt verification', () => {
     expect(different.decision).toBe('go');
   });
 
+  it('ignores a caller claim that a receipt outcome was read-only', async () => {
+    const first = await audrey.beforeAction(action, { tool: 'Bash', includeCapsule: false });
+    const recorded = audrey.afterAction({
+      receiptId: first.receipt_id,
+      outcome: 'failed',
+      metadata: { read_only: true },
+    });
+    const event = audrey.db
+      .prepare('SELECT metadata FROM memory_events WHERE id = ?')
+      .get(recorded.post_event_id);
+    expect(JSON.parse(event.metadata).read_only).toBe(false);
+    expect(
+      (await audrey.beforeAction(action, { tool: 'Bash', includeCapsule: false })).decision,
+    ).toBe('block');
+  });
+
   it('cannot forge verified recovery through controller metadata', async () => {
     const first = await audrey.beforeAction(action, options());
     const failed = audrey.afterAction({

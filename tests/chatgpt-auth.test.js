@@ -570,32 +570,40 @@ describe('ChatGPT refresh and sign-out', () => {
     await f.auth.login();
     f.time.now += 3590000;
     const audit = join(f.directory, 'requests.jsonl');
+    const fixtureEnv = JSON.stringify({
+      module: new URL('../dist/src/chatgpt-auth.js', import.meta.url).href,
+      directory: f.directory,
+      now: f.time.now,
+      discovery,
+      jwks,
+      audit,
+    });
     const source = `
       import { appendFile } from 'node:fs/promises';
-      import { ChatGPTAuth } from ${JSON.stringify(new URL('../dist/src/chatgpt-auth.js', import.meta.url).href)};
-      const auth = new ChatGPTAuth({directory:${JSON.stringify(f.directory)}, now:()=>${f.time.now},
+      const fixture = JSON.parse(process.env.AUDREY_TEST_FIXTURE);
+      const { ChatGPTAuth } = await import(fixture.module);
+      const auth = new ChatGPTAuth({directory: fixture.directory, now: () => fixture.now,
         fetch: async (url, init) => {
-          if (url.endsWith('/openid-configuration')) return new Response(JSON.stringify(${JSON.stringify(discovery)}));
-          if (url.endsWith('/jwks.json')) return new Response(JSON.stringify(${JSON.stringify(jwks)}));
+          if (url.endsWith('/openid-configuration')) return new Response(JSON.stringify(fixture.discovery));
+          if (url.endsWith('/jwks.json')) return new Response(JSON.stringify(fixture.jwks));
           if (!url.endsWith('/token')) throw new Error('Unexpected request');
           const form = new URLSearchParams(init.body);
           if (form.get('refresh_token') !== 'initial-refresh-secret' || form.has('scope')) throw new Error('Bad refresh grant');
-          await appendFile(${JSON.stringify(audit)}, 'refresh\\n');
+          await appendFile(fixture.audit, 'refresh\\n');
           await new Promise(resolve => setTimeout(resolve, 150));
           return new Response(JSON.stringify({access_token:'refreshed-access-secret',refresh_token:'rotated-refresh-secret',token_type:'Bearer',expires_in:3600}));
         }});
       if (await auth.accessToken() !== 'refreshed-access-secret') throw new Error('Wrong access token');
       process.stdout.write('ok');
     `;
+    const spawnOptions = {
+      timeout: 25000,
+      windowsHide: true,
+      env: { ...process.env, AUDREY_TEST_FIXTURE: fixtureEnv },
+    };
     const completed = await Promise.all([
-      execute(process.execPath, ['--input-type=module', '-e', source], {
-        timeout: 25000,
-        windowsHide: true,
-      }),
-      execute(process.execPath, ['--input-type=module', '-e', source], {
-        timeout: 25000,
-        windowsHide: true,
-      }),
+      execute(process.execPath, ['--input-type=module', '-e', source], spawnOptions),
+      execute(process.execPath, ['--input-type=module', '-e', source], spawnOptions),
     ]);
     expect(completed.map(item => item.stdout)).toEqual(['ok', 'ok']);
     expect(await readFile(audit, 'utf8')).toBe('refresh\n');
