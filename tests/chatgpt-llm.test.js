@@ -74,7 +74,10 @@ describe('ChatGPT subscription provider', () => {
     const authDir = value =>
       resolveLLMProvider({ AUDREY_LLM_PROVIDER: 'chatgpt', AUDREY_CHATGPT_AUTH_DIR: value })
         .authDir;
-    expect(authDir('~/.audrey-alt-auth')).toBe(join(homedir(), '.audrey-alt-auth'));
+    // Separators may be mixed on Windows after the ~ expansion; compare normalized.
+    expect(resolve(authDir('~/.audrey-alt-auth'))).toBe(
+      resolve(join(homedir(), '.audrey-alt-auth')),
+    );
     expect(authDir('relative-auth')).toBe(resolve('relative-auth'));
     expect(authDir('C:/Users/local/auth')).toBe('C:/Users/local/auth');
     expect(authDir('/var/lib/audrey/auth')).toBe('/var/lib/audrey/auth');
