@@ -104,6 +104,7 @@ describe('read-only shell commands and Guard', () => {
     await runAutopilotHook(audrey, bashFailure('probe-2', command, 'No such file or directory'), {
       host: 'claude-code',
     });
+    expect(failureEpisodes(audrey)).toHaveLength(0);
     expect(recentFailures(audrey.db, { actorAgent: 'claude-code' })).toEqual([]);
     const [event] = audrey.listEvents({ eventType: 'PostToolUseFailure' });
     expect(event.outcome).toBe('failed');

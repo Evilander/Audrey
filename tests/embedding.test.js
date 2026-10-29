@@ -382,6 +382,17 @@ describe('LocalEmbeddingProvider device config', () => {
     const provider = new LocalEmbeddingProvider();
     expect(provider.batchSize).toBe(64);
   });
+
+  it.each([0, -1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects invalid batchSize %s before loading a model',
+    batchSize => {
+      const pipelineFactory = createFakeLocalPipelineFactory();
+      expect(() => new LocalEmbeddingProvider({ batchSize, pipelineFactory })).toThrow(
+        'batchSize must be a positive integer',
+      );
+      expect(pipelineFactory).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('GeminiEmbeddingProvider', () => {

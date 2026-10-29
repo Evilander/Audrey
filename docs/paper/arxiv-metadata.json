@@ -1,0 +1,6 @@
+{
+  "schemaVersion": "1.0.0",
+  "suite": "Audrey arXiv paper metadata",
+  "title": "Audrey: Local-First Pre-Action Memory Control for AI Agents",
+  "abstract": "AI agents increasingly rely on long-running tool use, but most memory systems are evaluated as retrieval layers rather than as pre-action control systems. Audrey is a local-first memory runtime that records episodes, procedures, contradictions, tool traces, validation outcomes, and salience, then checks relevant memory before an agent touches tools. The paper introduces GuardBench, a Stage-A benchmark specification for memory-before-action behavior, and reports a local comparative run across Audrey Guard, no-memory, recent-window, vector-only, and FTS-only adapters. In the current repository artifacts, Audrey Guard passes 10/10 local GuardBench scenarios with zero seeded raw-secret leaks in published artifacts. The paper does not report external-system GuardBench scores; Mem0 and Zep adapters exist, but live credentialed outputs remain pending strict evidence verification. The release includes schema-bound manifests, raw outputs, conformance cards, submission bundles, leaderboard artifacts, an external evidence verifier, and a claim register that blocks unsupported public claims."
+}

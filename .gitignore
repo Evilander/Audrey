@@ -58,3 +58,9 @@ todos/
 docs/superpowers/
 agents/*marketing*
 .local/
+
+# Working material that stays local.
+docs/paper/publication-pack*.json
+docs/paper/browser-launch-*.json
+docs/paper/SUBMISSION_README.md
+docs/AUDREY_PAPER_OUTLINE.md

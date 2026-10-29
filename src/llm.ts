@@ -6,28 +6,8 @@ import type {
   LLMProvider,
 } from './types.js';
 import { describeHttpError, requireApiKey } from './utils.js';
-
-function extractJSON(text: string): string {
-  const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
-  return fenced ? fenced[1]!.trim() : text.trim();
-}
-
-const notifiedCloudEgressProviders = new Set<string>();
-
-/**
- * One unmissable stderr notice per process, per provider, before the first
- * outbound completion. Memory content (raw episode text, embedded verbatim
- * by buildPrincipleExtractionPrompt) is about to leave the machine, and a
- * user watching the process should see that named plainly at least once.
- */
-function warnCloudEgressOnce(providerLabel: string, endpointHost: string): void {
-  if (notifiedCloudEgressProviders.has(providerLabel)) return;
-  notifiedCloudEgressProviders.add(providerLabel);
-  process.stderr.write(
-    `[audrey] Sending memory content to ${providerLabel} (${endpointHost}) for LLM processing. ` +
-      'Set AUDREY_LLM_PROVIDER to change this or leave it unset/"auto" for local-only heuristics.\n',
-  );
-}
+import { ChatGPTLLMProvider } from './chatgpt-llm.js';
+import { extractJSON, warnCloudEgressOnce } from './llm-shared.js';
 
 const PROMPT_TYPE_KEYS = [
   'principleExtraction',
@@ -150,19 +130,22 @@ export class OpenAILLMProvider implements LLMProvider {
   timeout: number;
   modelName: string;
   modelVersion: string;
+  reasoningEffort: LLMConfig['reasoningEffort'];
 
   constructor({
     apiKey,
-    model = 'gpt-4o',
+    model = 'gpt-6.1-sol',
     maxTokens = 1024,
     timeout = 30000,
+    reasoningEffort,
   }: Partial<LLMConfig> & { timeout?: number } = {}) {
     this.apiKey = apiKey || process.env.OPENAI_API_KEY;
-    this.model = model ?? 'gpt-4o';
+    this.model = model ?? 'gpt-6.1-sol';
     this.maxTokens = maxTokens ?? 1024;
     this.timeout = timeout ?? 30000;
     this.modelName = this.model;
     this.modelVersion = 'latest';
+    this.reasoningEffort = reasoningEffort;
   }
 
   async complete(
@@ -176,13 +159,15 @@ export class OpenAILLMProvider implements LLMProvider {
     // so reasoning doesn't starve the visible completion (and yield empty content).
     // Older chat models (e.g. gpt-4o) keep `max_tokens` behavior unchanged.
     const requestedMaxTokens = options.maxTokens || this.maxTokens;
-    const usesCompletionTokens = /^(gpt-5|o\d)/.test(this.model);
+    const usesCompletionTokens = /^(gpt-[56]|o\d)/.test(this.model);
     const body: Record<string, unknown> = {
       model: this.model,
       messages,
     };
     if (usesCompletionTokens) {
       body.max_completion_tokens = Math.max(requestedMaxTokens, 4096);
+      // Only when configured: chat-tuned and older reasoning models reject it.
+      if (this.reasoningEffort) body.reasoning_effort = this.reasoningEffort;
     } else {
       body.max_tokens = requestedMaxTokens;
     }
@@ -230,9 +215,11 @@ export function createLLMProvider(config: LLMConfig): LLMProvider {
       return new AnthropicLLMProvider(config);
     case 'openai':
       return new OpenAILLMProvider(config);
+    case 'chatgpt':
+      return new ChatGPTLLMProvider(config);
     default:
       throw new Error(
-        `Unknown LLM provider: ${(config as { provider: string }).provider}. Valid: mock, anthropic, openai`,
+        `Unknown LLM provider: ${(config as { provider: string }).provider}. Valid: mock, anthropic, openai, chatgpt`,
       );
   }
 }

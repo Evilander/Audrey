@@ -1274,6 +1274,28 @@ describe('encodeBatch', () => {
     await expect(brain.encodeBatch([])).resolves.toEqual([]);
   });
 
+  it('rejects the whole batch before writing when a later item has bad context', async () => {
+    await expect(
+      brain.encodeBatch([
+        { content: 'Stored before the bad item', source: 'direct-observation' },
+        { content: 'Bad context', source: 'direct-observation', context: { attempt: 3 } },
+      ]),
+    ).rejects.toThrow('context must be an object containing only string values');
+    await expect(
+      brain.encodeBatch([
+        { content: 'Stored before the bad item', source: 'direct-observation' },
+        { content: 'Bad causal', source: 'direct-observation', causal: { trigger: 7 } },
+      ]),
+    ).rejects.toThrow('causal must contain string trigger and consequence values');
+    await expect(
+      brain.encodeBatch([
+        { content: 'Stored before the bad item', source: 'direct-observation' },
+        { content: 'Bad supersedes', source: 'direct-observation', supersedes: '  ' },
+      ]),
+    ).rejects.toThrow('supersedes must be a non-empty episode id');
+    expect(brain.db.prepare('SELECT COUNT(*) AS c FROM episodes').get().c).toBe(0);
+  });
+
   it('uses provider-level embedBatch instead of per-episode embed calls', async () => {
     class CountingBatchProvider {
       dimensions = 8;

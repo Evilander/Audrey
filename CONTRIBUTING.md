@@ -11,7 +11,7 @@ npm test
 npm run pack:check
 ```
 
-Node `>=20` is required.
+Node.js 22.16+ (22.x) or 24+ is required. Node 20 and 23 are not supported.
 
 `npm test` runs the Vitest suite through `scripts/run-vitest.mjs`. A `globalSetup`
 hook (`tests/setup/ensure-release-artifacts.js`) generates whatever benchmark

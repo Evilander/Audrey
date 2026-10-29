@@ -112,9 +112,9 @@ export function verifyArxivSourcePackage(options = {}) {
     failures,
   );
   checkSourceHash(
-    'publicationPack',
-    manifest.publicationPack,
-    manifest.sourceHashes?.publicationPack,
+    'arxivMetadata',
+    manifest.arxivMetadata,
+    manifest.sourceHashes?.arxivMetadata,
     failures,
   );
   checkSourceHash(

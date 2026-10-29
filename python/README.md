@@ -42,11 +42,22 @@ memory_id = brain.encode(
 )
 
 results = brain.recall("stripe rate limits", limit=5)
-snapshot = brain.snapshot()
 brain.close()
 ```
 
-Restore snapshots only into an empty Audrey store, such as a sidecar started with a fresh `AUDREY_DATA_DIR`:
+Context keys and values must be strings, for example `context={"project": "support"}`.
+`brain.status()` returns the server's `episodes`, `semantics`, `procedures`, and
+`healthy` fields along with vector-index health details.
+
+Snapshot export and restore require the sidecar to be started with
+`AUDREY_ENABLE_ADMIN_TOOLS=1`. With that explicitly enabled:
+
+```python
+with Audrey(base_url="http://127.0.0.1:7437", api_key="secret") as brain:
+    snapshot = brain.snapshot()
+```
+
+Snapshots cover the whole store. Restore only into an empty Audrey store, such as a sidecar started with a fresh `AUDREY_DATA_DIR` and admin tools enabled:
 
 ```python
 restore_target = Audrey(base_url="http://127.0.0.1:7437", api_key="secret")

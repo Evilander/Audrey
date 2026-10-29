@@ -18,8 +18,8 @@ describe('hybrid-recall — RRF fusion', () => {
     });
   });
 
-  afterEach(() => {
-    audrey.close();
+  afterEach(async () => {
+    await audrey.closeAsync();
     if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
   });
 

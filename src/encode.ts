@@ -10,9 +10,10 @@ import { generateId } from './ulid.js';
 import { sourceReliability } from './confidence.js';
 import { arousalSalienceBoost } from './affect.js';
 import { insertFTSEpisode } from './fts.js';
+import { refreshVectorRow } from './db.js';
 import type { ProfileRecorder } from './profile.js';
 import { requireAgent } from './utils.js';
-import { redact, type RedactionHit } from './redact.js';
+import { redact, redactJson, type RedactionHit } from './redact.js';
 
 export interface SanitizedEncodeFields {
   content: string;
@@ -46,6 +47,50 @@ function mergeRedactionHits(...sets: RedactionHit[][]): RedactionHit[] {
   return [...counts.entries()].map(([cls, count]) => ({ class: cls, count }));
 }
 
+/**
+ * Shape checks shared by the single and batch encode paths, so a batch is
+ * rejected whole before any of its items is written.
+ */
+export function assertEncodeInput(input: {
+  content: unknown;
+  salience?: unknown;
+  tags?: unknown;
+  context?: unknown;
+  supersedes?: unknown;
+  causal?: unknown;
+}): void {
+  const { content, salience, tags, context, supersedes, causal } = input;
+  if (!content || typeof content !== 'string')
+    throw new Error('content must be a non-empty string');
+  if (salience !== undefined && (typeof salience !== 'number' || salience < 0 || salience > 1))
+    throw new Error('salience must be between 0 and 1');
+  if (tags !== undefined && tags !== null && !Array.isArray(tags))
+    throw new Error('tags must be an array');
+  if (
+    context !== undefined &&
+    (!context ||
+      typeof context !== 'object' ||
+      Array.isArray(context) ||
+      Object.values(context).some(value => typeof value !== 'string'))
+  ) {
+    throw new Error('context must be an object containing only string values');
+  }
+  if (supersedes !== undefined && (typeof supersedes !== 'string' || !supersedes.trim())) {
+    throw new Error('supersedes must be a non-empty episode id');
+  }
+  if (
+    causal !== undefined &&
+    (!causal ||
+      typeof causal !== 'object' ||
+      Array.isArray(causal) ||
+      [(causal as CausalParams).trigger, (causal as CausalParams).consequence].some(
+        value => value !== undefined && typeof value !== 'string',
+      ))
+  ) {
+    throw new Error('causal must contain string trigger and consequence values');
+  }
+}
+
 export async function encodeEpisode(
   db: Database,
   embeddingProvider: EmbeddingProvider,
@@ -76,10 +121,7 @@ export async function encodeEpisode(
   },
   options: EncodeEpisodeOptions = {},
 ): Promise<string> {
-  if (!content || typeof content !== 'string')
-    throw new Error('content must be a non-empty string');
-  if (salience < 0 || salience > 1) throw new Error('salience must be between 0 and 1');
-  if (tags && !Array.isArray(tags)) throw new Error('tags must be an array');
+  assertEncodeInput({ content, salience, tags, context, supersedes, causal });
   const ownerAgent = requireAgent(agent);
 
   // Storage boundary: this is the primary ingestion path (memory_encode,
@@ -89,13 +131,9 @@ export async function encodeEpisode(
   const contentResult = redact(content);
   const redactedContent = contentResult.text;
 
-  const redactedContext: Record<string, string> = {};
-  const contextHits: RedactionHit[] = [];
-  for (const [key, value] of Object.entries(context)) {
-    const valueResult = redact(value);
-    redactedContext[key] = valueResult.text;
-    contextHits.push(...valueResult.redactions);
-  }
+  const contextResult = redactJson(context);
+  const redactedContext = contextResult.value as Record<string, string>;
+  const contextHits = contextResult.redactions;
 
   let redactedAffect: Partial<Affect> = affect;
   let affectHits: RedactionHit[] = [];
@@ -157,6 +195,12 @@ export async function encodeEpisode(
   const effectiveSalience = Math.max(0, Math.min(1.0, salience + boost * arousalWeight));
 
   const insertAndLink = db.transaction(() => {
+    if (
+      supersedes &&
+      !db.prepare('SELECT id FROM episodes WHERE id = ? AND agent = ?').get(supersedes, ownerAgent)
+    ) {
+      throw new Error('supersedes must identify an episode owned by the acting agent');
+    }
     db.prepare(
       `
       INSERT INTO episodes (
@@ -189,14 +233,19 @@ export async function encodeEpisode(
     ).run(id, ownerAgent, embeddingBuffer, source, BigInt(0));
     insertFTSEpisode(db, id, redactedContent, redactedTags ?? null);
     if (supersedes) {
-      db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ?').run(id, supersedes);
+      db.prepare('UPDATE episodes SET superseded_by = ? WHERE id = ? AND agent = ?').run(
+        id,
+        supersedes,
+        ownerAgent,
+      );
+      refreshVectorRow(db, 'episodes', supersedes);
     }
   });
 
   if (profile) {
-    profile.measureSync('encode.write_episode', () => insertAndLink());
+    profile.measureSync('encode.write_episode', () => insertAndLink.immediate());
   } else {
-    insertAndLink();
+    insertAndLink.immediate();
   }
   return id;
 }

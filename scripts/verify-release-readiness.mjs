@@ -5,12 +5,9 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyExternalGuardBenchEvidence } from '../benchmarks/verify-external-evidence.mjs';
 import { verifyArxivSourcePackage } from './verify-arxiv-source.mjs';
-import { verifyBrowserLaunchPlan } from './verify-browser-launch-plan.mjs';
-import { verifyBrowserLaunchResults } from './verify-browser-launch-results.mjs';
 import { verifyArxivCompileReport } from './verify-arxiv-compile.mjs';
 import { verifyPaperClaims } from './verify-paper-claims.mjs';
 import { verifyPaperSubmissionBundle } from './verify-paper-submission-bundle.mjs';
-import { verifyPublicationPack } from './verify-publication-pack.mjs';
 
 const ROOT = process.cwd();
 const DEFAULT_TARGET_VERSION = '1.1.1';
@@ -391,7 +388,14 @@ function currentVersionSnapshot() {
     packageLock: lock.version,
     packageLockRoot: lock.packages?.['']?.version,
     python: pythonVersion(),
+    serverJson: serverJsonVersion(),
   };
+}
+
+function serverJsonVersion() {
+  const server = readJson('server.json');
+  const packageVersion = server.packages?.[0]?.version ?? null;
+  return server.version && server.version === packageVersion ? server.version : null;
 }
 
 function versionChecks(targetVersion) {
@@ -407,7 +411,7 @@ function versionChecks(targetVersion) {
   }
   if (uniqueVersions.size !== 1) {
     return failed('version-surfaces', 'Version surfaces are aligned', evidence, [
-      'package.json, package-lock.json, and Python version are not aligned',
+      'package.json, package-lock.json, server.json, and Python version are not aligned',
     ]);
   }
   if (!uniqueVersions.has(targetVersion)) {
@@ -554,6 +558,14 @@ function pythonDistCheck(targetVersion) {
         encoding: 'utf-8',
       },
     );
+    if (verification.error) {
+      return pending(
+        'python-dist',
+        `Python ${targetVersion} artifacts verify`,
+        [wheel, sdist],
+        [`python interpreter not found on PATH: ${verification.error.message}`],
+      );
+    }
     if (verification.status !== 0) {
       const detail =
         verification.stderr.trim() ||
@@ -667,18 +679,12 @@ async function pypiPublishCheck(targetVersion, options = {}) {
 
 async function paperChecks() {
   const claimReport = await verifyPaperClaims();
-  const publicationPackReport = await verifyPublicationPack();
   const arxivSourceReport = verifyArxivSourcePackage();
-  const launchPlanReport = await verifyBrowserLaunchPlan();
-  const launchResultsReport = await verifyBrowserLaunchResults();
   const bundleReport = verifyPaperSubmissionBundle();
 
   const failures = [
     ...claimReport.failures.map(failure => `claims: ${failure}`),
-    ...publicationPackReport.failures.map(failure => `publication pack: ${failure}`),
     ...arxivSourceReport.failures.map(failure => `arXiv source: ${failure}`),
-    ...launchPlanReport.failures.map(failure => `browser launch plan: ${failure}`),
-    ...launchResultsReport.failures.map(failure => `browser launch results: ${failure}`),
     ...bundleReport.failures.map(failure => `paper bundle: ${failure}`),
   ];
 
@@ -686,52 +692,15 @@ async function paperChecks() {
     return failed(
       'paper-artifacts',
       'Paper artifacts verify locally',
-      [
-        'paper:claims',
-        'paper:publication-pack',
-        'paper:arxiv:verify',
-        'paper:launch-plan',
-        'paper:launch-results',
-        'paper:bundle:verify',
-      ],
+      ['paper:claims', 'paper:arxiv:verify', 'paper:bundle:verify'],
       failures,
     );
   }
   return ok('paper-artifacts', 'Paper artifacts verify locally', [
     `${claimReport.claims.length} claim(s)`,
-    `${publicationPackReport.entries.length} publication-pack entries`,
     `${arxivSourceReport.files.length} arXiv source files`,
-    `${launchPlanReport.targets.length} browser launch targets`,
-    `${launchResultsReport.targets.length} launch result rows, ready=${launchResultsReport.ready}`,
     `${bundleReport.files.length} bundled paper files`,
   ]);
-}
-
-async function browserPublicationCheck() {
-  const report = await verifyBrowserLaunchResults();
-  if (!report.ok) {
-    return failed(
-      'browser-publication',
-      'Browser publication results are valid',
-      [report.results],
-      report.failures,
-    );
-  }
-  if (!report.ready) {
-    return pending(
-      'browser-publication',
-      'Paper/browser launch targets are submitted',
-      [
-        `${report.targets.filter(target => target.status === 'submitted').length}/${report.targets.length} submitted`,
-      ],
-      report.blockers,
-    );
-  }
-  return ok(
-    'browser-publication',
-    'Paper/browser launch targets are submitted',
-    report.targets.map(target => `${target.id}: ${target.publicUrl}`),
-  );
 }
 
 function arxivCompileCheck() {
@@ -858,7 +827,6 @@ export async function verifyReleaseReadiness(options = {}) {
     pythonDistCheck(targetVersion),
     await paperChecks(),
     arxivCompileCheck(),
-    await browserPublicationCheck(),
     await externalEvidenceCheck(),
     packageDryRunCheck(targetVersion),
     await pypiPublishCheck(targetVersion, options),
