@@ -226,9 +226,16 @@ async function protect(path: string, directory: boolean, signal?: AbortSignal): 
       ],
       { windowsHide: true, timeout: 10000, signal },
     );
-  } catch {
+  } catch (error) {
     checkAbort(signal);
-    throw new Error('Could not protect ChatGPT credentials with an owner-only Windows ACL.');
+    // Surface PowerShell's own first line so the operator can see which
+    // ACL step failed; it names the path and the cmdlet, never a token.
+    const stderr = record(error) && typeof error.stderr === 'string' ? error.stderr : '';
+    const detail = stderr.trim().split(/\r?\n/)[0]?.slice(0, 300);
+    throw new Error(
+      `Could not protect ChatGPT credentials with an owner-only Windows ACL.${detail ? ` ${detail}` : ''}`,
+      { cause: error },
+    );
   }
   checkAbort(signal);
 }

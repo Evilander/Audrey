@@ -52,6 +52,25 @@ describe('memory ingestion and REST boundaries', () => {
     expect(memory.db.prepare('SELECT count(*) n FROM vec_episodes').get().n).toBe(1);
   });
 
+  it('refuses REST supersession unless admin tools are enabled', async () => {
+    const original = await encode('Original owner fact', { agent: 'server' });
+    const locked = createApp(memory, { adminToolsEnabled: false });
+    const response = await locked.request('/v1/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: 'Replacement',
+        source: 'told-by-user',
+        supersedes: original,
+      }),
+    });
+    expect(response.status).toBe(403);
+    expect(
+      memory.db.prepare('SELECT superseded_by FROM episodes WHERE id = ?').get(original)
+        .superseded_by,
+    ).toBeNull();
+  });
+
   it('stores REST causal/supersedes fields and removes the retired vector', async () => {
     const original = await encode('Use npm for scripts', { agent: 'client' });
     const response = await post(

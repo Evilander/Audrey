@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import type { Audrey, PromoteOptions } from './audrey.js';
 import type { EventOutcome } from './events.js';
 import type { PromotionTarget } from './promote.js';
@@ -383,16 +383,31 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   });
 
   // API key middleware - only if apiKey is configured.
-  // Compare fixed-size digests without truncating either credential.
+  // Both sides are compared over one fixed-size buffer so the time taken does
+  // not depend on where the key differs or how long it is. A header longer
+  // than the buffer cannot match and is refused outright; the earlier 1 KiB
+  // buffer silently compared only the first 1 KiB of a longer header.
   if (options.apiKey) {
-    const expectedDigest = createHash('sha256').update(`Bearer ${options.apiKey}`).digest();
+    const COMPARE_CAPACITY = 4096;
+    const expected = Buffer.from(`Bearer ${options.apiKey}`, 'utf8');
+    if (expected.length > COMPARE_CAPACITY) {
+      throw new Error(`AUDREY_API_KEY must be shorter than ${COMPARE_CAPACITY} bytes`);
+    }
+    const expectedPadded = Buffer.alloc(COMPARE_CAPACITY);
+    expected.copy(expectedPadded);
     app.use('/v1/*', async (c, next) => {
       const auth = c.req.header('Authorization');
       if (!auth) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
-      const providedDigest = createHash('sha256').update(auth).digest();
-      if (!timingSafeEqual(providedDigest, expectedDigest)) {
+      const provided = Buffer.from(auth, 'utf8');
+      if (provided.length > COMPARE_CAPACITY) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+      const providedPadded = Buffer.alloc(COMPARE_CAPACITY);
+      provided.copy(providedPadded);
+      const sameBytes = timingSafeEqual(providedPadded, expectedPadded);
+      if (!sameBytes || provided.length !== expected.length) {
         return c.json({ error: 'Unauthorized' }, 401);
       }
       await next();
@@ -403,6 +418,14 @@ export function createApp(audrey: Audrey, options: AppOptions = {}): Hono {
   app.post('/v1/encode', async c => {
     try {
       const body = await c.req.json<RouteBody>();
+      // Retiring an episode is the same class of operation as forget, and the
+      // acting agent here is whatever the caller named, so it needs the gate.
+      if (body.supersedes !== undefined && !allowAdminTools) {
+        return c.json(
+          { error: 'supersedes requires AUDREY_ENABLE_ADMIN_TOOLS=1 on this server, like forget.' },
+          403,
+        );
+      }
       const id = await audrey.encode({
         content: body.content as string,
         source: body.source as SourceType,

@@ -809,6 +809,10 @@ function recordActionOutcome(
         guard_reported_outcome: checked ? reportedOutcome : null,
         guard_block_overridden: overrideReason !== undefined,
         guard_override_reason: overrideReason ?? null,
+        // Read-only commands never reach the receipt path (Autopilot skips
+        // their preflight), so a caller labelling a failure read-only would
+        // only be hiding it from failure learning.
+        read_only: receiptMetadata.read_only === true,
       },
       retainDetails: input.retainDetails,
     },
