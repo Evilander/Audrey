@@ -11,18 +11,11 @@ import type {
   RecallResults,
   SemanticRow,
 } from './types.js';
-import {
-  computeConfidence,
-  DEFAULT_HALF_LIVES,
-  salienceModifier,
-  sourceReliability,
-} from './confidence.js';
-import { interferenceModifier } from './interference.js';
-import { contextMatchRatio, contextModifier } from './context.js';
+import { sourceReliability } from './confidence.js';
 import { groundingForMemories, describeBrokenGrounding, groundingModifier } from './grounding.js';
-import { moodCongruenceModifier, affectSimilarity } from './affect.js';
-import { daysBetween, requireAgent, resolveMemoryScope, safeJsonParse } from './utils.js';
+import { requireAgent, resolveMemoryScope, safeJsonParse } from './utils.js';
 import { ftsIdsByType, fuseResults } from './hybrid-recall.js';
+import { scoreEpisodicRow, scoreSemanticRow, scoreProceduralRow } from './recall-scoring.js';
 import type { ProfileRecorder } from './profile.js';
 
 const STOPWORDS = new Set([
@@ -376,182 +369,6 @@ function applyResultGuards(
   return accepted;
 }
 
-function computeEpisodicConfidence(
-  ep: EpisodeWithSimilarity,
-  now: Date,
-  confidenceConfig: Partial<ConfidenceConfig> = {},
-): number {
-  const ageDays = daysBetween(ep.created_at, now);
-  const halfLives = confidenceConfig.halfLives || DEFAULT_HALF_LIVES;
-  let confidence = computeConfidence({
-    sourceType: ep.source,
-    supportingCount: 1,
-    contradictingCount: 0,
-    ageDays,
-    halfLifeDays: halfLives.episodic ?? DEFAULT_HALF_LIVES.episodic,
-    retrievalCount: 0,
-    daysSinceRetrieval: ageDays,
-    weights: confidenceConfig.weights,
-    customSourceReliability: confidenceConfig.sourceReliability,
-  });
-  confidence *= salienceModifier(ep.salience);
-  return Math.max(0, Math.min(1, confidence));
-}
-
-function computeSemanticConfidence(
-  sem: SemanticWithSimilarity,
-  now: Date,
-  confidenceConfig: Partial<ConfidenceConfig> = {},
-): number {
-  const ageDays = daysBetween(sem.created_at, now);
-  const daysSinceRetrieval = sem.last_reinforced_at
-    ? daysBetween(sem.last_reinforced_at, now)
-    : ageDays;
-  const halfLives = confidenceConfig.halfLives || DEFAULT_HALF_LIVES;
-  let confidence = computeConfidence({
-    sourceType: 'tool-result',
-    supportingCount: sem.supporting_count || 0,
-    contradictingCount: sem.contradicting_count || 0,
-    ageDays,
-    halfLifeDays: halfLives.semantic ?? DEFAULT_HALF_LIVES.semantic,
-    retrievalCount: sem.retrieval_count || 0,
-    daysSinceRetrieval,
-    weights: confidenceConfig.weights,
-    customSourceReliability: confidenceConfig.sourceReliability,
-    sourceTypeDiversity: sem.source_type_diversity,
-    sourceDiversityWeight: confidenceConfig.sourceDiversityWeight,
-  });
-  confidence *= interferenceModifier(
-    sem.interference_count || 0,
-    confidenceConfig.interferenceWeight,
-  );
-  confidence *= salienceModifier(sem.salience);
-  return Math.max(0, Math.min(1, confidence));
-}
-
-function computeProceduralConfidence(
-  proc: ProceduralWithSimilarity,
-  now: Date,
-  confidenceConfig: Partial<ConfidenceConfig> = {},
-): number {
-  const ageDays = daysBetween(proc.created_at, now);
-  const daysSinceRetrieval = proc.last_reinforced_at
-    ? daysBetween(proc.last_reinforced_at, now)
-    : ageDays;
-  const halfLives = confidenceConfig.halfLives || DEFAULT_HALF_LIVES;
-  let confidence = computeConfidence({
-    sourceType: 'tool-result',
-    supportingCount: proc.success_count || 0,
-    contradictingCount: proc.failure_count || 0,
-    ageDays,
-    halfLifeDays: halfLives.procedural ?? DEFAULT_HALF_LIVES.procedural,
-    retrievalCount: proc.retrieval_count || 0,
-    daysSinceRetrieval,
-    weights: confidenceConfig.weights,
-    customSourceReliability: confidenceConfig.sourceReliability,
-    sourceTypeDiversity: proc.source_type_diversity,
-    sourceDiversityWeight: confidenceConfig.sourceDiversityWeight,
-  });
-  confidence *= interferenceModifier(
-    proc.interference_count || 0,
-    confidenceConfig.interferenceWeight,
-  );
-  confidence *= salienceModifier(proc.salience);
-  return Math.max(0, Math.min(1, confidence));
-}
-
-function buildEpisodicEntry(
-  ep: EpisodeWithSimilarity,
-  confidence: number,
-  score: number,
-  includeProvenance: boolean,
-  contextMatch?: number,
-  moodCongruence?: number,
-): RecallResult {
-  const entry: RecallResult = {
-    id: ep.id,
-    content: ep.content,
-    type: 'episodic',
-    confidence,
-    score,
-    source: ep.source,
-    agent: ep.agent ?? 'default',
-    createdAt: ep.created_at,
-  };
-  if (contextMatch !== undefined) {
-    entry.contextMatch = contextMatch;
-  }
-  if (moodCongruence !== undefined) {
-    entry.moodCongruence = moodCongruence;
-  }
-  if (includeProvenance) {
-    entry.provenance = {
-      source: ep.source,
-      sourceReliability: ep.source_reliability,
-      createdAt: ep.created_at,
-      supersedes: ep.supersedes || null,
-    };
-  }
-  return entry;
-}
-
-function buildSemanticEntry(
-  sem: SemanticWithSimilarity,
-  confidence: number,
-  score: number,
-  includeProvenance: boolean,
-): RecallResult {
-  const entry: RecallResult = {
-    id: sem.id,
-    content: sem.content,
-    type: 'semantic',
-    confidence,
-    score,
-    source: 'consolidation',
-    agent: sem.agent ?? 'default',
-    state: sem.state,
-    createdAt: sem.created_at,
-  };
-  if (includeProvenance) {
-    entry.provenance = {
-      evidenceEpisodeIds: safeJsonParse<string[]>(sem.evidence_episode_ids, []),
-      evidenceCount: sem.evidence_count || 0,
-      supportingCount: sem.supporting_count || 0,
-      contradictingCount: sem.contradicting_count || 0,
-      consolidationCheckpoint: sem.consolidation_checkpoint || null,
-    };
-  }
-  return entry;
-}
-
-function buildProceduralEntry(
-  proc: ProceduralWithSimilarity,
-  confidence: number,
-  score: number,
-  includeProvenance: boolean,
-): RecallResult {
-  const entry: RecallResult = {
-    id: proc.id,
-    content: proc.content,
-    type: 'procedural',
-    confidence,
-    score,
-    source: 'consolidation',
-    agent: proc.agent ?? 'default',
-    state: proc.state,
-    createdAt: proc.created_at,
-  };
-  if (includeProvenance) {
-    entry.provenance = {
-      evidenceEpisodeIds: safeJsonParse<string[]>(proc.evidence_episode_ids, []),
-      successCount: proc.success_count || 0,
-      failureCount: proc.failure_count || 0,
-      triggerConditions: proc.trigger_conditions || null,
-    };
-  }
-  return entry;
-}
-
 function stateClause(alias: 's' | 'p', includeDormant: boolean): string {
   return includeDormant
     ? `AND (${alias}.state = 'active' OR ${alias}.state = 'context_dependent' OR ${alias}.state = 'dormant')`
@@ -691,37 +508,13 @@ function knnEpisodic(
       if (!matchesTagFilters(rowTags, filters.tags)) continue;
     }
     if (filters.sources?.length && !filters.sources.includes(row.source)) continue;
-    let confidence = computeEpisodicConfidence(row, now, confidenceConfig);
-
-    let ctxMatch: number | undefined;
-    if (confidenceConfig?.retrievalContext) {
-      const encodingCtx = safeJsonParse<Record<string, string>>(row.context, {});
-      ctxMatch = contextMatchRatio(encodingCtx, confidenceConfig.retrievalContext);
-      confidence *= contextModifier(
-        encodingCtx,
-        confidenceConfig.retrievalContext,
-        confidenceConfig.contextWeight,
-      );
-      confidence = Math.max(0, Math.min(1, confidence));
-    }
-
-    let moodMatch: number | undefined;
-    if (confidenceConfig?.retrievalMood) {
-      const encodingAffect = safeJsonParse<{ valence?: number; arousal?: number }>(row.affect, {});
-      moodMatch = affectSimilarity(encodingAffect, confidenceConfig.retrievalMood);
-      confidence *= moodCongruenceModifier(
-        encodingAffect,
-        confidenceConfig.retrievalMood,
-        confidenceConfig.affectWeight,
-      );
-      confidence = Math.max(0, Math.min(1, confidence));
-    }
-
-    if (confidence < minConfidence) continue;
-    const score = row.similarity * confidence;
-    results.push(
-      buildEpisodicEntry(row, confidence, score, includeProvenance, ctxMatch, moodMatch),
-    );
+    const entry = scoreEpisodicRow(row, row.similarity, {
+      now,
+      confidenceConfig,
+      includeProvenance,
+    });
+    if (entry.confidence < minConfidence) continue;
+    results.push(entry);
   }
   return results;
 }
@@ -764,10 +557,13 @@ function knnSemantic(
   const results: RecallResult[] = [];
   for (const row of rows) {
     if (!matchesDateFilters(row.created_at, filters)) continue;
-    const confidence = computeSemanticConfidence(row, now, confidenceConfig);
-    if (confidence < minConfidence) continue;
-    const score = row.similarity * confidence;
-    results.push(buildSemanticEntry(row, confidence, score, includeProvenance));
+    const entry = scoreSemanticRow(row, row.similarity, {
+      now,
+      confidenceConfig,
+      includeProvenance,
+    });
+    if (entry.confidence < minConfidence) continue;
+    results.push(entry);
   }
   return results;
 }
@@ -810,10 +606,13 @@ function knnProcedural(
   const results: RecallResult[] = [];
   for (const row of rows) {
     if (!matchesDateFilters(row.created_at, filters)) continue;
-    const confidence = computeProceduralConfidence(row, now, confidenceConfig);
-    if (confidence < minConfidence) continue;
-    const score = row.similarity * confidence;
-    results.push(buildProceduralEntry(row, confidence, score, includeProvenance));
+    const entry = scoreProceduralRow(row, row.similarity, {
+      now,
+      confidenceConfig,
+      includeProvenance,
+    });
+    if (entry.confidence < minConfidence) continue;
+    results.push(entry);
   }
   return results;
 }
@@ -838,6 +637,8 @@ export async function* recallStream(
     includePrivate = false,
     retrieval = 'hybrid',
   } = options;
+  if (!Number.isSafeInteger(limit) || limit < 1)
+    throw new RangeError('Recall limit must be a positive integer.');
   const profile = options.profile;
 
   const searchTypes: MemoryType[] = types || ['episodic', 'semantic', 'procedural'];
@@ -1001,9 +802,9 @@ export async function* recallStream(
     try {
       ftsIds = profile
         ? profile.measureSync('recall.fts_lookup', () =>
-            ftsIdsByType(db, ftsQuery, searchTypes, candidateK, agentFilter),
+            ftsIdsByType(db, ftsQuery, searchTypes, candidateK, agentFilter, includeDormant),
           )
-        : ftsIdsByType(db, ftsQuery, searchTypes, candidateK, agentFilter);
+        : ftsIdsByType(db, ftsQuery, searchTypes, candidateK, agentFilter, includeDormant);
       ftsLookupSucceeded = true;
     } catch (err) {
       recordPartialFailure(options, 'fts', 'recall.fts_lookup', err);
@@ -1024,6 +825,9 @@ export async function* recallStream(
             minConfidence,
             filters,
             agentFilter,
+            now,
+            confidenceConfig,
+            includeProvenance,
           });
         resultsToGuard = profile ? profile.measureSync('recall.fuse_results', fuse) : fuse();
       } else if (retrieval === 'keyword') {

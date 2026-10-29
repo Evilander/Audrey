@@ -96,6 +96,7 @@ export function searchFTSSemantics(
   query: string,
   limit: number = 30,
   agentFilter: string | null = null,
+  includeDormant: boolean = false,
 ): FTSMatch[] {
   const agentClause = agentFilter ? 'AND s.agent = ?' : '';
   const params = agentFilter ? [query, agentFilter, limit] : [query, limit];
@@ -106,7 +107,7 @@ export function searchFTSSemantics(
     FROM fts_semantics f
     JOIN semantics s ON s.id = f.id
     WHERE fts_semantics MATCH ?
-      AND s.state = 'active'
+      AND s.state IN ('active', 'context_dependent'${includeDormant ? ", 'dormant'" : ''})
       ${agentClause}
     ORDER BY rank
     LIMIT ?
@@ -120,6 +121,7 @@ export function searchFTSProcedures(
   query: string,
   limit: number = 30,
   agentFilter: string | null = null,
+  includeDormant: boolean = false,
 ): FTSMatch[] {
   const agentClause = agentFilter ? 'AND p.agent = ?' : '';
   const params = agentFilter ? [query, agentFilter, limit] : [query, limit];
@@ -130,7 +132,7 @@ export function searchFTSProcedures(
     FROM fts_procedures f
     JOIN procedures p ON p.id = f.id
     WHERE fts_procedures MATCH ?
-      AND p.state = 'active'
+      AND p.state IN ('active', 'context_dependent'${includeDormant ? ", 'dormant'" : ''})
       ${agentClause}
     ORDER BY rank
     LIMIT ?

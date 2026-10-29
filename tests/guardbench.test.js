@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import {
   cpSync,
   existsSync,
@@ -61,11 +61,8 @@ import { writeArxivSourcePackage } from '../scripts/create-arxiv-source.mjs';
 import { writePaperSubmissionBundle } from '../scripts/create-paper-submission-bundle.mjs';
 import { verifyArxivSourcePackage } from '../scripts/verify-arxiv-source.mjs';
 import { verifyArxivCompile, verifyArxivCompileReport } from '../scripts/verify-arxiv-compile.mjs';
-import { verifyBrowserLaunchPlan } from '../scripts/verify-browser-launch-plan.mjs';
-import { verifyBrowserLaunchResults } from '../scripts/verify-browser-launch-results.mjs';
 import { verifyPaperClaims } from '../scripts/verify-paper-claims.mjs';
 import { verifyPaperSubmissionBundle } from '../scripts/verify-paper-submission-bundle.mjs';
-import { verifyPublicationPack } from '../scripts/verify-publication-pack.mjs';
 import {
   insertChangelogSection,
   prepareReleaseCut,
@@ -101,6 +98,57 @@ const packageVersion = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ).version;
 
+// runGuardBench always runs the full five-system comparison (about 5 s, mostly
+// GB-10 seeding 1,000 memories per system), but the adapter-contract tests only
+// read their external adapter's rows. Run each shape once and share the result.
+const fixtureAdapterSeen = [];
+const fixtureAdapter = {
+  name: 'Fixture Adapter',
+  description: 'Always allows; verifies runtime scenario shape.',
+  async decide({ scenario }) {
+    fixtureAdapterSeen.push({
+      hasExpectedDecision: Object.hasOwn(scenario, 'expectedDecision'),
+      hasRequiredEvidence: Object.hasOwn(scenario, 'requiredEvidence'),
+      hasSeed: Boolean(scenario.seed),
+      hasPrivateSeed: Boolean(scenario.privateSeed),
+    });
+    return {
+      decision: 'allow',
+      riskScore: 0,
+      evidenceIds: [],
+      recommendedActions: [],
+      summary: 'Fixture adapter allowed the action.',
+    };
+  },
+};
+let fixtureAdapterRun;
+function fixtureAdapterReport() {
+  fixtureAdapterRun ??= runGuardBench({ externalAdapters: [fixtureAdapter] });
+  return fixtureAdapterRun;
+}
+
+let exampleAllowSelfTestDir;
+let exampleAllowSelfTestRun;
+function exampleAllowSelfTest() {
+  if (!exampleAllowSelfTestRun) {
+    const root = 'benchmarks/.tmp-guardbench';
+    mkdirSync(root, { recursive: true });
+    exampleAllowSelfTestDir = mkdtempSync(join(root, 'self-test-report-'));
+    const reportPath = join(exampleAllowSelfTestDir, 'guardbench-adapter-self-test.json');
+    // outPath is attached only after the file is written and is not part of
+    // the report schema, so compare the report without it.
+    exampleAllowSelfTestRun = runGuardBenchAdapterSelfTest({
+      adapter: 'benchmarks/adapters/example-allow.mjs',
+      out: reportPath,
+    }).then(({ outPath, ...report }) => ({ report, reportPath }));
+  }
+  return exampleAllowSelfTestRun;
+}
+
+afterAll(() => {
+  if (exampleAllowSelfTestDir) rmSync(exampleAllowSelfTestDir, { recursive: true, force: true });
+});
+
 describe('GuardBench harness', () => {
   it('publishes scenario seeds and external adapter subjects in the manifest', () => {
     const manifest = guardBenchManifest([
@@ -124,30 +172,8 @@ describe('GuardBench harness', () => {
   });
 
   it('scores external adapters without exposing expected answers at runtime', async () => {
-    const seen = [];
-    const report = await runGuardBench({
-      externalAdapters: [
-        {
-          name: 'Fixture Adapter',
-          description: 'Always allows; verifies runtime scenario shape.',
-          async decide({ scenario }) {
-            seen.push({
-              hasExpectedDecision: Object.hasOwn(scenario, 'expectedDecision'),
-              hasRequiredEvidence: Object.hasOwn(scenario, 'requiredEvidence'),
-              hasSeed: Boolean(scenario.seed),
-              hasPrivateSeed: Boolean(scenario.privateSeed),
-            });
-            return {
-              decision: 'allow',
-              riskScore: 0,
-              evidenceIds: [],
-              recommendedActions: [],
-              summary: 'Fixture adapter allowed the action.',
-            };
-          },
-        },
-      ],
-    });
+    const report = await fixtureAdapterReport();
+    const seen = fixtureAdapterSeen;
 
     const fixture = report.systemSummaries.find(summary => summary.system === 'Fixture Adapter');
     expect(fixture).toBeDefined();
@@ -418,148 +444,6 @@ describe('GuardBench harness', () => {
     expect(report.claims.find(claim => claim.id === 'C02').status).toBe('pending');
   });
 
-  it('verifies the publication pack against current paper claims', async () => {
-    const report = await verifyPublicationPack();
-
-    expect(report.ok).toBe(true);
-    expect(report.entries.map(entry => entry.id)).toContain('arxiv-abstract');
-    const firstXPost = report.entries.find(entry => entry.id === 'x-post-1');
-    expect(firstXPost.chars).toBeLessThanOrEqual(256);
-    expect(firstXPost.requiresArtifactUrl).toBe(true);
-    expect(firstXPost.reservedUrlChars).toBe(24);
-    expect(firstXPost.effectiveChars).toBeLessThanOrEqual(280);
-  });
-
-  it('verifies the browser launch plan against current publication copy', async () => {
-    const report = await verifyBrowserLaunchPlan();
-
-    expect(report.ok).toBe(true);
-    expect(report.targets.map(target => target.id)).toEqual([
-      'arxiv-preprint',
-      'hacker-news-show',
-      'reddit-discussion',
-      'x-launch-thread',
-      'linkedin-launch-post',
-    ]);
-    expect(
-      report.targets.find(target => target.id === 'reddit-discussion').manualRuleCheckRequired,
-    ).toBe(true);
-    expect(report.targets.find(target => target.id === 'x-launch-thread').contentEntryIds).toEqual([
-      'x-post-1',
-      'x-post-2',
-    ]);
-  });
-
-  it('verifies browser launch results while keeping unsubmitted targets explicit', async () => {
-    const report = await verifyBrowserLaunchResults();
-
-    expect(report.ok).toBe(true);
-    expect(report.ready).toBe(false);
-    expect(report.targets).toHaveLength(5);
-    const byId = new Map(report.targets.map(target => [target.id, target]));
-    expect(byId.get('reddit-discussion')?.status).toBe('submitted');
-    expect(byId.get('linkedin-launch-post')?.status).toBe('submitted');
-    expect(byId.get('arxiv-preprint')?.status).toBe('pending');
-    expect(byId.get('hacker-news-show')?.status).toBe('submitted');
-    expect(byId.get('x-launch-thread')?.status).toBe('pending');
-    expect(report.blockers.join('\n')).toContain('arxiv-preprint');
-    expect(report.blockers.join('\n')).toContain('x-launch-thread');
-    expect(report.blockers.join('\n')).not.toContain('reddit-discussion');
-  });
-
-  it('requires submitted marketing launch results to include the GitHub repo URL', async () => {
-    const root = 'benchmarks/.tmp-guardbench';
-    mkdirSync(root, { recursive: true });
-    const tempDir = mkdtempSync(join(root, 'browser-results-'));
-    const tempResults = join(tempDir, 'browser-launch-results.json');
-    try {
-      const results = JSON.parse(readFileSync('docs/paper/browser-launch-results.json', 'utf-8'));
-      const linkedInResult = results.targets.find(target => target.id === 'linkedin-launch-post');
-      linkedInResult.notes = linkedInResult.notes.replace(
-        'https://github.com/Evilander/Audrey',
-        'https://example.com/repo-redacted',
-      );
-      writeFileSync(tempResults, `${JSON.stringify(results, null, 2)}\n`);
-
-      const report = await verifyBrowserLaunchResults({ results: tempResults });
-
-      expect(report.ok).toBe(false);
-      expect(report.failures.join('\n')).toContain(
-        'linkedin-launch-post: submitted marketing result must include https://github.com/Evilander/Audrey',
-      );
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it('does not accept the GitHub repo URL when it is embedded inside another host URL', async () => {
-    const root = 'benchmarks/.tmp-guardbench';
-    mkdirSync(root, { recursive: true });
-    const tempDir = mkdtempSync(join(root, 'browser-results-'));
-    const tempResults = join(tempDir, 'browser-launch-results.json');
-    try {
-      const results = JSON.parse(readFileSync('docs/paper/browser-launch-results.json', 'utf-8'));
-      const linkedInResult = results.targets.find(target => target.id === 'linkedin-launch-post');
-      linkedInResult.notes = linkedInResult.notes.replace(
-        'https://github.com/Evilander/Audrey',
-        'https://example.com/https://github.com/Evilander/Audrey',
-      );
-      writeFileSync(tempResults, `${JSON.stringify(results, null, 2)}\n`);
-
-      const report = await verifyBrowserLaunchResults({ results: tempResults });
-
-      expect(report.ok).toBe(false);
-      expect(report.failures.join('\n')).toContain(
-        'linkedin-launch-post: submitted marketing result must include https://github.com/Evilander/Audrey',
-      );
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it('strict browser launch results fail until post-submit URLs are recorded', async () => {
-    const report = await verifyBrowserLaunchResults({ strict: true });
-
-    expect(report.ok).toBe(false);
-    expect(report.ready).toBe(false);
-    expect(report.failures.join('\n')).toContain(
-      'strict launch readiness requires submitted targets',
-    );
-  });
-
-  it('requires artifact URLs for submitted artifact-url launch targets', async () => {
-    const root = 'benchmarks/.tmp-guardbench';
-    mkdirSync(root, { recursive: true });
-    const tempDir = mkdtempSync(join(root, 'browser-results-'));
-    const tempResults = join(tempDir, 'browser-launch-results.json');
-    try {
-      const results = JSON.parse(readFileSync('docs/paper/browser-launch-results.json', 'utf-8'));
-      const plan = JSON.parse(readFileSync('docs/paper/browser-launch-plan.json', 'utf-8'));
-      const xPlan = plan.targets.find(target => target.id === 'x-launch-thread');
-      const xResult = results.targets.find(target => target.id === 'x-launch-thread');
-      Object.assign(xResult, {
-        status: 'submitted',
-        publicUrl: 'https://x.com/Evilander/status/1',
-        artifactUrl: null,
-        submittedAt: '2026-05-13T00:00:00.000Z',
-        operatorVerified: true,
-        manualRuleCheckCompleted: false,
-        postSubmitChecksCompleted: xPlan.postSubmitChecks,
-        blocker: null,
-      });
-      writeFileSync(tempResults, `${JSON.stringify(results, null, 2)}\n`);
-
-      const report = await verifyBrowserLaunchResults({ results: tempResults });
-
-      expect(report.ok).toBe(false);
-      expect(report.failures.join('\n')).toContain(
-        'x-launch-thread: submitted artifact-url target must record artifactUrl',
-      );
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
   it('creates and verifies the arXiv source package', () => {
     const root = 'benchmarks/.tmp-guardbench';
     mkdirSync(root, { recursive: true });
@@ -618,12 +502,10 @@ describe('GuardBench harness', () => {
       const verified = verifyPaperSubmissionBundle({ dir: outDir });
 
       expect(created.files).toContain('docs/paper/audrey-paper-v1.md');
-      expect(created.files).toContain('docs/paper/publication-pack.json');
-      expect(created.files).toContain('docs/paper/browser-launch-results.json');
+      expect(created.files).toContain('docs/paper/arxiv-metadata.json');
       expect(created.files).not.toContain('paper-submission-manifest.json');
       expect(verified.ok).toBe(true);
-      expect(verified.files).toContain('docs/paper/publication-pack.json');
-      expect(verified.files).toContain('docs/paper/browser-launch-results.json');
+      expect(verified.files).toContain('docs/paper/arxiv-metadata.json');
       expect(verified.files).toContain(
         'benchmarks/output/external/guardbench-external-evidence.json',
       );
@@ -639,16 +521,16 @@ describe('GuardBench harness', () => {
     const outDir = join(tempDir, 'submission-bundle');
     try {
       await writePaperSubmissionBundle({ outDir });
-      const packPath = join(outDir, 'docs/paper/publication-pack.json');
-      const pack = JSON.parse(readFileSync(packPath, 'utf-8'));
-      pack.entries[0].title = 'Tampered after bundle creation';
-      writeFileSync(packPath, `${JSON.stringify(pack, null, 2)}\n`, 'utf-8');
+      const metadataPath = join(outDir, 'docs/paper/arxiv-metadata.json');
+      const metadata = JSON.parse(readFileSync(metadataPath, 'utf-8'));
+      metadata.title = 'Tampered after bundle creation';
+      writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, 'utf-8');
 
       const verified = verifyPaperSubmissionBundle({ dir: outDir });
 
       expect(verified.ok).toBe(false);
       expect(verified.failures.join('\n')).toContain(
-        'docs/paper/publication-pack.json: sha256 mismatch',
+        'docs/paper/arxiv-metadata.json: sha256 mismatch',
       );
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
@@ -668,7 +550,6 @@ describe('GuardBench harness', () => {
     expect(report.checks.find(check => check.id === 'changelog-target').status).toBe('passed');
     expect(report.checks.find(check => check.id === 'source-control').status).toBe('pending');
     expect(report.checks.find(check => check.id === 'external-evidence').status).toBe('pending');
-    expect(report.checks.find(check => check.id === 'browser-publication').status).toBe('pending');
     expect(['pending', 'passed']).toContain(
       report.checks.find(check => check.id === 'npm-package-target').status,
     );
@@ -679,7 +560,7 @@ describe('GuardBench harness', () => {
   });
 
   it('keeps the release cut idempotent after it is applied', () => {
-    const report = prepareReleaseCut({ targetVersion: packageVersion, date: '2026-09-16' });
+    const report = prepareReleaseCut({ targetVersion: packageVersion, date: '2026-10-28' });
 
     expect(report.ok).toBe(true);
     expect(report.apply).toBe(false);
@@ -951,10 +832,7 @@ describe('GuardBench harness', () => {
   });
 
   it('self-tests a conforming adapter separately from its low benchmark score', async () => {
-    const result = await runGuardBenchAdapterSelfTest({
-      adapter: 'benchmarks/adapters/example-allow.mjs',
-      write: false,
-    });
+    const { report: result } = await exampleAllowSelfTest();
 
     expect(result.ok).toBe(true);
     expect(result.adapter.name).toBe('Example Allow Adapter');

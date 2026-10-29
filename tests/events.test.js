@@ -8,6 +8,9 @@ import {
   recentFailures,
   deleteEventsBefore,
   DEFAULT_EVENT_RETENTION_MS,
+  recordPromotion,
+  promotedMemoryIds,
+  PROMOTION_LEDGER_PREFIX,
 } from '../dist/src/events.js';
 import { existsSync, rmSync, mkdirSync } from 'node:fs';
 
@@ -460,6 +463,71 @@ describe('memory_events CRUD', () => {
     const deleted = deleteEventsBefore(db, '2026-02-01T00:00:00Z', { batchSize: 2 });
     expect(deleted).toBe(5);
     expect(countEvents(db)).toBe(1);
+  });
+
+  it('preserves legacy promotion idempotency across retention and reopening', () => {
+    insertEvent(db, {
+      eventType: 'Promotion',
+      source: 'promote-command',
+      actorAgent: 'agent-one',
+      toolName: 'claude-rules',
+      outcome: 'succeeded',
+      metadata: { memory_ids: ['promoted-memory'], relative_path: '.claude/rules/legacy.md' },
+      createdAt: '2026-01-01T00:00:00Z',
+    });
+    expect(
+      promotedMemoryIds(db, { target: 'claude-rules', actorAgent: 'agent-one' }).has(
+        'promoted-memory',
+      ),
+    ).toBe(true);
+    expect(deleteEventsBefore(db, '2026-02-01T00:00:00Z', { batchSize: 1 })).toBe(1);
+    expect(countEvents(db)).toBe(0);
+    closeDatabase(db);
+    ({ db } = createDatabase(TEST_DIR, { dimensions: 8 }));
+    expect(
+      promotedMemoryIds(db, { target: 'claude-rules', actorAgent: 'agent-one' }).has(
+        'promoted-memory',
+      ),
+    ).toBe(true);
+    expect(promotedMemoryIds(db, { target: 'claude-rules', actorAgent: 'agent-two' }).size).toBe(0);
+    expect(promotedMemoryIds(db, { target: 'playbook', actorAgent: 'agent-one' }).size).toBe(0);
+    expect(promotedMemoryIds(db, { target: 'claude-rules' }).has('promoted-memory')).toBe(true);
+  });
+
+  it('retains the legacy event if durable promotion backfill fails', () => {
+    insertEvent(db, {
+      eventType: 'Promotion',
+      source: 'promote-command',
+      actorAgent: 'agent-one',
+      toolName: 'claude-rules',
+      outcome: 'succeeded',
+      metadata: { memory_ids: ['promoted-memory'] },
+      createdAt: '2026-01-01T00:00:00Z',
+    });
+    db.prepare(
+      `CREATE TRIGGER fail_promotion_ledger BEFORE INSERT ON audrey_config WHEN NEW.key GLOB '${PROMOTION_LEDGER_PREFIX}*' BEGIN SELECT RAISE(ABORT, 'ledger unavailable'); END`,
+    ).run();
+    expect(() => deleteEventsBefore(db, '2026-02-01T00:00:00Z')).toThrow('ledger unavailable');
+    expect(countEvents(db)).toBe(1);
+    db.prepare('DROP TRIGGER fail_promotion_ledger').run();
+    expect(deleteEventsBefore(db, '2026-02-01T00:00:00Z')).toBe(1);
+    expect(promotedMemoryIds(db, { target: 'claude-rules' }).has('promoted-memory')).toBe(true);
+  });
+
+  it('stores a single durable record per target, agent and memory', () => {
+    const promotion = {
+      target: 'claude-rules',
+      actorAgent: 'agent-one',
+      memoryIds: ['one'],
+      promotedAt: '2026-01-01T00:00:00Z',
+    };
+    recordPromotion(db, promotion);
+    recordPromotion(db, { ...promotion, promotedAt: '2026-02-01T00:00:00Z' });
+    expect(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM audrey_config WHERE key GLOB ?')
+        .get(`${PROMOTION_LEDGER_PREFIX}*`).count,
+    ).toBe(1);
   });
 
   it('exports a default retention window sized in milliseconds', () => {

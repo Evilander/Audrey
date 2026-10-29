@@ -82,7 +82,13 @@ function currentVersionSnapshot() {
     packageLockRoot: lock.packages?.['']?.version,
     mcpConfig: config.match(/export const VERSION = '([^']+)'/)?.[1] ?? null,
     python: python.match(/__version__\s*=\s*"([^"]+)"/)?.[1] ?? null,
+    serverJson: serverJsonVersion(readJson('server.json')),
   };
+}
+
+function serverJsonVersion(server) {
+  const packageVersion = server.packages?.[0]?.version ?? null;
+  return server.version && server.version === packageVersion ? server.version : null;
 }
 
 function replaceOnce(text, pattern, replacement, label) {
@@ -116,6 +122,14 @@ function updateMcpConfig(targetVersion) {
     `export const VERSION = '${targetVersion}';`,
     'mcp VERSION',
   );
+}
+
+function updateServerJson(targetVersion) {
+  const server = readJson('server.json');
+  if (!server.packages?.[0]) throw new Error('server.json is missing packages[0]');
+  server.version = targetVersion;
+  server.packages[0].version = targetVersion;
+  return `${JSON.stringify(server, null, 2)}\n`;
 }
 
 function updatePythonVersion(targetVersion) {
@@ -177,6 +191,7 @@ function plannedFiles(targetVersion, date) {
     ['package-lock.json', updatePackageLock(targetVersion)],
     ['mcp-server/config.ts', updateMcpConfig(targetVersion)],
     ['python/audrey_memory/_version.py', updatePythonVersion(targetVersion)],
+    ['server.json', updateServerJson(targetVersion)],
     ['CHANGELOG.md', updateChangelog(targetVersion, date)],
   ];
 }

@@ -8,10 +8,9 @@ import { sourceReliability } from './confidence.js';
 import { requireAgent } from './utils.js';
 import { redact, redactJson } from './redact.js';
 import { stripReservedTrustKeys } from './trust.js';
+import { restorePromotionLedger } from './events.js';
 
-export const MAX_IMPORT_CONTENT_LENGTH = 50_000;
-export const MAX_IMPORT_ROWS_PER_SECTION = 25_000;
-export const MAX_IMPORT_TOTAL_CONTENT_BYTES = 25_000_000;
+const IMPORT_EMBED_BATCH_SIZE = 256;
 
 const sourceSchema = z.enum([
   'direct-observation',
@@ -36,8 +35,11 @@ const idSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'id must use stable memory-id characters');
 const optionalIdSchema = idSchema.nullable().optional();
-const contentSchema = z.string().min(1).max(MAX_IMPORT_CONTENT_LENGTH);
-const optionalTextSchema = z.string().max(MAX_IMPORT_CONTENT_LENGTH).nullable().optional();
+// A snapshot is restored by an operator who already holds it in memory, so no
+// row or byte cap applies here. The shape is still validated, embedding is
+// batched below, and every import surface is admin-gated.
+const contentSchema = z.string().min(1);
+const optionalTextSchema = z.string().nullable().optional();
 // A timestamp a caller supplies is load-bearing: it drives decay half-lives,
 // retention sweeps, and the legacy-trust cutoff. The old shape accepted any
 // string up to 64 characters, so "not-a-date" parsed fine and then poisoned
@@ -50,7 +52,7 @@ const isoLikeStringSchema = z
 const countSchema = z.number().int().nonnegative();
 const scoreSchema = z.number().finite().min(0).max(1);
 const jsonObjectSchema = z.record(z.string(), z.unknown());
-const stringArraySchema = z.array(z.string().max(512)).max(1000);
+const stringArraySchema = z.array(z.string());
 
 const exportedEpisodeSchema = z.object({
   id: idSchema,
@@ -150,18 +152,17 @@ const exportedContradictionSchema = z.object({
 
 const rollbackDataSchema = z.object({
   version: z.literal(1),
-  changes: z
-    .array(
-      z.object({
-        id: idSchema,
-        type: z.enum(['semantic', 'procedural']),
-        created: z.boolean(),
-        addedEvidence: stringArraySchema,
-        previousReinforcedAt: isoLikeStringSchema.nullable().optional(),
-        writtenReinforcedAt: isoLikeStringSchema.nullable().optional(),
-      }),
-    )
-    .max(MAX_IMPORT_ROWS_PER_SECTION),
+  commitSequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  changes: z.array(
+    z.object({
+      id: idSchema,
+      type: z.enum(['semantic', 'procedural']),
+      created: z.boolean(),
+      addedEvidence: stringArraySchema,
+      previousReinforcedAt: isoLikeStringSchema.nullable().optional(),
+      writtenReinforcedAt: isoLikeStringSchema.nullable().optional(),
+    }),
+  ),
 });
 
 const memoryAnchorSchema = z
@@ -250,23 +251,17 @@ const exportedMemoryEventSchema = z.object({
 
 export const importSnapshotSchema = z.object({
   formatVersion: z.union([z.literal(1), z.literal(2)]).optional(),
-  memoryAnchors: z.array(memoryAnchorSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
+  memoryAnchors: z.array(memoryAnchorSchema).optional(),
   version: z.string().min(1).max(64),
   exportedAt: isoLikeStringSchema.optional(),
-  episodes: z.array(exportedEpisodeSchema).max(MAX_IMPORT_ROWS_PER_SECTION),
-  semantics: z.array(exportedSemanticSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
-  procedures: z.array(exportedProcedureSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
-  causalLinks: z.array(exportedCausalLinkSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
-  contradictions: z.array(exportedContradictionSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
-  consolidationRuns: z
-    .array(exportedConsolidationRunSchema)
-    .max(MAX_IMPORT_ROWS_PER_SECTION)
-    .optional(),
-  consolidationMetrics: z
-    .array(exportedConsolidationMetricSchema)
-    .max(MAX_IMPORT_ROWS_PER_SECTION)
-    .optional(),
-  memoryEvents: z.array(exportedMemoryEventSchema).max(MAX_IMPORT_ROWS_PER_SECTION).optional(),
+  episodes: z.array(exportedEpisodeSchema),
+  semantics: z.array(exportedSemanticSchema).optional(),
+  procedures: z.array(exportedProcedureSchema).optional(),
+  causalLinks: z.array(exportedCausalLinkSchema).optional(),
+  contradictions: z.array(exportedContradictionSchema).optional(),
+  consolidationRuns: z.array(exportedConsolidationRunSchema).optional(),
+  consolidationMetrics: z.array(exportedConsolidationMetricSchema).optional(),
+  memoryEvents: z.array(exportedMemoryEventSchema).optional(),
   config: z.record(z.string(), z.string()).optional(),
 });
 
@@ -395,17 +390,31 @@ function sanitizeImportedMemories(snapshot: ImportSnapshot): void {
   }
 }
 
-function validateSnapshotBudget(snapshot: ImportSnapshot): void {
-  const totalBytes = [
-    ...snapshot.episodes.map(ep => ep.content.length),
-    ...(snapshot.semantics || []).map(sem => sem.content.length),
-    ...(snapshot.procedures || []).map(proc => proc.content.length),
-  ].reduce((sum, n) => sum + n, 0);
-  if (totalBytes > MAX_IMPORT_TOTAL_CONTENT_BYTES) {
-    throw new Error(
-      `snapshot content exceeds import budget of ${MAX_IMPORT_TOTAL_CONTENT_BYTES} bytes`,
-    );
+async function embedImportedRows(
+  embeddingProvider: EmbeddingProvider,
+  rows: Array<{ content: string }>,
+): Promise<number[][]> {
+  const vectors: number[][] = [];
+  for (let offset = 0; offset < rows.length; offset += IMPORT_EMBED_BATCH_SIZE) {
+    const contents = rows.slice(offset, offset + IMPORT_EMBED_BATCH_SIZE).map(row => row.content);
+    const batch = await embeddingProvider.embedBatch(contents);
+    if (batch.length !== contents.length) {
+      throw new Error(
+        `Import embedding batch returned ${batch.length} vectors for ${contents.length} rows`,
+      );
+    }
+    if (
+      batch.some(
+        vector =>
+          vector.length !== embeddingProvider.dimensions ||
+          vector.some(value => !Number.isFinite(value)),
+      )
+    ) {
+      throw new Error('Import embedding batch returned an invalid vector');
+    }
+    vectors.push(...batch);
   }
+  return vectors;
 }
 
 export async function importMemories(
@@ -420,7 +429,6 @@ export async function importMemories(
   }
 
   const snapshot: ImportSnapshot = importSnapshotSchema.parse(rawSnapshot);
-  validateSnapshotBudget(snapshot);
   sanitizeImportedMemories(snapshot);
   const episodes = snapshot.episodes;
   const semantics = snapshot.semantics || [];
@@ -432,16 +440,15 @@ export async function importMemories(
   const memoryEvents = snapshot.memoryEvents || [];
   const memoryAnchors = snapshot.memoryAnchors || [];
 
-  const episodeVectors =
-    episodes.length > 0 ? await embeddingProvider.embedBatch(episodes.map(ep => ep.content)) : [];
-  const semanticVectors =
-    semantics.length > 0
-      ? await embeddingProvider.embedBatch(semantics.map(sem => sem.content))
-      : [];
-  const procedureVectors =
-    procedures.length > 0
-      ? await embeddingProvider.embedBatch(procedures.map(proc => proc.content))
-      : [];
+  const privateEvidence = new Set(
+    episodes.filter(episode => episode.private === 1).map(episode => episode.id),
+  );
+  const isPrivateDerived = (row: { private?: number; evidence_episode_ids?: string[] }): number =>
+    row.private === 1 || row.evidence_episode_ids?.some(id => privateEvidence.has(id)) ? 1 : 0;
+
+  const episodeVectors = await embedImportedRows(embeddingProvider, episodes);
+  const semanticVectors = await embedImportedRows(embeddingProvider, semantics);
+  const procedureVectors = await embedImportedRows(embeddingProvider, procedures);
 
   const insertEpisode = db.prepare(`
     INSERT INTO episodes (id, content, embedding, source, agent, source_reliability, salience, context, affect, tags,
@@ -584,7 +591,7 @@ export async function importMemories(
         sem.challenge_count ?? 0,
         sem.interference_count ?? 0,
         sem.salience ?? 0.5,
-        sem.private ?? 0,
+        isPrivateDerived(sem),
         sem.usage_count ?? 0,
         sem.last_used_at ?? null,
       );
@@ -615,7 +622,7 @@ export async function importMemories(
         proc.retrieval_count ?? 0,
         proc.interference_count ?? 0,
         proc.salience ?? 0.5,
-        proc.private ?? 0,
+        isPrivateDerived(proc),
         proc.usage_count ?? 0,
         proc.last_used_at ?? null,
       );
@@ -747,6 +754,7 @@ export async function importMemories(
         event.created_at,
       );
     }
+    restorePromotionLedger(db, snapshot.config ?? {});
   });
 
   writeImport.immediate();

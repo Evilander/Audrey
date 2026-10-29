@@ -7,10 +7,19 @@ import { buildPreflight, type MemoryPreflight, type PreflightOptions } from './p
 import { buildReflexReportFromPreflight, type MemoryReflex } from './reflexes.js';
 import { redact, truncateRedactedText, type RedactionHit } from './redact.js';
 import { requireAgent } from './utils.js';
+import {
+  compileSuccessChecks,
+  readSuccessChecks,
+  verifySuccessChecks,
+  type SuccessCheck,
+  type SuccessVerification,
+} from './success-checks.js';
 
 export interface GuardBeforeOptions extends PreflightOptions {
   recordEvent?: boolean;
   acknowledgePriorFailure?: boolean;
+  /** Required output comparisons, fixed in the receipt before the action runs. */
+  successChecks?: SuccessCheck[];
 }
 
 export interface GuardDecision {
@@ -31,6 +40,7 @@ export interface GuardDecision {
   recommended_actions: string[];
   evidence_ids: string[];
   recent_failures: MemoryPreflight['recent_failures'];
+  required_checks?: string[];
   status?: MemoryPreflight['status'];
   capsule?: MemoryPreflight['capsule'];
 }
@@ -77,6 +87,8 @@ export interface GuardOutcome {
   outcome: EventOutcome;
   validated_evidence: GuardValidatedEvidence[];
   learning_summary: string;
+  reported_outcome?: EventOutcome;
+  verification?: SuccessVerification;
 }
 
 export interface AgentAction {
@@ -312,13 +324,39 @@ function exactActionState(
     actorAgent,
     ...(since ? { since } : {}),
   });
+  // Every recorded failure of this action counts, whatever contract the
+  // current call declares: a renamed or dropped check must not hide one. The
+  // contract only decides which later success recovers a checked failure.
   const latestSuccess = latestSucceededEvent(events);
-  const failures = events
-    .filter(event => event.outcome === 'failed')
-    .filter(event => !latestSuccess || eventOrder(event, latestSuccess) > 0);
+  const checkedSuccesses = new Map<string, MemoryEvent>();
+  for (const event of events) {
+    const metadata = parseMetadata(event.metadata);
+    const verification = metadata.guard_verification as SuccessVerification | undefined;
+    if (
+      event.outcome === 'succeeded' &&
+      typeof metadata.guard_contract_digest === 'string' &&
+      verification?.status === 'passed' &&
+      verification.contract_digest === metadata.guard_contract_digest
+    ) {
+      const prior = checkedSuccesses.get(metadata.guard_contract_digest);
+      if (!prior || eventOrder(prior, event) < 0)
+        checkedSuccesses.set(metadata.guard_contract_digest, event);
+    }
+  }
+  const recoveredBy = (failure: MemoryEvent): MemoryEvent | undefined => {
+    const contract = parseMetadata(failure.metadata).guard_contract_digest;
+    const success = typeof contract === 'string' ? checkedSuccesses.get(contract) : latestSuccess;
+    return success && eventOrder(failure, success) < 0 ? success : undefined;
+  };
+  const failedEvents = events.filter(event => event.outcome === 'failed');
+  const failures = failedEvents.filter(event => !recoveredBy(event));
   if (failures.length > 0 || !latestSuccess) return { failures };
-  const recoveredFailures = events.filter(
-    event => event.outcome === 'failed' && eventOrder(event, latestSuccess) < 0,
+  const recoveredFailures = failedEvents.filter(event => recoveredBy(event));
+  const recovery = latestSucceededEvent(
+    recoveredFailures.flatMap(event => {
+      const success = recoveredBy(event);
+      return success ? [success] : [];
+    }),
   );
   const recoveredFailureMemoryIds = recoveredFailures.flatMap(event => {
     const linkedId = parseMetadata(event.metadata).failure_memory_id;
@@ -338,7 +376,7 @@ function exactActionState(
   return {
     failures,
     ...(recoveredFailures.length > 0
-      ? { recoveredBy: latestSuccess, recoveredFailures, recoveredFailureMemoryIds }
+      ? { recoveredBy: recovery, recoveredFailures, recoveredFailureMemoryIds }
       : {}),
   };
 }
@@ -362,6 +400,11 @@ export class MemoryController {
     action: AgentAction,
     options: Pick<GuardBeforeOptions, 'scope' | 'projectNamespace'> = {},
   ): Promise<ControllerGuardResult> {
+    if ('successChecks' in action || 'successChecks' in options) {
+      throw new Error(
+        'successChecks require the receipt API: use Audrey.beforeAction and Audrey.afterAction',
+      );
+    }
     const evaluation = await this.evaluate(action, {
       tool: action.tool,
       actionDigest: action.actionDigest,
@@ -409,6 +452,8 @@ export class MemoryController {
   ): Promise<GuardEvaluation> {
     const tool = options.tool ?? action.tool ?? 'guard';
     const actorAgent = requireAgent(options.agent, this.audrey.agent);
+    // Validate before preflight creates a receipt or changes retrieval state.
+    const successChecks = compileSuccessChecks(options.successChecks);
     const preflight = await buildPreflight(this.audrey, action.action, {
       ...options,
       tool,
@@ -565,6 +610,7 @@ export class MemoryController {
           preflight_evidence_ids: evidenceIds,
           prior_failure_acknowledged: acknowledgedPriorFailure,
           exact_repeat_failure_block: exactRepeatedFailure,
+          ...(successChecks ? { guard_success_checks: successChecks } : {}),
         }),
         receiptId,
         actorAgent,
@@ -588,6 +634,7 @@ export class MemoryController {
       recommended_actions: finalRecommendedActions,
       evidence_ids: evidenceIds,
       recent_failures: preflight.recent_failures,
+      ...(successChecks ? { required_checks: successChecks.checks.map(check => check.id) } : {}),
       ...(preflight.status ? { status: preflight.status } : {}),
       ...(preflight.capsule ? { capsule: preflight.capsule } : {}),
     };
@@ -629,10 +676,16 @@ export class MemoryController {
       metadata: {
         ...(outcome.metadata ?? {}),
         audrey_guard_action_key: guardActionKey(outcome.action),
+        // This legacy path has no receipt and cannot verify a declared goal.
+        guard_contract_digest: null,
+        guard_verification: null,
+        guard_reported_outcome: null,
+        guard_block_overridden: false,
+        guard_override_reason: null,
       },
     });
 
-    if (outcome.outcome !== 'failed') return;
+    if (outcome.outcome !== 'failed' || outcome.metadata?.read_only === true) return;
     const content = failureMemoryContent(outcome.action, tool, outcome.errorSummary);
     if (!content) return;
 
@@ -662,6 +715,22 @@ export async function beforeAction(
 }
 
 export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcome {
+  // Acquire the writer lock before reading the receipt's outcome. A deferred
+  // check followed by independent writes lets concurrent hook processes record
+  // duplicate outcomes and apply the same evidence feedback more than once.
+  const notifications: Array<() => void> = [];
+  const result = audrey.db
+    .transaction(() => recordActionOutcome(audrey, input, notifications))
+    .immediate();
+  for (const notify of notifications) notify();
+  return result;
+}
+
+function recordActionOutcome(
+  audrey: Audrey,
+  input: GuardAfterInput,
+  notifications: Array<() => void>,
+): GuardOutcome {
   if (!input.receiptId || input.receiptId.trim().length === 0) {
     throw new Error('receiptId is required');
   }
@@ -672,7 +741,10 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
     throw new Error(`guard receipt not found: ${input.receiptId}`);
   }
 
-  const outcome = input.outcome ?? 'unknown';
+  const reportedOutcome = input.outcome ?? 'unknown';
+  if (!['succeeded', 'failed', 'blocked', 'skipped', 'unknown'].includes(reportedOutcome)) {
+    throw new Error('Invalid Guard outcome');
+  }
   const receiptMetadata = parseMetadata(receipt.metadata);
   if (!isGuardBeforeReceipt(receiptMetadata)) {
     throw new Error(`not a guard receipt: ${input.receiptId}`);
@@ -680,6 +752,18 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
   if (getGuardOutcomeEvent(audrey, input.receiptId, actorAgent)) {
     throw new Error(`guard receipt already has an outcome: ${input.receiptId}`);
   }
+  const successChecks = readSuccessChecks(receiptMetadata.guard_success_checks);
+  const checked = successChecks
+    ? verifySuccessChecks(successChecks, input.output, reportedOutcome)
+    : undefined;
+  const outcome = checked?.outcome ?? reportedOutcome;
+  const checkFailure =
+    checked?.verification.status === 'failed'
+      ? `Required success checks failed: ${checked.verification.checks
+          .filter(check => check.status === 'failed')
+          .map(check => check.id)
+          .join(', ')}.`
+      : undefined;
   let overrideReason: string | undefined;
   if (outcome === 'succeeded' && receiptMetadata.preflight_decision === 'block') {
     if (receiptMetadata.exact_repeat_failure_block === true) {
@@ -697,32 +781,43 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
   }
   const feedbackEntries = evidenceFeedbackEntries(input.evidenceFeedback);
   const receiptEvidenceIds = evidenceIdsFromMetadata(receiptMetadata);
-  const result = audrey.observeTool({
-    event: postEventTypeFor(outcome),
-    tool: input.tool ?? receipt.tool_name ?? 'unknown',
-    sessionId: input.sessionId ?? receipt.session_id ?? undefined,
-    actorAgent,
-    input: input.input,
-    output: input.output,
-    outcome,
-    errorSummary: input.errorSummary,
-    cwd: input.cwd ?? receipt.cwd ?? undefined,
-    files: input.files,
-    metadata: {
-      ...(input.metadata ?? {}),
-      guard: true,
-      guard_phase: 'after',
-      receipt_id: input.receiptId,
-      preflight_event_id: input.receiptId,
-      preflight_decision: receiptMetadata.preflight_decision,
-      preflight_warning_count: receiptMetadata.preflight_warning_count,
-      audrey_guard_action_key: receiptMetadata.audrey_guard_action_key,
-      ...(overrideReason
-        ? { guard_block_overridden: true, guard_override_reason: overrideReason }
-        : {}),
+  const result = audrey.observeTool(
+    {
+      event: postEventTypeFor(outcome),
+      tool: input.tool ?? receipt.tool_name ?? 'unknown',
+      sessionId: input.sessionId ?? receipt.session_id ?? undefined,
+      actorAgent,
+      input: input.input,
+      output: input.output,
+      outcome,
+      errorSummary: input.errorSummary ?? checkFailure,
+      cwd: input.cwd ?? receipt.cwd ?? undefined,
+      files: input.files,
+      metadata: {
+        ...(input.metadata ?? {}),
+        guard: true,
+        guard_phase: 'after',
+        receipt_id: input.receiptId,
+        preflight_event_id: input.receiptId,
+        preflight_decision: receiptMetadata.preflight_decision,
+        preflight_warning_count: receiptMetadata.preflight_warning_count,
+        audrey_guard_action_key: receiptMetadata.audrey_guard_action_key,
+        // These fields are authoritative receipt-derived data, never caller
+        // metadata. A later unverified success cannot clear a failed check.
+        guard_contract_digest: successChecks?.digest ?? null,
+        guard_verification: checked?.verification ?? null,
+        guard_reported_outcome: checked ? reportedOutcome : null,
+        guard_block_overridden: overrideReason !== undefined,
+        guard_override_reason: overrideReason ?? null,
+        // Read-only commands never reach the receipt path (Autopilot skips
+        // their preflight), so a caller labelling a failure read-only would
+        // only be hiding it from failure learning.
+        read_only: receiptMetadata.read_only === true,
+      },
+      retainDetails: input.retainDetails,
     },
-    retainDetails: input.retainDetails,
-  });
+    notifications,
+  );
 
   const validated: GuardValidatedEvidence[] = [];
   for (const [id, feedbackOutcome] of feedbackEntries) {
@@ -736,7 +831,10 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
       continue;
     }
 
-    const feedback = audrey.validate({ id, outcome: feedbackOutcome, agent: actorAgent });
+    const feedback = audrey.validate(
+      { id, outcome: feedbackOutcome, agent: actorAgent },
+      notifications,
+    );
     if (feedback) {
       validated.push({ id, outcome: feedbackOutcome, validated: true, result: feedback });
     } else {
@@ -753,6 +851,7 @@ export function afterAction(audrey: Audrey, input: GuardAfterInput): GuardOutcom
     receipt_id: input.receiptId,
     post_event_id: result.event.id,
     outcome,
+    ...(checked ? { reported_outcome: reportedOutcome, verification: checked.verification } : {}),
     validated_evidence: validated,
     learning_summary: summarizeLearning(validated),
   };

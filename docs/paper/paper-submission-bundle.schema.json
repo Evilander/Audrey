@@ -11,7 +11,6 @@
     "sourceRoot",
     "outDir",
     "claimVerification",
-    "publicationPackVerification",
     "guardBenchSnapshot",
     "files"
   ],
@@ -22,7 +21,6 @@
     "sourceRoot": { "type": "string", "minLength": 1 },
     "outDir": { "type": "string", "minLength": 1 },
     "claimVerification": { "$ref": "#/$defs/check" },
-    "publicationPackVerification": { "$ref": "#/$defs/check" },
     "guardBenchSnapshot": {
       "type": "object",
       "additionalProperties": false,

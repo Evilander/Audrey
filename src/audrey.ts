@@ -33,7 +33,7 @@ import type {
 import { createDatabase, closeDatabase, liveRowClause, refreshVectorRow } from './db.js';
 import { createEmbeddingProvider } from './embedding.js';
 import { createLLMProvider } from './llm.js';
-import { encodeEpisode, type SanitizedEncodeFields } from './encode.js';
+import { encodeEpisode, type SanitizedEncodeFields, assertEncodeInput } from './encode.js';
 import { redact } from './redact.js';
 import { recall as recallFn, recallStream as recallStreamFn } from './recall.js';
 import { validateMemory } from './validate.js';
@@ -82,18 +82,24 @@ import {
   type PromotionCandidate,
   type PromotionTarget,
 } from './promote.js';
-import { renderAllRules, type RuleDoc } from './rules-compiler.js';
-import { insertEvent } from './events.js';
+import {
+  renderAllRules,
+  legacyClaudeRuleRelativePath,
+  claudeRuleHasProvenance,
+  type RuleDoc,
+} from './rules-compiler.js';
+import { insertEvent, recordPromotion } from './events.js';
 import { requireAgent, resolveMemoryScope, isContainedIn } from './utils.js';
 import {
   mkdirSync,
   writeFileSync,
-  existsSync,
+  readFileSync,
+  readdirSync,
   lstatSync,
   openSync,
   closeSync,
   fsyncSync,
-  renameSync,
+  linkSync,
   rmSync,
 } from 'node:fs';
 import { dirname, join, resolve as pathResolve, delimiter as pathDelimiter } from 'node:path';
@@ -153,16 +159,29 @@ interface EncodedEmbedding {
   buffer?: Buffer;
 }
 
+/** Create and fill a file only if it does not exist; false when it already does. */
+function writeExclusively(path: string, body: string): boolean {
+  let fd: number;
+  try {
+    fd = openSync(path, 'wx', 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw error;
+  }
+  try {
+    writeFileSync(fd, body, 'utf8');
+    fsyncSync(fd);
+  } catch (error) {
+    closeSync(fd);
+    rmSync(path, { force: true });
+    throw error;
+  }
+  closeSync(fd);
+  return true;
+}
+
 function validateEncodeParams(params: EncodeParams): void {
-  if (!params.content || typeof params.content !== 'string') {
-    throw new Error('content must be a non-empty string');
-  }
-  if (params.salience !== undefined && (params.salience < 0 || params.salience > 1)) {
-    throw new Error('salience must be between 0 and 1');
-  }
-  if (params.tags !== undefined && !Array.isArray(params.tags)) {
-    throw new Error('tags must be an array');
-  }
+  assertEncodeInput(params);
 }
 
 const TRUTH_RESOLUTIONS = new Set<TruthResolution['resolution']>([
@@ -775,7 +794,11 @@ export class Audrey extends EventEmitter {
     return id;
   }
 
-  async reflect(turns: { role: string; content: string }[]): Promise<ReflectResult> {
+  async reflect(
+    turns: { role: string; content: string }[],
+    options: { agent?: string } = {},
+  ): Promise<ReflectResult> {
+    const agent = requireAgent(options.agent, this.agent);
     if (!this.llmProvider) return { encoded: 0, memories: [], skipped: 'no llm provider' };
 
     const prompt = buildReflectionPrompt(
@@ -816,6 +839,7 @@ export class Audrey extends EventEmitter {
       try {
         await this.encode({
           content: mem.content,
+          agent,
           source: mem.source,
           salience: mem.salience,
           tags: mem.tags,
@@ -877,7 +901,7 @@ export class Audrey extends EventEmitter {
       });
       ids.push(id);
       if (redactionSummary?.redacted) this.emit('redaction', { id, ...redactionSummary });
-      this.emit('encode', { id, ...paramsList[i] });
+      this.emit('encode', { id, ...paramsList[i], ...sanitizedFields });
       const encodedEmbedding: EncodedEmbedding = { vector: encodedVector, buffer: encodedBuffer };
       // Same boundary as _encodeInternal: background stages see stored values only.
       const postEncodeParams = sanitizedFields
@@ -1053,8 +1077,10 @@ export class Audrey extends EventEmitter {
               "UPDATE semantics SET state = 'context_dependent', conditions = ? WHERE id = ?",
             )
             .run(conditions, id);
+          refreshVectorRow(this.db, 'semantics', id);
         } else {
           this.db.prepare('UPDATE episodes SET superseded_by = NULL WHERE id = ?').run(id);
+          refreshVectorRow(this.db, 'episodes', id);
         }
       };
 
@@ -1212,7 +1238,7 @@ export class Audrey extends EventEmitter {
     const agentParam = memoryScope === 'agent' ? [memoryAgent] : [];
     const recent = this.db
       .prepare(
-        `SELECT id, content, source, tags, salience, created_at FROM episodes WHERE "private" = 0 ${agentClause} ORDER BY created_at DESC LIMIT ?`,
+        `SELECT id, content, source, tags, salience, created_at FROM episodes WHERE "private" = 0 AND superseded_by IS NULL ${agentClause} ORDER BY created_at DESC LIMIT ?`,
       )
       .all(...agentParam, recentLimit) as GreetingEpisodeRow[];
 
@@ -1224,7 +1250,7 @@ export class Audrey extends EventEmitter {
 
     const identity = this.db
       .prepare(
-        `SELECT id, content, tags, salience, created_at FROM episodes WHERE "private" = 1 ${agentClause} ORDER BY created_at DESC LIMIT ?`,
+        `SELECT id, content, tags, salience, created_at FROM episodes WHERE "private" = 1 AND superseded_by IS NULL ${agentClause} ORDER BY created_at DESC LIMIT ?`,
       )
       .all(...agentParam, identityLimit) as GreetingIdentityRow[];
 
@@ -1238,6 +1264,7 @@ export class Audrey extends EventEmitter {
            WHERE json_each.type = 'text' AND json_each.value = 'unresolved'
          )
            AND salience > 0.3
+           AND superseded_by IS NULL
            ${agentClause}
          ORDER BY created_at DESC
          LIMIT 10`,
@@ -1246,7 +1273,7 @@ export class Audrey extends EventEmitter {
 
     const rawAffectRows = this.db
       .prepare(
-        `SELECT affect FROM episodes WHERE affect IS NOT NULL AND affect != '{}' ${agentClause} ORDER BY created_at DESC LIMIT 20`,
+        `SELECT affect FROM episodes WHERE affect IS NOT NULL AND affect != '{}' AND superseded_by IS NULL ${agentClause} ORDER BY created_at DESC LIMIT 20`,
       )
       .all(...agentParam) as AffectRow[];
 
@@ -1359,7 +1386,10 @@ export class Audrey extends EventEmitter {
     return suggestParamsFn(this.db);
   }
 
-  validate(input: MemoryValidateInput): MemoryValidateResult | null {
+  validate(
+    input: MemoryValidateInput,
+    deferredNotifications?: Array<() => void>,
+  ): MemoryValidateResult | null {
     input = { ...input, agent: requireAgent(input.agent, this.agent) };
     let preflightMetadata: Record<string, unknown> | null = null;
     if (input.preflightEventId) {
@@ -1444,7 +1474,11 @@ export class Audrey extends EventEmitter {
           ...(input.evidenceIds ? { preflight_evidence_ids: input.evidenceIds } : {}),
         },
       });
-      this.emit('validate', result);
+      const notify = () => {
+        this.emit('validate', result);
+      };
+      if (deferredNotifications) deferredNotifications.push(notify);
+      else notify();
     }
     return result;
   }
@@ -1522,12 +1556,19 @@ export class Audrey extends EventEmitter {
     await this._postEncodeQueue;
   }
 
-  observeTool(input: ObserveToolInput): ObserveToolResult {
+  observeTool(
+    input: ObserveToolInput,
+    deferredNotifications?: Array<() => void>,
+  ): ObserveToolResult {
     const result = observeTool(this.db, {
       ...input,
       actorAgent: requireAgent(input.actorAgent, this.agent),
     });
-    this.emit('tool-observed', result.event);
+    const notify = () => {
+      this.emit('tool-observed', result.event);
+    };
+    if (deferredNotifications) deferredNotifications.push(notify);
+    else notify();
     return result;
   }
 
@@ -1641,6 +1682,7 @@ export class Audrey extends EventEmitter {
     }
     const promotedAt = new Date().toISOString();
     const docs = renderAllRules(candidates, promotedAt);
+    const resolvedPaths = docs.map(doc => doc.relativePath);
 
     const applied: PromotionWriteResult[] = [];
 
@@ -1658,16 +1700,63 @@ export class Audrey extends EventEmitter {
         if (!isContainedIn(projectDir, absolutePath)) {
           throw new Error('promote: rule destination changed outside the project');
         }
-        try {
-          if (lstatSync(absolutePath).isSymbolicLink()) {
-            throw new Error('promote: refusing to replace a symlink at the rule destination');
+        const promotion = {
+          target,
+          actorAgent: this.agent,
+          memoryIds: [candidate.memory_id],
+          promotedAt,
+        };
+        const preserveExistingRule = (relativePath: string, mustMatch: boolean): boolean => {
+          const existingPath = join(projectDir, relativePath);
+          if (!isContainedIn(projectDir, existingPath)) {
+            throw new Error('promote: refusing to inspect a rule outside the project');
           }
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        }
-        const overwritten = existsSync(absolutePath);
-        // Atomic replacement never follows a leaf symlink that appears after
-        // the check, and leaves an existing rule intact if writing fails.
+          try {
+            const existing = lstatSync(existingPath);
+            if (existing.isSymbolicLink() || !existing.isFile()) {
+              throw new Error('promote: refusing to replace a non-file rule destination');
+            }
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+            throw error;
+          }
+          if (!claudeRuleHasProvenance(readFileSync(existingPath, 'utf8'), candidate)) {
+            if (mustMatch) {
+              throw new Error(
+                'promote: refusing to overwrite an existing rule with different provenance',
+              );
+            }
+            return false;
+          }
+          recordPromotion(this.db, {
+            ...promotion,
+            relativePath,
+            absolutePath: existingPath,
+          });
+          resolvedPaths[i] = relativePath;
+          return true;
+        };
+        if (preserveExistingRule(doc.relativePath, true)) continue;
+        const legacyPath = legacyClaudeRuleRelativePath(candidate);
+        const legacyDirectory = legacyPath.slice(0, legacyPath.lastIndexOf('/') + 1);
+        const legacyName = legacyPath.slice(legacyDirectory.length);
+        const legacyStem = legacyName.slice(0, -3);
+        // Older renderAllRules disambiguated colliding truncated IDs with
+        // numbered suffixes. Inspect actual files, rather than guessing how
+        // many suffixes were once written, and require the complete provenance.
+        const legacyNames = readdirSync(dirname(absolutePath), { withFileTypes: true })
+          .filter(entry => entry.isFile())
+          .map(entry => entry.name)
+          .filter(
+            name =>
+              name === legacyName ||
+              (name.startsWith(`${legacyStem}-`) &&
+                /^[1-9][0-9]*\.md$/.test(name.slice(legacyStem.length + 1))),
+          );
+        if (legacyNames.some(name => preserveExistingRule(legacyDirectory + name, false))) continue;
+
+        // Publish a complete file only if its destination is still absent.
+        // A racing promotion must never overwrite an existing, edited rule.
         const temporary = `${absolutePath}.${randomUUID()}.tmp`;
         try {
           const fd = openSync(temporary, 'wx', 0o600);
@@ -1680,34 +1769,62 @@ export class Audrey extends EventEmitter {
           if (!isContainedIn(projectDir, dirname(absolutePath))) {
             throw new Error('promote: rule directory changed outside the project');
           }
-          renameSync(temporary, absolutePath);
+          try {
+            linkSync(temporary, absolutePath);
+          } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === 'EEXIST') {
+              if (preserveExistingRule(doc.relativePath, true)) continue;
+              throw error;
+            }
+            // Filesystems without hard links (exFAT, some network and container
+            // mounts) keep the no-overwrite guarantee through an exclusive create.
+            if (code !== 'EPERM' && code !== 'ENOTSUP' && code !== 'EXDEV' && code !== 'ENOSYS') {
+              throw error;
+            }
+            if (!writeExclusively(absolutePath, doc.body)) {
+              if (preserveExistingRule(doc.relativePath, true)) continue;
+              throw new Error(`promote: rule destination already exists: ${doc.relativePath}`, {
+                cause: error,
+              });
+            }
+          }
         } finally {
           rmSync(temporary, { force: true });
         }
 
-        insertEvent(this.db, {
-          eventType: 'Promotion',
-          source: 'promote-command',
-          actorAgent: this.agent,
-          toolName: target,
-          outcome: 'succeeded',
-          cwd: projectDir,
-          fileFingerprints: [doc.relativePath],
-          redactionState: 'clean',
-          metadata: {
-            memory_ids: [candidate.memory_id],
-            memory_type: candidate.memory_type,
-            candidate_id: candidate.candidate_id,
-            confidence: Number(candidate.confidence.toFixed(3)),
-            evidence_count: candidate.evidence_count,
-            failure_prevented: candidate.failure_prevented,
-            score: Number(candidate.score.toFixed(2)),
-            target,
-            absolute_path: absolutePath,
-            relative_path: doc.relativePath,
-            overwritten,
-          },
-        });
+        this.db
+          .transaction(() => {
+            recordPromotion(this.db, {
+              ...promotion,
+              relativePath: doc.relativePath,
+              absolutePath,
+            });
+            insertEvent(this.db, {
+              eventType: 'Promotion',
+              source: 'promote-command',
+              actorAgent: this.agent,
+              toolName: target,
+              outcome: 'succeeded',
+              cwd: projectDir,
+              fileFingerprints: [doc.relativePath],
+              redactionState: 'clean',
+              metadata: {
+                memory_ids: [candidate.memory_id],
+                memory_type: candidate.memory_type,
+                candidate_id: candidate.candidate_id,
+                confidence: Number(candidate.confidence.toFixed(3)),
+                evidence_count: candidate.evidence_count,
+                failure_prevented: candidate.failure_prevented,
+                score: Number(candidate.score.toFixed(2)),
+                target,
+                absolute_path: absolutePath,
+                relative_path: doc.relativePath,
+                overwritten: false,
+              },
+            });
+          })
+          .immediate();
 
         applied.push({
           candidate_id: candidate.candidate_id,
@@ -1715,7 +1832,7 @@ export class Audrey extends EventEmitter {
           target,
           relative_path: doc.relativePath,
           absolute_path: absolutePath,
-          overwritten,
+          overwritten: false,
         });
       }
     }
@@ -1727,7 +1844,7 @@ export class Audrey extends EventEmitter {
       promoted_at: promotedAt,
       candidates: candidates.map((c, i) => ({
         ...c,
-        rendered_path: docs[i]!.relativePath,
+        rendered_path: resolvedPaths[i]!,
       })),
       applied,
     };

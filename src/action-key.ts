@@ -14,7 +14,7 @@ export interface GuardActionFingerprintInput {
 
 function redactedText(value: string | undefined): string | undefined {
   if (!value) return undefined;
-  return redact(value).text.replace(/\s+/g, ' ').trim();
+  return redact(value).text;
 }
 
 function normalizePathForKey(value: string | undefined, base?: string): string {
@@ -38,6 +38,11 @@ function normalizePathForKey(value: string | undefined, base?: string): string {
 export function guardActionKey(action: GuardActionFingerprintInput): string {
   const tool = action.tool ?? 'unknown';
   const commandOrAction = action.command ?? action.action;
+  // Exact action identity must preserve case and whitespace (including quoted
+  // shell arguments). Legacy non-digest keys folded both irreversibly; events
+  // normally retain only input hashes, so those keys cannot be safely migrated
+  // or used as an exact-match fallback. They remain available as recent failures.
+  // Digest-based Autopilot keys retain their existing identity.
   const actionIdentity = action.actionDigest
     ? `digest:${action.actionDigest.trim().toLowerCase()}`
     : (redactedText(commandOrAction) ?? commandOrAction);
@@ -49,13 +54,6 @@ export function guardActionKey(action: GuardActionFingerprintInput): string {
     .sort()
     .join('\n');
   return createHash('sha256')
-    .update(
-      [
-        tool.toLowerCase(),
-        actionIdentity.replace(/\s+/g, ' ').trim().toLowerCase(),
-        cwd,
-        files,
-      ].join('\n'),
-    )
+    .update([tool.toLowerCase(), actionIdentity, cwd, files].join('\n'))
     .digest('hex');
 }

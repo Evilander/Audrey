@@ -17,6 +17,9 @@ export function getConsolidationHistory(db: Database): ConsolidationRunRow[] {
 
 export interface ConsolidationUndo {
   version: 1;
+  // Assigned while holding the write lock, so even simultaneous completions
+  // and runs whose async preparation finishes out of order have a stable order.
+  commitSequence?: number;
   changes: Array<{
     id: string;
     type: 'semantic' | 'procedural';
@@ -37,6 +40,9 @@ export function rollbackConsolidation(
         ConsolidationRunRow | undefined;
       if (!run) throw new Error(`Consolidation run not found: ${runId}`);
       if (run.status === 'rolled_back') throw new Error(`Run already rolled back: ${runId}`);
+      if (run.status !== 'completed') {
+        throw new Error(`Cannot roll back a consolidation run with status ${run.status}: ${runId}`);
+      }
       const outputIds = safeJsonParse<string[]>(run.output_memory_ids, []);
       const inputIds = safeJsonParse<string[]>(run.input_episode_ids, []);
       let undo = safeJsonParse<ConsolidationUndo | null>(run.rollback_data, null);
@@ -87,6 +93,48 @@ export function rollbackConsolidation(
           )
             changedIds.add(change.id);
         } else {
+          // A later merge saves this run's reinforcement time as its undo
+          // baseline. Undoing it first would let the later rollback resurrect
+          // a timestamp whose evidence has already been removed.
+          const overlappingRuns = db
+            .prepare(
+              `SELECT id, completed_at, rollback_data FROM consolidation_runs WHERE id != ? AND status = 'completed' AND json_valid(output_memory_ids) AND EXISTS (SELECT 1 FROM json_each(output_memory_ids) WHERE value = ?)`,
+            )
+            .all(runId, change.id) as Array<{
+            id: string;
+            completed_at: string | null;
+            rollback_data: string | null;
+          }>;
+          for (const other of overlappingRuns) {
+            const otherUndo = safeJsonParse<ConsolidationUndo | null>(other.rollback_data, null);
+            const overlappingChanges = otherUndo?.changes.filter(
+              candidate => candidate.id === change.id && candidate.type === change.type,
+            );
+            // The original creation precedes all merges by definition.
+            if (
+              overlappingChanges?.length &&
+              overlappingChanges.every(candidate => candidate.created)
+            )
+              continue;
+            if (undo.commitSequence !== undefined && otherUndo?.commitSequence !== undefined) {
+              if (otherUndo.commitSequence < undo.commitSequence) continue;
+            } else {
+              // An older process can still commit an unsequenced journal
+              // after an upgrade. Only distinct completion times establish
+              // its order relative to another legacy or sequenced journal.
+              const otherCompleted = Date.parse(other.completed_at ?? '');
+              const thisCompleted = Date.parse(run.completed_at ?? '');
+              if (
+                Number.isFinite(otherCompleted) &&
+                Number.isFinite(thisCompleted) &&
+                otherCompleted < thisCompleted
+              )
+                continue;
+            }
+            throw new Error(
+              'Roll back dependent consolidation runs before undoing this merge; legacy runs with ambiguous completion order cannot be safely reordered',
+            );
+          }
           const current = db
             .prepare(`SELECT evidence_episode_ids, last_reinforced_at FROM ${table} WHERE id = ?`)
             .get(change.id) as

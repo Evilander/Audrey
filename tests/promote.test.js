@@ -1,8 +1,23 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Audrey } from '../dist/src/index.js';
 import { findPromotionCandidates } from '../dist/src/promote.js';
-import { renderClaudeRule, renderAllRules } from '../dist/src/rules-compiler.js';
-import { existsSync, rmSync, mkdirSync, readFileSync, mkdtempSync, symlinkSync } from 'node:fs';
+import {
+  renderClaudeRule,
+  renderAllRules,
+  legacyClaudeRuleRelativePath,
+  claudeRuleHasProvenance,
+} from '../dist/src/rules-compiler.js';
+import { runAutopilotHook } from '../dist/src/autopilot.js';
+import { PROMOTION_LEDGER_PREFIX } from '../dist/src/events.js';
+import {
+  existsSync,
+  rmSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  mkdtempSync,
+  symlinkSync,
+} from 'node:fs';
 import { join, resolve, delimiter } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -244,7 +259,7 @@ describe('rules-compiler — Markdown rendering', () => {
       'procedural memory with 5/5 successful applications; would have prevented 2 recent tool failures',
   };
 
-  it('renders a clean slug from the first few content words', () => {
+  it('renders a bounded filesystem-safe slug from the complete memory identity', () => {
     const doc = renderClaudeRule(baseCandidate, '2026-04-22T00:00:00Z');
     expect(doc.relativePath).toMatch(/^\.claude\/rules\//);
     expect(doc.slug).not.toContain(' ');
@@ -269,7 +284,11 @@ describe('rules-compiler — Markdown rendering', () => {
     const doc = renderClaudeRule(baseCandidate, '2026-04-22T00:00:00Z');
     expect(doc.body).toContain('## Why this rule');
     expect(doc.body).toContain('## Provenance');
-    expect(doc.body).toContain('audrey forget abc');
+    expect(doc.body).toContain('delete this file');
+    expect(doc.body).toContain('memory_forget');
+    expect(doc.body).toContain('audrey.forget("abc")');
+    expect(doc.body).toContain('Retracting the memory does not delete this rule file.');
+    expect(doc.body).not.toContain('audrey forget');
     expect(doc.body).toContain('prevented 2 recent tool failures');
   });
 
@@ -294,6 +313,28 @@ describe('rules-compiler — Markdown rendering', () => {
     const docs = renderAllRules(clones, '2026-04-22T00:00:00Z');
     expect(docs).toHaveLength(2);
     expect(docs[0].slug).not.toBe(docs[1].slug);
+  });
+
+  it('distinguishes complete IDs across independent calls and sanitizes unsafe identifiers', () => {
+    const first = { ...baseCandidate, memory_id: 'A'.repeat(24) + 'AA' };
+    const second = { ...baseCandidate, memory_id: 'A'.repeat(24) + 'AB' };
+    expect(legacyClaudeRuleRelativePath(first)).toBe(legacyClaudeRuleRelativePath(second));
+    const one = renderClaudeRule(first, '2026-04-22T00:00:00Z');
+    const two = renderClaudeRule(second, '2026-04-22T00:00:00Z');
+    expect(one.relativePath).not.toBe(two.relativePath);
+    expect(renderClaudeRule(first, '2026-05-22T00:00:00Z').relativePath).toBe(one.relativePath);
+    const unsafe = renderClaudeRule(
+      { ...baseCandidate, memory_id: '../../escape:CON' },
+      '2026-04-22T00:00:00Z',
+    );
+    expect(unsafe.relativePath).toMatch(/^\.claude\/rules\/audrey-proc-[a-f0-9]{64}\.md$/);
+  });
+
+  it('recognizes only matching generated frontmatter as rule provenance', () => {
+    const doc = renderClaudeRule(baseCandidate, '2026-04-22T00:00:00Z');
+    expect(claudeRuleHasProvenance(doc.body + '\nUser amendment\n', baseCandidate)).toBe(true);
+    expect(claudeRuleHasProvenance(doc.body, { ...baseCandidate, memory_id: 'other' })).toBe(false);
+    expect(claudeRuleHasProvenance('Manual guidance\n' + doc.body, baseCandidate)).toBe(false);
   });
 });
 
@@ -368,6 +409,156 @@ describe('promote — FS write + idempotency', () => {
     const second = await audrey.promote({ yes: true, projectDir: PROJECT_DIR });
     expect(second.applied).toEqual([]);
     expect(second.candidates).toEqual([]);
+  });
+
+  it('preserves both rules when separate calls promote IDs with the same old prefix', async () => {
+    const prefix = 'A'.repeat(24);
+    seedProcedural(audrey, { id: prefix + 'AA', content: 'First independent rule.', successes: 4 });
+    seedProcedural(audrey, {
+      id: prefix + 'AB',
+      content: 'Second independent rule.',
+      successes: 3,
+    });
+    const first = await audrey.promote({ yes: true, limit: 1, projectDir: PROJECT_DIR });
+    const second = await audrey.promote({ yes: true, limit: 1, projectDir: PROJECT_DIR });
+    expect(first.applied[0].absolute_path).not.toBe(second.applied[0].absolute_path);
+    expect(second.applied[0].overwritten).toBe(false);
+    expect(readFileSync(first.applied[0].absolute_path, 'utf8')).toContain(
+      'First independent rule.',
+    );
+    expect(readFileSync(second.applied[0].absolute_path, 'utf8')).toContain(
+      'Second independent rule.',
+    );
+  });
+
+  it('preserves edited rules after public Stop retention removes promotion activity', async () => {
+    seedProcedural(audrey, {
+      id: 'durable-rule',
+      content: 'Original generated procedure.',
+      successes: 3,
+    });
+    const first = await audrey.promote({ yes: true, projectDir: PROJECT_DIR });
+    const destination = first.applied[0].absolute_path;
+    const edited = 'User-reviewed and corrected rule\n';
+    writeFileSync(destination, edited);
+    audrey.db
+      .prepare(
+        "UPDATE memory_events SET created_at = '2025-01-01T00:00:00.000Z' WHERE event_type = 'Promotion'",
+      )
+      .run();
+    await runAutopilotHook(
+      audrey,
+      { hook_event_name: 'Stop', cwd: resolve(PROJECT_DIR), session_id: 'retention-test' },
+      { host: 'claude-code', now: new Date('2026-10-08T00:00:00.000Z') },
+    );
+    expect(audrey.listEvents({ eventType: 'Promotion' })).toHaveLength(0);
+    const next = await audrey.promote({ yes: true, projectDir: PROJECT_DIR });
+    expect(next.applied).toEqual([]);
+    expect(readFileSync(destination, 'utf8')).toBe(edited);
+  });
+
+  it('recognizes and preserves a legacy rule after its activity history is gone', async () => {
+    seedProcedural(audrey, {
+      id: 'legacy-rule',
+      content: 'Original generated procedure.',
+      successes: 3,
+    });
+    const candidate = audrey.findPromotionCandidates()[0];
+    const legacyPath = join(PROJECT_DIR, legacyClaudeRuleRelativePath(candidate));
+    const doc = renderClaudeRule(candidate, '2026-04-22T00:00:00Z');
+    mkdirSync(join(PROJECT_DIR, '.claude', 'rules'), { recursive: true });
+    const edited = doc.body + '\nReviewed amendment\n';
+    writeFileSync(legacyPath, edited);
+
+    const result = await audrey.promote({ yes: true, projectDir: PROJECT_DIR });
+
+    expect(readFileSync(legacyPath, 'utf8')).toBe(edited);
+    expect(existsSync(join(PROJECT_DIR, doc.relativePath))).toBe(false);
+    expect(result.candidates[0].rendered_path).toBe(legacyClaudeRuleRelativePath(candidate));
+    expect(audrey.findPromotionCandidates()).toEqual([]);
+  });
+
+  it('preserves edited numbered legacy rules for IDs with a shared truncated prefix', async () => {
+    const prefix = 'B'.repeat(24);
+    seedProcedural(audrey, { id: prefix + 'AA', content: 'First legacy guidance.', successes: 4 });
+    seedProcedural(audrey, { id: prefix + 'AB', content: 'Second legacy guidance.', successes: 3 });
+    const candidates = audrey.findPromotionCandidates();
+    const docs = renderAllRules(candidates, '2026-04-22T00:00:00Z');
+    const basePath = legacyClaudeRuleRelativePath(candidates[0]);
+    expect(legacyClaudeRuleRelativePath(candidates[1])).toBe(basePath);
+    const legacyPaths = [basePath, basePath.replace(/\.md$/, '-1.md')];
+    const edited = docs.map((doc, i) =>
+      doc.body.replaceAll(candidates[i].content, `User-reviewed legacy guidance ${i}.`),
+    );
+    mkdirSync(join(PROJECT_DIR, '.claude', 'rules'), { recursive: true });
+    legacyPaths.forEach((path, i) => writeFileSync(join(PROJECT_DIR, path), edited[i]));
+    expect(audrey.listEvents({ eventType: 'Promotion' })).toEqual([]);
+
+    const result = await audrey.promote({ yes: true, projectDir: PROJECT_DIR });
+
+    expect(result.applied).toEqual([]);
+    expect(result.candidates.map(candidate => candidate.rendered_path)).toEqual(legacyPaths);
+    legacyPaths.forEach((path, i) =>
+      expect(readFileSync(join(PROJECT_DIR, path), 'utf8')).toBe(edited[i]),
+    );
+    docs.forEach(doc => expect(existsSync(join(PROJECT_DIR, doc.relativePath))).toBe(false));
+    expect(audrey.findPromotionCandidates()).toEqual([]);
+  });
+
+  it('recovers a published rule after event recording fails without overwriting later edits', async () => {
+    seedProcedural(audrey, {
+      id: 'promotion-recovery',
+      content: 'Original recovery guidance.',
+      successes: 3,
+    });
+    const candidate = audrey.findPromotionCandidates()[0];
+    const doc = renderClaudeRule(candidate, '2026-04-22T00:00:00Z');
+    const destination = join(PROJECT_DIR, doc.relativePath);
+    audrey.db
+      .prepare(
+        `CREATE TRIGGER fail_promotion_event BEFORE INSERT ON memory_events
+      WHEN NEW.event_type = 'Promotion'
+      BEGIN SELECT RAISE(ABORT, 'promotion event unavailable'); END`,
+      )
+      .run();
+
+    await expect(audrey.promote({ yes: true, projectDir: PROJECT_DIR })).rejects.toThrow(
+      'promotion event unavailable',
+    );
+
+    const published = readFileSync(destination, 'utf8');
+    expect(published).toContain('Original recovery guidance.');
+    const ledgerCount = () =>
+      audrey.db
+        .prepare('SELECT COUNT(*) AS count FROM audrey_config WHERE key GLOB ?')
+        .get(`${PROMOTION_LEDGER_PREFIX}*`).count;
+    expect(ledgerCount()).toBe(0);
+    expect(audrey.listEvents({ eventType: 'Promotion' })).toEqual([]);
+    expect(audrey.findPromotionCandidates()).toHaveLength(1);
+    const edited = published + '\nReviewed correction after publication.\n';
+    writeFileSync(destination, edited);
+    audrey.db.prepare('DROP TRIGGER fail_promotion_event').run();
+
+    const retry = await audrey.promote({ yes: true, projectDir: PROJECT_DIR });
+
+    expect(retry.applied).toEqual([]);
+    expect(readFileSync(destination, 'utf8')).toBe(edited);
+    expect(ledgerCount()).toBe(1);
+    expect(audrey.findPromotionCandidates()).toEqual([]);
+  });
+
+  it('refuses to replace an unrelated existing rule at the generated destination', async () => {
+    seedProcedural(audrey, { id: 'manual-rule', content: 'Candidate procedure.', successes: 3 });
+    const candidate = audrey.findPromotionCandidates()[0];
+    const doc = renderClaudeRule(candidate, '2026-04-22T00:00:00Z');
+    mkdirSync(join(PROJECT_DIR, '.claude', 'rules'), { recursive: true });
+    const destination = join(PROJECT_DIR, doc.relativePath);
+    writeFileSync(destination, 'Manual project guidance\n');
+
+    await expect(audrey.promote({ yes: true, projectDir: PROJECT_DIR })).rejects.toThrow(
+      /existing|overwrite|provenance/i,
+    );
+    expect(readFileSync(destination, 'utf8')).toBe('Manual project guidance\n');
   });
 
   it('unsupported target throws', async () => {

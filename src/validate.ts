@@ -60,20 +60,36 @@ export async function validateMemory(
   // Fail closed: an episode whose row cannot be read is treated as private,
   // so a missing/late row can never open the cloud contradiction path.
   const episodeIsPrivate = episodeRow ? episodeRow.private === 1 : true;
-  const nearestSemantic = db
+  // A live nearest vector is also the nearest live vector. Check its source
+  // row instead of trusting vec.state, which can lag a state transition.
+  let nearestSemantic = db
     .prepare(
-      `
-    SELECT s.*, (1.0 - vec_distance_cosine(v.embedding, ?)) AS similarity
-    FROM vec_semantics v
-    JOIN semantics s ON s.id = v.id
-    WHERE v.agent = ?
-      AND (s.state = 'active' OR s.state = 'context_dependent')
-      AND s.agent = ?
-    ORDER BY similarity DESC
-    LIMIT 1
-  `,
+      `SELECT s.*, (1.0 - v.distance) AS similarity
+       FROM vec_semantics v JOIN semantics s ON s.id = v.id
+       WHERE v.embedding MATCH ? AND k = 1 AND v.agent = ?
+         AND s.agent = ? AND s.state IN ('active', 'context_dependent')`,
     )
     .get(episodeBuffer, episodeAgent, episodeAgent) as SemanticWithSimilarity | undefined;
+  // An empty result may mean the nearest row was stale/retired. The ID filter
+  // runs before k=1, so any number of closer retired rows cannot hide a live
+  // candidate. There is one fallback query, never a scalar distance scan.
+  if (!nearestSemantic)
+    nearestSemantic = db
+      .prepare(
+        `
+    SELECT s.*, (1.0 - v.distance) AS similarity
+    FROM vec_semantics v
+    JOIN semantics s ON s.id = v.id
+    WHERE v.embedding MATCH ?
+      AND k = 1
+      AND v.agent = ?
+      AND v.id IN (
+        SELECT id FROM semantics
+        WHERE agent = ? AND state IN ('active', 'context_dependent')
+      )
+  `,
+      )
+      .get(episodeBuffer, episodeAgent, episodeAgent) as SemanticWithSimilarity | undefined;
 
   let bestMatch: SemanticWithSimilarity | null = null;
   let bestSimilarity = 0;

@@ -1,5 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Audrey } from '../dist/src/index.js';
+import { importMemories } from '../dist/src/import.js';
+import { MockEmbeddingProvider } from '../dist/src/embedding.js';
+import {
+  insertEvent,
+  deleteEventsBefore,
+  promotedMemoryIds,
+  PROMOTION_LEDGER_PREFIX,
+} from '../dist/src/events.js';
 import { existsSync, rmSync } from 'node:fs';
 import { controlTrustFor } from '../dist/src/trust.js';
 
@@ -331,16 +339,156 @@ describe('import', () => {
     await expect(source.import(snapshot)).rejects.toThrow('not empty');
   });
 
-  it('rejects imported episode content above the production limit', async () => {
-    const snapshot = source.export();
-    const unsafeSnapshot = JSON.parse(JSON.stringify(snapshot));
-    unsafeSnapshot.episodes[0].content = 'x'.repeat(50001);
+  it('round-trips SDK content longer than an interactive request limit', async () => {
+    const content = 'a'.repeat(50001);
+    const id = await source.encode({ content, source: 'told-by-user' });
     dest = new Audrey({
       dataDir: IMPORT_DIR,
       embedding: { provider: 'mock', dimensions: 8 },
     });
 
-    await expect(dest.import(unsafeSnapshot)).rejects.toThrow(/content|maximum|too big/i);
+    await dest.import(source.export());
+    expect(dest.db.prepare('SELECT content FROM episodes WHERE id = ?').get(id).content).toBe(
+      content,
+    );
+  });
+
+  it('round-trips a snapshot containing more than 25000 events', async () => {
+    const insert = source.db.prepare(
+      'INSERT INTO memory_events (id, event_type, source, created_at) VALUES (?, ?, ?, ?)',
+    );
+    source.db.transaction(() => {
+      for (let i = 0; i < 25001; i++) {
+        insert.run(`roundtrip-event-${i}`, 'test', 'sdk', '2026-01-01T00:00:00.000Z');
+      }
+    })();
+    const snapshot = source.export();
+    dest = new Audrey({ dataDir: IMPORT_DIR, embedding: { provider: 'mock', dimensions: 8 } });
+
+    await dest.import(snapshot);
+
+    expect(dest.db.prepare('SELECT COUNT(*) AS count FROM memory_events').get().count).toBe(25001);
+    expect(dest.export().memoryEvents).toEqual(snapshot.memoryEvents);
+  });
+
+  it('bounds embedding batches and keeps a failed batch import atomic', async () => {
+    const snapshot = source.export();
+    snapshot.episodes = Array.from({ length: 257 }, (_, i) => ({
+      ...snapshot.episodes[0],
+      id: `batch-episode-${i}`,
+      content: `batch content ${i}`,
+    }));
+    dest = new Audrey({ dataDir: IMPORT_DIR, embedding: { provider: 'mock', dimensions: 8 } });
+    const provider = new MockEmbeddingProvider({ dimensions: 8 });
+    const originalEmbed = provider.embedBatch.bind(provider);
+    const embedBatch = vi
+      .spyOn(provider, 'embedBatch')
+      .mockImplementationOnce(originalEmbed)
+      .mockRejectedValueOnce(new Error('failed second batch'));
+
+    await expect(importMemories(dest.db, provider, snapshot)).rejects.toThrow(
+      'failed second batch',
+    );
+    expect(embedBatch.mock.calls.map(([contents]) => contents.length)).toEqual([256, 1]);
+    expect(dest.db.prepare('SELECT COUNT(*) AS count FROM episodes').get().count).toBe(0);
+    expect(dest.db.prepare('SELECT COUNT(*) AS count FROM vec_episodes').get().count).toBe(0);
+
+    embedBatch.mockReset().mockImplementation(originalEmbed);
+    await importMemories(dest.db, provider, snapshot);
+    expect(embedBatch.mock.calls.map(([contents]) => contents.length)).toEqual([256, 1]);
+    expect(dest.db.prepare('SELECT COUNT(*) AS count FROM episodes').get().count).toBe(257);
+  });
+
+  it('rejects malformed content before requesting embeddings', async () => {
+    const snapshot = source.export();
+    snapshot.episodes[0].content = { text: 'invalid content type' };
+    dest = new Audrey({ dataDir: IMPORT_DIR, embedding: { provider: 'mock', dimensions: 8 } });
+    const provider = new MockEmbeddingProvider({ dimensions: 8 });
+    const embedBatch = vi.spyOn(provider, 'embedBatch');
+
+    await expect(importMemories(dest.db, provider, snapshot)).rejects.toThrow();
+    expect(embedBatch).not.toHaveBeenCalled();
+  });
+
+  it('preserves consolidation commit order in exported undo journals', async () => {
+    const undo = { version: 1, commitSequence: 17, changes: [] };
+    source.db
+      .prepare(
+        "INSERT INTO consolidation_runs (id, input_episode_ids, output_memory_ids, status, rollback_data) VALUES (?, '[]', '[]', 'completed', ?)",
+      )
+      .run('ordered-run', JSON.stringify(undo));
+    const snapshot = source.export();
+    expect(snapshot.consolidationRuns[0].rollback_data).toEqual(undo);
+    dest = new Audrey({ dataDir: IMPORT_DIR, embedding: { provider: 'mock', dimensions: 8 } });
+
+    await dest.import(snapshot);
+
+    expect(
+      JSON.parse(
+        dest.db
+          .prepare('SELECT rollback_data FROM consolidation_runs WHERE id = ?')
+          .get('ordered-run').rollback_data,
+      ),
+    ).toEqual(undo);
+  });
+
+  it('round-trips durable promotion state after its activity was retained away', async () => {
+    insertEvent(source.db, {
+      eventType: 'Promotion',
+      source: 'promote-command',
+      actorAgent: source.agent,
+      toolName: 'claude-rules',
+      outcome: 'succeeded',
+      metadata: { memory_ids: ['promoted-procedure'] },
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    deleteEventsBefore(source.db, '2026-02-01T00:00:00.000Z');
+    const snapshot = source.export();
+    expect(snapshot.memoryEvents).toEqual([]);
+    expect(Object.keys(snapshot.config).some(key => key.startsWith(PROMOTION_LEDGER_PREFIX))).toBe(
+      true,
+    );
+    snapshot.config.dimensions = '999';
+    snapshot.config.schema_version = '0';
+    snapshot.config.unrecognized_setting = 'do not restore this';
+    dest = new Audrey({ dataDir: IMPORT_DIR, embedding: { provider: 'mock', dimensions: 8 } });
+    const originalSchema = dest.db
+      .prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'")
+      .get().value;
+
+    await dest.import(snapshot);
+
+    expect(
+      promotedMemoryIds(dest.db, { target: 'claude-rules', actorAgent: source.agent }).has(
+        'promoted-procedure',
+      ),
+    ).toBe(true);
+    expect(
+      dest.db.prepare("SELECT value FROM audrey_config WHERE key = 'dimensions'").get().value,
+    ).toBe('8');
+    expect(
+      dest.db.prepare("SELECT value FROM audrey_config WHERE key = 'schema_version'").get().value,
+    ).toBe(originalSchema);
+    expect(
+      dest.db.prepare("SELECT value FROM audrey_config WHERE key = 'unrecognized_setting'").get(),
+    ).toBeUndefined();
+  });
+
+  it('rejects a promotion ledger record whose key does not match its identity atomically', async () => {
+    const snapshot = source.export();
+    snapshot.config[PROMOTION_LEDGER_PREFIX + '0'.repeat(64)] = JSON.stringify({
+      target: 'claude-rules',
+      actor_agent: source.agent,
+      memory_id: 'forged-id',
+      promoted_at: '2026-01-01T00:00:00.000Z',
+    });
+    dest = new Audrey({ dataDir: IMPORT_DIR, embedding: { provider: 'mock', dimensions: 8 } });
+
+    await expect(dest.import(snapshot)).rejects.toThrow('Invalid promotion ledger record');
+
+    expect(dest.db.prepare('SELECT COUNT(*) AS count FROM episodes').get().count).toBe(0);
+    expect(dest.db.prepare('SELECT COUNT(*) AS count FROM vec_episodes').get().count).toBe(0);
+    expect(promotedMemoryIds(dest.db, { target: 'claude-rules' }).size).toBe(0);
   });
 
   it('rejects malformed private flags during import', async () => {
@@ -530,6 +678,37 @@ describe('import', () => {
   });
 
   describe('privacy flag round-trip on derived rows', () => {
+    it.each([undefined, 0])('inherits private evidence when a derived flag is %s', async flag => {
+      const snapshot = source.export();
+      const privateId = snapshot.episodes[0].id;
+      snapshot.episodes[0].private = 1;
+      const derived = {
+        content: 'Derived from private evidence',
+        state: 'active',
+        evidence_episode_ids: [privateId],
+        created_at: '2026-01-01T00:00:00.000Z',
+        ...(flag === undefined ? {} : { private: flag }),
+      };
+      snapshot.semantics = [{ ...derived, id: 'legacy-private-semantic' }];
+      snapshot.procedures = [{ ...derived, id: 'legacy-private-procedure' }];
+      dest = new Audrey({ dataDir: IMPORT_DIR, embedding: { provider: 'mock', dimensions: 8 } });
+
+      await dest.import(snapshot);
+
+      expect(
+        dest.db
+          .prepare('SELECT "private" FROM semantics WHERE id = ?')
+          .get('legacy-private-semantic').private,
+      ).toBe(1);
+      expect(
+        dest.db
+          .prepare('SELECT "private" FROM procedures WHERE id = ?')
+          .get('legacy-private-procedure').private,
+      ).toBe(1);
+      expect(dest.export().semantics[0].private).toBe(1);
+      expect(dest.export().procedures[0].private).toBe(1);
+    });
+
     it('round-trips the private flag on semantics and procedures', async () => {
       const now = new Date().toISOString();
       source.db

@@ -23,8 +23,10 @@ import {
   runAutopilotHook,
   type AutopilotHost,
   type AutopilotScope,
+  type SuccessCheck,
 } from '../src/index.js';
 import { readStoredDimensions } from '../src/db.js';
+import { ChatGPTAuth } from '../src/chatgpt-auth.js';
 import { isAudreyProfileEnabled, type ProfileDiagnostics } from '../src/profile.js';
 import { redact } from '../src/redact.js';
 import {
@@ -171,6 +173,7 @@ async function serveHttp(): Promise<void> {
     sharedScopeValue === 'yes';
 
   const server = await startServer({ port, hostname, config, apiKey, sharedScopeEnabled });
+  registerHttpShutdownHandlers(process, server);
   console.error(`[audrey-http] v${VERSION} serving on ${server.hostname}:${server.port}`);
   if (apiKey) {
     console.error('[audrey-http] API key authentication enabled');
@@ -183,6 +186,42 @@ async function serveHttp(): Promise<void> {
       '[audrey-http] no API key set (loopback only — set AUDREY_API_KEY to enable network access)',
     );
   }
+}
+
+export function registerHttpShutdownHandlers(
+  processRef: NodeJS.Process,
+  server: { close: () => Promise<void> },
+  logger: (...args: unknown[]) => void = console.error,
+  timeoutMs = 11_000,
+): () => Promise<void> {
+  let closing: Promise<void> | undefined;
+  const shutdown = (): Promise<void> => {
+    closing ??= (async () => {
+      logger('[audrey-http] shutting down');
+      const deadline = setTimeout(() => {
+        logger('[audrey-http] shutdown deadline exceeded; forcing exit');
+        processRef.exit(1);
+      }, timeoutMs);
+      deadline.unref();
+      try {
+        await server.close();
+        processRef.exit(0);
+      } catch (error) {
+        logger('[audrey-http] shutdown failed:', error);
+        processRef.exit(1);
+      } finally {
+        clearTimeout(deadline);
+      }
+    })();
+    return closing;
+  };
+  processRef.on('SIGINT', () => {
+    void shutdown();
+  });
+  processRef.on('SIGTERM', () => {
+    void shutdown();
+  });
+  return shutdown;
 }
 
 async function reembed(): Promise<void> {
@@ -3102,7 +3141,11 @@ export function buildMemoryGuardBeforeHandler(audrey: Audrey) {
     include_capsule,
     scope,
     acknowledge_prior_failure,
-  }: MemoryPreflightArgs & { acknowledge_prior_failure?: boolean }) => {
+    success_checks,
+  }: MemoryPreflightArgs & {
+    acknowledge_prior_failure?: boolean;
+    success_checks?: SuccessCheck[];
+  }) => {
     try {
       const decision = await audrey.beforeAction(action, {
         tool,
@@ -3119,6 +3162,7 @@ export function buildMemoryGuardBeforeHandler(audrey: Audrey) {
         includeCapsule: include_capsule,
         scope: scope ?? 'agent',
         acknowledgePriorFailure: acknowledge_prior_failure,
+        successChecks: success_checks,
       });
       return toolResult(withMemoryTrustFraming(decision), undefined, { escapeMarkup: true });
     } catch (err) {
@@ -4018,8 +4062,11 @@ interface AutopilotCliOptions {
   agent?: string;
   embeddingProvider?: 'mock' | 'local' | 'gemini' | 'openai';
   device?: string;
-  llmProvider?: 'mock' | 'anthropic' | 'openai';
+  llmProvider?: 'mock' | 'anthropic' | 'openai' | 'chatgpt';
   llmModel?: string;
+  llmReasoningEffort?: string;
+  chatgptAuthDir?: string;
+  chatgptAccount?: string;
   warmup?: boolean;
 }
 
@@ -4036,6 +4083,9 @@ function parseAutopilotArgs(argv: string[]): AutopilotCliOptions {
   let device: string | undefined;
   let llmProvider: AutopilotCliOptions['llmProvider'];
   let llmModel: string | undefined;
+  let llmReasoningEffort: string | undefined;
+  let chatgptAuthDir: string | undefined;
+  let chatgptAccount: string | undefined;
   let warmup = false;
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -4101,7 +4151,7 @@ function parseAutopilotArgs(argv: string[]): AutopilotCliOptions {
       device = value;
     } else if (token === '--llm-provider' || token?.startsWith('--llm-provider=')) {
       const value = token === '--llm-provider' ? next() : token.slice('--llm-provider='.length);
-      if (value !== 'mock' && value !== 'anthropic' && value !== 'openai') {
+      if (value !== 'mock' && value !== 'anthropic' && value !== 'openai' && value !== 'chatgpt') {
         throw new Error(`Unsupported LLM provider: ${value ?? '(missing)'}`);
       }
       llmProvider = value;
@@ -4113,6 +4163,22 @@ function parseAutopilotArgs(argv: string[]): AutopilotCliOptions {
       const value = token.slice('--llm-model='.length);
       if (!value) throw new Error('--llm-model requires a value');
       llmModel = value;
+    } else if (token === '--llm-reasoning-effort' || token?.startsWith('--llm-reasoning-effort=')) {
+      const value =
+        token === '--llm-reasoning-effort' ? next() : token.slice('--llm-reasoning-effort='.length);
+      if (!value || !['low', 'medium', 'high', 'xhigh', 'max'].includes(value))
+        throw new Error('Unsupported LLM reasoning effort');
+      llmReasoningEffort = value;
+    } else if (token === '--chatgpt-auth-dir' || token?.startsWith('--chatgpt-auth-dir=')) {
+      const value =
+        token === '--chatgpt-auth-dir' ? next() : token.slice('--chatgpt-auth-dir='.length);
+      if (!value) throw new Error('--chatgpt-auth-dir requires a value');
+      chatgptAuthDir = value;
+    } else if (token === '--chatgpt-account' || token?.startsWith('--chatgpt-account=')) {
+      const value =
+        token === '--chatgpt-account' ? next() : token.slice('--chatgpt-account='.length);
+      if (!value) throw new Error('--chatgpt-account requires a value');
+      chatgptAccount = value;
     } else if (token === '--warmup') {
       warmup = true;
     } else if (token) {
@@ -4136,6 +4202,9 @@ function parseAutopilotArgs(argv: string[]): AutopilotCliOptions {
     ...(device ? { device } : {}),
     ...(llmProvider ? { llmProvider } : {}),
     ...(llmModel ? { llmModel } : {}),
+    ...(llmReasoningEffort ? { llmReasoningEffort } : {}),
+    ...(chatgptAuthDir ? { chatgptAuthDir } : {}),
+    ...(chatgptAccount ? { chatgptAccount } : {}),
     ...(warmup ? { warmup: true } : {}),
   };
   return options;
@@ -4180,17 +4249,26 @@ async function autopilotHookCli(): Promise<void> {
     } else if (options.device && config.embedding?.provider === 'local') {
       config.embedding.device = options.device;
     }
-    if (options.llmProvider) {
+    if (
+      options.llmProvider ||
+      options.llmModel ||
+      options.llmReasoningEffort ||
+      options.chatgptAuthDir ||
+      options.chatgptAccount
+    ) {
       const resolved = resolveLLMProvider(
         {
           ...process.env,
           ...(options.llmModel ? { AUDREY_LLM_MODEL: options.llmModel } : {}),
+          ...(options.llmReasoningEffort
+            ? { AUDREY_LLM_REASONING_EFFORT: options.llmReasoningEffort }
+            : {}),
+          ...(options.chatgptAuthDir ? { AUDREY_CHATGPT_AUTH_DIR: options.chatgptAuthDir } : {}),
+          ...(options.chatgptAccount ? { AUDREY_CHATGPT_ACCOUNT: options.chatgptAccount } : {}),
         },
-        options.llmProvider,
+        options.llmProvider || config.llm?.provider,
       );
       if (resolved) config.llm = resolved;
-    } else if (options.llmModel && config.llm) {
-      config.llm.model = options.llmModel;
     }
     audrey = new Audrey(applyHookTimeoutBudget(config, options.expectedEvent));
     if (options.warmup) {
@@ -4573,6 +4651,7 @@ const isDirectRun =
   canonicalEntryPath(process.argv[1]!) === canonicalEntryPath(fileURLToPath(import.meta.url));
 
 const KNOWN_SUBCOMMANDS = [
+  'auth',
   'install',
   'uninstall',
   'mcp-config',
@@ -4594,12 +4673,59 @@ const KNOWN_SUBCOMMANDS = [
   'impact',
 ] as const;
 
+async function chatgptAuthCli(): Promise<void> {
+  const argv = process.argv.slice(3);
+  const action = argv.shift() || 'status';
+  let accountId = process.env['AUDREY_CHATGPT_ACCOUNT'];
+  let openBrowser = true;
+  let requestConsent = false;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--account') {
+      accountId = argv[++i];
+      if (!accountId) throw new Error('--account requires a saved account ID');
+    } else if (argv[i] === '--no-browser') openBrowser = false;
+    else if (argv[i] === '--consent') requestConsent = true;
+    else if (argv[i] !== '--json') throw new Error(`Unknown auth option: ${argv[i]}`);
+  }
+  const auth = new ChatGPTAuth({ directory: process.env['AUDREY_CHATGPT_AUTH_DIR'] });
+  if (action === 'login') {
+    const account = await auth.login({
+      accountId,
+      openBrowser,
+      requestConsent,
+      onAuthorizationUrl: url => {
+        process.stderr.write(`Continue with ChatGPT: ${url}\n`);
+      },
+    });
+    process.stdout.write(`${JSON.stringify(account, null, 2)}\n`);
+    if (!account.planEnabled)
+      process.stderr.write(
+        'ChatGPT plan usage was not granted. Use audrey auth login --account <ID> --consent to enable it.\n',
+      );
+  } else if (action === 'accounts') {
+    process.stdout.write(`${JSON.stringify(await auth.accounts(), null, 2)}\n`);
+  } else if (action === 'status') {
+    process.stdout.write(`${JSON.stringify(await auth.status(), null, 2)}\n`);
+  } else if (action === 'select') {
+    if (!accountId) throw new Error('Use audrey auth select --account <ID>');
+    process.stdout.write(`${JSON.stringify(await auth.select(accountId), null, 2)}\n`);
+  } else if (action === 'logout') {
+    const result = await auth.logout(accountId);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (!result.revoked)
+      process.stderr.write(
+        'Local credentials cleared; remote revocation was not confirmed. Disconnect Audrey in ChatGPT Settings.\n',
+      );
+  } else throw new Error('Use audrey auth login|status|accounts|select|logout');
+}
+
 function printHelp(): void {
   process.stdout.write(`audrey ${VERSION} — local-first memory runtime for AI agents
 
 Usage: audrey <command> [options]
 
 Commands:
+  auth login|status|accounts|select|logout  Manage optional ChatGPT subscription sign-in
   doctor                        Verify Node, MCP entrypoint, providers, and store health
   demo                          Run a no-key, no-network proof of recall + reflexes
   status                        Print store health (add --json --fail-on-unhealthy for CI)
@@ -4633,8 +4759,11 @@ Environment:
   AUDREY_DATA_DIR               Path to SQLite memory store (default: ~/.audrey/data)
   AUDREY_AGENT                  Logical agent identity (default: local-agent)
   AUDREY_EMBEDDING_PROVIDER     local | gemini | openai | mock
-  AUDREY_LLM_PROVIDER           anthropic | openai | mock
+  AUDREY_LLM_PROVIDER           anthropic | openai (API) | chatgpt (subscription) | mock
   AUDREY_LLM_MODEL              Explicit provider model override
+  AUDREY_LLM_REASONING_EFFORT   low | medium | high | xhigh | max (default: medium)
+  AUDREY_CHATGPT_AUTH_DIR       Protected OAuth storage (default: ~/.audrey/auth)
+  AUDREY_CHATGPT_ACCOUNT        Saved ChatGPT registration ID (default: active account)
   AUDREY_AUTOPILOT_SCOPE        agent | shared (default: agent)
   AUDREY_HOOK_FAIL_CLOSED=1     Deny guarded actions when Audrey itself fails
   AUDREY_ENABLE_ADMIN_TOOLS=1   Enable export, import, and forget tools/routes
@@ -4664,12 +4793,25 @@ function printVersion(): void {
 if (isDirectRun) {
   // Help / version flags MUST short-circuit before falling through to the MCP server.
   // A user running `audrey --help` should see help, not be dropped into a stdio loop.
-  if (subcommand === '--help' || subcommand === '-h' || subcommand === 'help') {
+  const args = process.argv.slice(2);
+  const optionEnd = args.indexOf('--');
+  const helpRequested = (optionEnd < 0 ? args : args.slice(0, optionEnd)).some(
+    arg => arg === '--help' || arg === '-h',
+  );
+  if (helpRequested || subcommand === 'help') {
     printHelp();
     process.exit(0);
   } else if (subcommand === '--version' || subcommand === '-v' || subcommand === 'version') {
     printVersion();
     process.exit(0);
+  } else if (subcommand === 'auth') {
+    chatgptAuthCli().catch(err => {
+      console.error(
+        '[audrey] auth failed:',
+        err instanceof Error ? err.message : 'Unknown authentication error',
+      );
+      process.exitCode = 1;
+    });
   } else if (subcommand === 'install') {
     install();
   } else if (subcommand === 'uninstall') {

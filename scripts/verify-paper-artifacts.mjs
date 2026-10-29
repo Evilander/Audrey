@@ -2,9 +2,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { verifyPaperClaims } from './verify-paper-claims.mjs';
 import { verifyPaperSubmissionBundle } from './verify-paper-submission-bundle.mjs';
-import { verifyPublicationPack } from './verify-publication-pack.mjs';
-import { verifyBrowserLaunchPlan } from './verify-browser-launch-plan.mjs';
-import { verifyBrowserLaunchResults } from './verify-browser-launch-results.mjs';
 import { verifyArxivSourcePackage } from './verify-arxiv-source.mjs';
 import { verifyArxivCompileReport } from './verify-arxiv-compile.mjs';
 
@@ -200,16 +197,10 @@ const readme = readText('README.md');
 const evaluation = readText('docs/paper/07-evaluation.md');
 const paper = readText('docs/paper/audrey-paper-v1.md');
 const ledger = readText('docs/paper/evidence-ledger.md');
-const submission = readText('docs/paper/SUBMISSION_README.md');
 const references = readText('docs/paper/references.bib');
-const browserPlan = readText('docs/paper/browser-launch-plan.json');
-const browserLaunchResultsVerifier = readText('scripts/verify-browser-launch-results.mjs');
 const claimReport = await verifyPaperClaims();
-const publicationPackReport = await verifyPublicationPack();
 const arxivSourceReport = verifyArxivSourcePackage();
 const arxivCompileReport = verifyArxivCompileReport({ allowPending: true });
-const browserLaunchReport = await verifyBrowserLaunchPlan();
-const browserLaunchResultsReport = await verifyBrowserLaunchResults();
 const paperBundleReport = verifyPaperSubmissionBundle();
 
 const local = Object.fromEntries(summary.local.overall.map(row => [row.system, row]));
@@ -221,17 +212,7 @@ assert(
   `Expected at least 97 evidence ledger rows, found ${evidenceRows}`,
   failures,
 );
-assert(
-  submission.includes(`Evidence ledger with ${evidenceRows} rows`),
-  'SUBMISSION_README ledger row count is stale',
-  failures,
-);
 assert(bibEntries === 21, `Expected 21 bibliography entries, found ${bibEntries}`, failures);
-assert(
-  submission.includes(`Primary-source bibliography with ${bibEntries} entries`),
-  'SUBMISSION_README bibliography count is stale',
-  failures,
-);
 
 ensureContainsAll(
   ledger,
@@ -293,102 +274,14 @@ ensureContainsAll(
   failures,
 );
 ensureContainsAll(
-  submission,
-  [
-    'Ledger: E46-E51',
-    'artifact redaction sweep',
-    'local absolute-path sweep',
-    'public-paths.mjs',
-    'adapter-kit.mjs',
-    'registry.json',
-    'claim-register.json',
-    'publication-pack.json',
-    'reservedUrlChars',
-    'arxiv-source.schema.json',
-    'arxiv-compile-report.schema.json',
-    'arxiv-compile-report.json',
-    'docs/paper/output/arxiv',
-    'paper:arxiv',
-    'paper:arxiv:verify',
-    'paper:arxiv:compile',
-    'paper:arxiv:compile:strict',
-    'browser-launch-plan.json',
-    'browser-launch-plan.schema.json',
-    'browser-launch-results.json',
-    'browser-launch-results.schema.json',
-    'artifactUrl',
-    'x-counting-characters',
-    'paper-submission-bundle.schema.json',
-    'docs/paper/output/submission-bundle',
-    'paper:bundle',
-    'paper:bundle:verify',
-    'paper:launch-plan',
-    'paper:launch-results',
-    'paper:launch-results:strict',
-    'release:cut:plan',
-    'release:cut:apply',
-    'release:readiness',
-    'release:readiness:strict',
-    'python:release:check',
-    'Python package release verifier',
-    'npm audit --omit=dev --audit-level=moderate',
-    'bench:guard:adapter-registry:validate',
-    'bench:guard:adapter-module:validate',
-    'bench:guard:adapter-self-test',
-    'bench:guard:adapter-self-test:validate',
-    'bench:guard:publication:verify',
-    'bench:guard:external:dry-run',
-    'bench:guard:external:evidence',
-    'bench:guard:external:evidence:strict',
-    'paper:claims',
-    'paper:publication-pack',
-    'guardbench-adapter-self-test.schema.json',
-    'guardbench-adapter-registry.schema.json',
-    'guardbench-external-dry-run.schema.json',
-    'guardbench-external-evidence.schema.json',
-    'guardbench-publication-verification.schema.json',
-    'zep-cloud.mjs',
-    'bench:guard:zep',
-    'ZEP_API_KEY',
-  ],
-  'SUBMISSION_README.md',
-  failures,
-);
-ensureContainsAllProse(
-  submission,
-  [
-    'source-control release-state check',
-    'live remote-head verification',
-    'git ls-remote',
-    'npm registry/auth readiness',
-    'npm whoami',
-    'audrey@1.0.0',
-    'PyPI publish readiness',
-  ],
-  'SUBMISSION_README.md',
-  failures,
-);
-ensureContainsAll(
   packageJsonText,
-  [
-    '"scripts/*.py"',
-    '"python:release:check"',
-    '"paper:arxiv:compile"',
-    '"paper:arxiv:compile:strict"',
-  ],
+  ['"python:release:check"', '"paper:arxiv:compile"', '"paper:arxiv:compile:strict"'],
   'package.json',
   failures,
 );
 if (!claimReport.ok) {
   failures.push(
     ...claimReport.failures.map(failure => `Paper claim verification failed: ${failure}`),
-  );
-}
-if (!publicationPackReport.ok) {
-  failures.push(
-    ...publicationPackReport.failures.map(
-      failure => `Publication pack verification failed: ${failure}`,
-    ),
   );
 }
 if (!arxivSourceReport.ok) {
@@ -402,20 +295,6 @@ if (!arxivCompileReport.ok) {
   failures.push(
     ...arxivCompileReport.failures.map(
       failure => `arXiv compile report verification failed: ${failure}`,
-    ),
-  );
-}
-if (!browserLaunchReport.ok) {
-  failures.push(
-    ...browserLaunchReport.failures.map(
-      failure => `Browser launch plan verification failed: ${failure}`,
-    ),
-  );
-}
-if (!browserLaunchResultsReport.ok) {
-  failures.push(
-    ...browserLaunchResultsReport.failures.map(
-      failure => `Browser launch results verification failed: ${failure}`,
     ),
   );
 }
@@ -438,34 +317,6 @@ if (arxivCompileReport.status === 'passed') {
     failures,
   );
 }
-const firstXPost = publicationPackReport.entries.find(entry => entry.id === 'x-post-1');
-assert(firstXPost?.requiresArtifactUrl === true, 'x-post-1 must require an artifact URL', failures);
-assert(
-  firstXPost?.reservedUrlChars >= 24,
-  'x-post-1 must reserve at least 24 characters for an X URL plus separator',
-  failures,
-);
-assert(
-  firstXPost?.effectiveChars <= 280,
-  'x-post-1 text plus URL reserve must fit within 280 characters',
-  failures,
-);
-ensureContainsAll(
-  browserPlan,
-  [
-    'x-counting-characters',
-    'https://docs.x.com/fundamentals/counting-characters',
-    'reservedUrlChars',
-  ],
-  'browser-launch-plan.json',
-  failures,
-);
-ensureContainsAll(
-  browserLaunchResultsVerifier,
-  ['submitted artifact-url target must record artifactUrl'],
-  'verify-browser-launch-results.mjs',
-  failures,
-);
 
 const manifestSchemaErrors = validateSchema(
   guardManifest,
@@ -643,16 +494,14 @@ ensureContainsAll(
     'bench:guard:external:evidence:strict',
     'paper:arxiv:compile',
     'paper:arxiv:compile:strict',
-    'paper:launch-results',
-    'paper:launch-results:strict',
     'release:cut:plan',
     'release:cut:apply',
     'release:readiness',
     'release:readiness:strict',
     'python:release:check',
-    'absolute-path sweep',
-    'X URL reserve',
-    'submitted artifact-url targets',
+    'artifact hashes',
+    'source bundles',
+    'path redaction',
     'external dry-run matrix',
     'external evidence verification',
     'ZEP_API_KEY',
@@ -680,8 +529,6 @@ ensureContainsAll(
     'Mem0 and Zep adapters',
     'external dry-run matrix',
     'external evidence verification',
-    'reserved URL budget',
-    'submitted artifact-url targets',
     'arXiv compile report',
     'release-readiness verifier',
     'release-cut planner',
@@ -783,15 +630,10 @@ console.log('Paper artifact verification passed.');
 console.log(`Evidence rows: ${evidenceRows}`);
 console.log(`Bibliography entries: ${bibEntries}`);
 console.log(`Paper claims: ${claimReport.claims.length}`);
-console.log(`Publication pack entries: ${publicationPackReport.entries.length}`);
 console.log(
   `arXiv source files: ${arxivSourceReport.files.length}, citations ${arxivSourceReport.citationCount}`,
 );
 console.log(`arXiv compile status: ${arxivCompileReport.status}`);
-console.log(`Browser launch targets: ${browserLaunchReport.targets.length}`);
-console.log(
-  `Browser launch results: ${browserLaunchResultsReport.targets.length} targets, ready=${browserLaunchResultsReport.ready}`,
-);
 console.log(`Paper bundle files: ${paperBundleReport.files.length}`);
 console.log(
   `GuardBench: ${guardSummary.passed}/${guardSummary.scenarios}, latency ${latency.p50Ms}ms/${latency.p95Ms}ms, artifact leaks ${guardSummary.artifactRedactionSweep.leakCount}`,

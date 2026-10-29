@@ -7,6 +7,150 @@ import Database from './sqlite.js';
 import { namespaceMatcher } from './project.js';
 import { generateId } from './ulid.js';
 import { requireAgent } from './utils.js';
+import { createHash } from 'node:crypto';
+import { z } from 'zod';
+
+export const PROMOTION_LEDGER_PREFIX = 'promotion_ledger:';
+
+const promotionRecordSchema = z
+  .object({
+    target: z.enum(['claude-rules', 'agents-md', 'playbook', 'hook', 'checklist']),
+    actor_agent: z.string().min(1).max(128).nullable(),
+    memory_id: z.string().min(1).max(128),
+    promoted_at: z
+      .string()
+      .max(64)
+      .refine(value => Number.isFinite(Date.parse(value))),
+    relative_path: z.string().optional(),
+    absolute_path: z.string().optional(),
+  })
+  .strict();
+
+type PromotionRecord = z.infer<typeof promotionRecordSchema>;
+
+export interface RecordPromotionOptions {
+  target: string;
+  actorAgent?: string | null;
+  memoryIds: string[];
+  promotedAt: string;
+  relativePath?: string;
+  absolutePath?: string;
+}
+
+function promotionLedgerKey(record: PromotionRecord): string {
+  return (
+    PROMOTION_LEDGER_PREFIX +
+    createHash('sha256')
+      .update(JSON.stringify([record.target, record.actor_agent, record.memory_id]))
+      .digest('hex')
+  );
+}
+
+/** A durable record per promoted memory, independent of disposable activity. */
+export function recordPromotion(db: Database, options: RecordPromotionOptions): void {
+  const insert = db.prepare('INSERT OR IGNORE INTO audrey_config (key, value) VALUES (?, ?)');
+  for (const memoryId of new Set(options.memoryIds)) {
+    const record = promotionRecordSchema.parse({
+      target: options.target,
+      actor_agent: options.actorAgent ?? null,
+      memory_id: memoryId,
+      promoted_at: options.promotedAt,
+      ...(options.relativePath === undefined ? {} : { relative_path: options.relativePath }),
+      ...(options.absolutePath === undefined ? {} : { absolute_path: options.absolutePath }),
+    });
+    insert.run(promotionLedgerKey(record), JSON.stringify(record));
+  }
+}
+
+function parsePromotionRecord(key: string, value: string): PromotionRecord | null {
+  try {
+    const record = promotionRecordSchema.parse(JSON.parse(value));
+    return promotionLedgerKey(record) === key ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Import only this validated config namespace; never restore runtime settings. */
+export function restorePromotionLedger(db: Database, config: Record<string, string>): void {
+  const insert = db.prepare('INSERT OR IGNORE INTO audrey_config (key, value) VALUES (?, ?)');
+  for (const [key, value] of Object.entries(config)) {
+    if (!key.startsWith(PROMOTION_LEDGER_PREFIX)) continue;
+    const record = parsePromotionRecord(key, value);
+    if (!record) throw new Error('Invalid promotion ledger record in snapshot');
+    insert.run(key, JSON.stringify(record));
+  }
+}
+
+type PromotionEvent = Pick<MemoryEvent, 'actor_agent' | 'tool_name' | 'metadata' | 'created_at'>;
+
+function promotionFromEvent(event: PromotionEvent): RecordPromotionOptions | null {
+  if (!event.tool_name || !event.metadata) return null;
+  try {
+    const metadata = JSON.parse(event.metadata) as Record<string, unknown>;
+    if (!metadata || !Array.isArray(metadata.memory_ids)) return null;
+    const options: RecordPromotionOptions = {
+      target: event.tool_name,
+      actorAgent: event.actor_agent,
+      memoryIds: metadata.memory_ids.filter(
+        (id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 128,
+      ),
+      promotedAt: event.created_at,
+      ...(typeof metadata.relative_path === 'string'
+        ? { relativePath: metadata.relative_path }
+        : {}),
+      ...(typeof metadata.absolute_path === 'string'
+        ? { absolutePath: metadata.absolute_path }
+        : {}),
+    };
+    // Malformed legacy rows must not interrupt unrelated activity retention.
+    if (
+      !options.memoryIds.length ||
+      !promotionRecordSchema.safeParse({
+        target: options.target,
+        actor_agent: options.actorAgent,
+        memory_id: options.memoryIds[0],
+        promoted_at: options.promotedAt,
+      }).success
+    )
+      return null;
+    return options;
+  } catch {
+    return null;
+  }
+}
+
+export function promotedMemoryIds(
+  db: Database,
+  options: { target: string; actorAgent?: string },
+): Set<string> {
+  const ids = new Set<string>();
+  const records = db
+    .prepare('SELECT key, value FROM audrey_config WHERE key GLOB ?')
+    .all(`${PROMOTION_LEDGER_PREFIX}*`) as Array<{ key: string; value: string }>;
+  for (const entry of records) {
+    const record = parsePromotionRecord(entry.key, entry.value);
+    if (
+      record &&
+      record.target === options.target &&
+      (options.actorAgent === undefined || record.actor_agent === options.actorAgent)
+    )
+      ids.add(record.memory_id);
+  }
+  // Backward compatibility without side effects during candidate previews.
+  const rows = db
+    .prepare(
+      `SELECT actor_agent, tool_name, metadata, created_at FROM memory_events WHERE event_type = 'Promotion' AND tool_name = ? AND (outcome IS NULL OR outcome = 'succeeded') ${options.actorAgent === undefined ? '' : 'AND actor_agent = ?'}`,
+    )
+    .all(
+      options.target,
+      ...(options.actorAgent === undefined ? [] : [options.actorAgent]),
+    ) as PromotionEvent[];
+  for (const row of rows) {
+    for (const id of promotionFromEvent(row)?.memoryIds ?? []) ids.add(id);
+  }
+  return ids;
+}
 
 export type EventType =
   | 'PreToolUse'
@@ -491,15 +635,29 @@ export function deleteEventsBefore(
     1,
     Math.min(options.batchSize ?? DEFAULT_DELETE_BATCH_SIZE, MAX_DELETE_BATCH_SIZE),
   );
+  // Only promotions are copied into the ledger; the other rows' metadata
+  // blobs stay unread while the writer lock is held.
+  const selectBatch = db.prepare(
+    `SELECT actor_agent, tool_name, metadata, created_at FROM memory_events
+     WHERE event_type = 'Promotion' AND (outcome IS NULL OR outcome = 'succeeded')
+       AND id IN (SELECT id FROM memory_events WHERE created_at < ? ORDER BY id LIMIT ?)`,
+  );
   const deleteBatch = db.prepare(
     `DELETE FROM memory_events
-     WHERE id IN (SELECT id FROM memory_events WHERE created_at < ? LIMIT ?)`,
+     WHERE id IN (SELECT id FROM memory_events WHERE created_at < ? ORDER BY id LIMIT ?)`,
   );
+  const retainAndDeleteBatch = db.transaction(() => {
+    const rows = selectBatch.all(cutoffIso, batchSize) as PromotionEvent[];
+    for (const row of rows) {
+      const promotion = promotionFromEvent(row);
+      if (promotion) recordPromotion(db, promotion);
+    }
+    return Number(deleteBatch.run(cutoffIso, batchSize).changes);
+  });
 
   let totalDeleted = 0;
   for (;;) {
-    const result = deleteBatch.run(cutoffIso, batchSize);
-    const deleted = Number(result.changes);
+    const deleted = retainAndDeleteBatch.immediate();
     totalDeleted += deleted;
     if (deleted < batchSize) break;
   }

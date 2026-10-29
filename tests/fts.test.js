@@ -43,8 +43,8 @@ describe('FTS5 full-text search', () => {
     });
   });
 
-  afterAll(() => {
-    audrey.close();
+  afterAll(async () => {
+    await audrey.closeAsync();
     rmSync(dataDir, { recursive: true, force: true });
   });
 

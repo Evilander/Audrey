@@ -509,6 +509,16 @@ export async function runConsolidation(
 
     db.prepare('BEGIN IMMEDIATE').run();
     try {
+      // Run IDs and timestamps describe when async preparation started, not
+      // the order in which merges committed. Persist that order in the undo
+      // journal while SQLite serializes writers; no schema migration is needed.
+      undo.commitSequence = (
+        db
+          .prepare(
+            `SELECT COALESCE(MAX(CASE WHEN json_valid(rollback_data) THEN json_extract(rollback_data, '$.commitSequence') END), 0) + 1 AS sequence FROM consolidation_runs`,
+          )
+          .get() as { sequence: number }
+      ).sequence;
       for (const prepared of preparedClusters) {
         const placeholders = inClause(prepared.clusterIds);
         const eligibleCount = (
