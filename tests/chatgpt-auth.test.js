@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { connect } from 'node:net';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -539,6 +540,7 @@ describe('ChatGPT refresh and sign-out', () => {
   it('cancels a competing lock wait without deleting the other process lock', async () => {
     const f = await fixture();
     await f.auth.login();
+    f.time.now += 3600000;
     const path = join(f.directory, 'credentials.lock');
     await writeFile(path, 'other-process-lock', { mode: 0o600 });
     const controller = new AbortController();
@@ -736,9 +738,94 @@ describe('ChatGPT refresh and sign-out', () => {
     await expect(f.auth.select(account.accountId)).rejects.toThrow('signed out');
   }, 30000);
 
+  it('serves a still-valid token without waiting on the credential lock', async () => {
+    const f = await fixture();
+    await f.auth.login();
+    await writeFile(join(f.directory, 'credentials.lock'), 'busy', { mode: 0o600 });
+    const startedAt = Date.now();
+    expect(await f.auth.accessToken()).toBe('initial-access-secret');
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+    expect(await readFile(join(f.directory, 'credentials.lock'), 'utf8')).toBe('busy');
+  }, 30000);
+
+  it('clears credentials on every documented terminal refresh error and keeps them otherwise', async () => {
+    for (const code of [
+      'invalid_refresh_token',
+      'token_expired',
+      'refresh_token_expired',
+      'refresh_token_invalidated',
+      'refresh_token_reused',
+    ]) {
+      const f = await fixture();
+      await f.auth.login();
+      f.time.now += 3600000;
+      f.state.tokenStatus = 400;
+      f.state.refreshBody = { error: code, error_description: 'private-refresh-secret' };
+      await expect(f.auth.accessToken()).rejects.toThrow(code);
+      expect((await f.store()).accounts[0].tokens).toBeUndefined();
+    }
+    const kept = await fixture();
+    await kept.auth.login();
+    kept.time.now += 3600000;
+    kept.state.tokenStatus = 400;
+    kept.state.refreshBody = { error: 'temporarily_unavailable' };
+    await expect(kept.auth.accessToken()).rejects.toThrow('token exchange failed');
+    expect((await kept.store()).accounts[0].tokens.refreshToken).toBe('initial-refresh-secret');
+  }, 60000);
+
+  it('answers a malformed callback request with 400 and keeps the sign-in alive', async () => {
+    const f = await fixture({
+      beforeCallback: async auth => {
+        const port = Number(new URL(auth.searchParams.get('redirect_uri')).port);
+        await new Promise((resolveProbe, rejectProbe) => {
+          const socket = connect(port, '127.0.0.1', () => {
+            socket.write('GET //[ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n');
+          });
+          let received = '';
+          socket.on('data', chunk => {
+            received += chunk;
+          });
+          socket.on('error', rejectProbe);
+          socket.on('close', () => {
+            if (received.startsWith('HTTP/1.1 400')) resolveProbe();
+            else rejectProbe(new Error(`expected 400, got ${received.split('\r\n')[0]}`));
+          });
+        });
+      },
+    });
+    const account = await f.auth.login();
+    expect(account.signedIn).toBe(true);
+  }, 30000);
+
+  it('expands a leading ~ in the credential directory', () => {
+    expect(new ChatGPTAuth({ directory: '~/.audrey-tilde-test' }).directory).toBe(
+      join(homedir(), '.audrey-tilde-test'),
+    );
+  });
+
+  it('ignores a refresh time later than the token itself can live', async () => {
+    const f = await fixture({
+      tokenBody: { earliest_refresh_at: Math.floor(Date.now() / 1000) + 10 * 24 * 3600 },
+    });
+    await f.auth.login();
+    f.time.now += 3600000;
+    expect(await f.auth.accessToken()).toBe('refreshed-access-secret');
+  }, 30000);
+
+  it('reports revoked:false when an access token cannot be revoked remotely', async () => {
+    const f = await fixture({
+      scopes: 'openid profile email resource.invoke chatgpt.tokens.use.direct',
+      tokenBody: { refresh_token: undefined },
+    });
+    await f.auth.login();
+    expect(await f.auth.logout()).toEqual({ revoked: false });
+    expect((await f.store()).accounts[0].tokens).toBeUndefined();
+  }, 30000);
+
   it('times out an existing lock without removing it or refreshing concurrently', async () => {
     const f = await fixture({ authOptions: { lockTimeoutMs: 100 } });
     await f.auth.login();
+    f.time.now += 3600000;
     await writeFile(join(f.directory, 'credentials.lock'), 'busy', { mode: 0o600 });
     await expect(f.auth.accessToken()).rejects.toThrow('locked by another operation');
     expect(await readFile(join(f.directory, 'credentials.lock'), 'utf8')).toBe('busy');
