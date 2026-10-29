@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.1.1 - 2026-10-28
+
+### ChatGPT sign-in
+
+- Every refresh failure OpenAI documents as terminal (`invalid_grant`, `invalid_refresh_token`, `token_expired`, `refresh_token_expired`, `refresh_token_invalidated`, `refresh_token_reused`) now clears the stored tokens and asks for a new sign-in. 2.1.0 did that for `invalid_grant` only, so the other five left a dead grant in place that every later call retried against the authorization server. Any other error code keeps the credentials, as the documentation asks.
+- A token that is still valid is served straight from the credential file without taking the writer lock, so concurrent hook processes no longer queue behind one another to read it. When a refresh is needed, discovery and the signing keys are fetched before the lock is taken, the lock is removed only by the process whose stamp it still carries, and the credential file's rename is followed by a directory fsync.
+- A malformed request to the sign-in callback listener answers 400 instead of crashing the process that is waiting for the browser.
+- `AUDREY_CHATGPT_AUTH_DIR` may start with `~`, and `audrey install` resolves it to an absolute path before writing hook commands, so a relative or home-relative value no longer produces a different credential store for every project directory.
+- An `earliest_refresh_at` later than the token's own expiry is ignored rather than trusted; the field's unit is undocumented, and trusting a far-future value locked the account out until a manual login.
+- `audrey auth logout` reports `revoked: false` when the account held an access token but no refresh token to revoke; it previously reported success while the access token stayed valid until expiry.
+- On Windows, `powershell.exe` is launched by its installed path rather than looked up on `PATH` from a hook running inside the user's repository.
+
+### Release workflow
+
+- The MCP Registry publish waits for npm to list the new version before registering it. npm now processes a published package for a few minutes before it is visible, and the 2.1.0 registry publish failed on that window and had to be re-run by hand.
+
 ## 2.1.0 - 2026-10-28
 
 ### Guard can check what an action returned
