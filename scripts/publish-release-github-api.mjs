@@ -348,7 +348,7 @@ async function publishWithGitHubApi(args, state, token) {
   }
 
   const dates = releaseDates();
-  const identity = { name: 'Tyler Eveland', email: 'j.tyler.eveland@gmail.com' };
+  const identity = { name: 'Tyler Eveland', email: '98758891+Evilander@users.noreply.github.com' };
   const commit = await githubJson(token, args.repository, '/git/commits', {
     method: 'POST',
     body: {
